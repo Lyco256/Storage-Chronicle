@@ -1,3 +1,5 @@
 # UI Event Stack
 
-The Event Stack is a UI-only projection consumer. Grouping and filtering are produced by Projection; this module owns interaction state and virtualization boundaries.
+`StorageChronicle.UI.EventStack`は、StorageやWindows APIを知らないAvalonia/MVVMの実UIである。`IEventStackProjection`だけを介してFake ProjectionまたはIPC/Projection実装へ接続できる。
+
+`EventStackView.axaml`はCompiled BindingとVirtualizingStackPanelを使い、行のtooltip、AutomationProperties、キーボード操作、詳細パネル、filter bar、ページ操作を提供する。`EventStackViewModel`は表示ページだけをmaterializeし、Groupedの操作グループとbounded childrenを同じページ内で展開する。

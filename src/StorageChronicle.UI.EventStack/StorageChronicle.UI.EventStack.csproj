@@ -1,4 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><RootNamespace>StorageChronicle.UI.EventStack</RootNamespace><AssemblyName>StorageChronicle.UI.EventStack</AssemblyName></PropertyGroup>
-  <ItemGroup><ProjectReference Include="..\StorageChronicle.Domain\StorageChronicle.Domain.csproj" /><ProjectReference Include="..\StorageChronicle.Contracts\StorageChronicle.Contracts.csproj" /><ProjectReference Include="..\StorageChronicle.UI.Shared\StorageChronicle.UI.Shared.csproj" /><PackageReference Include="CommunityToolkit.Mvvm" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\StorageChronicle.Domain\StorageChronicle.Domain.csproj" />
+    <ProjectReference Include="..\StorageChronicle.Contracts\StorageChronicle.Contracts.csproj" />
+    <ProjectReference Include="..\StorageChronicle.UI.Shared\StorageChronicle.UI.Shared.csproj" />
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="Material.Icons.Avalonia" />
+  </ItemGroup>
 </Project>
