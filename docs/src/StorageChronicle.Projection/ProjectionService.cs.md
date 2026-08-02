@@ -1,0 +1,7 @@
+# ProjectionService.cs
+
+IProjectionServiceのOS非依存実装。immutableなProjectionDocumentを受け、Event StackとDiffを必要時に再生成する。追加APIではフィルター付きEvent Stack、子孫を含むTree page、詳細Diff projectionを提供する。
+
+CancellationTokenは投影処理開始前に検査する。永続履歴の追記・更新・削除は行わず、Avalonia、Storage、Windows Collectorへ依存しない。標準契約のEventStackRow/DiffEntryに加えて、UIが必要とする意味的詳細DTOを返す。
+
+主なテストはキャンセル、3モード、ページング、Diff共有モデル、再生成時の入力不変性。

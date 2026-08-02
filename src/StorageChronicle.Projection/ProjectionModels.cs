@@ -181,6 +181,7 @@ public sealed record FileDiffProjection(
     string? NewPath,
     string DisplayPath,
     FileKind Kind,
+    EventQuality Quality,
     DiffPrimaryOperation PrimaryOperation,
     DiffSemanticState SemanticState,
     IReadOnlyList<DiffPrimaryOperation> SubOperations,

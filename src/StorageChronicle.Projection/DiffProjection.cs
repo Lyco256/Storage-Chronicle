@@ -76,6 +76,7 @@ public sealed class DiffProjector
             newPath,
             displayPath,
             kind,
+            last.Quality,
             primary,
             ProjectionOperationRules.ToSemanticState(primary),
             subOperations,
@@ -134,7 +135,7 @@ public sealed class DiffProjector
         row.NewPath,
         ToCanonicalOperation(row.PrimaryOperation),
         row.Kind,
-        EventQuality.Exact,
+        row.Quality,
         row.IsVirtual);
 
     private static CanonicalOperation ToCanonicalOperation(DiffPrimaryOperation operation) => operation switch

@@ -1,0 +1,7 @@
+# ActivityGrouping.cs
+
+Canonical Eventを時刻順に走査し、Process Instance、Unknown actor、Volume、Mount Session、表示ルート、無操作timeoutでActivity Groupを生成する。Unknownは同じOrigin、Volume、Mount Session、ルート、timeoutの範囲だけを統合し、別媒体や別取得元を跨がない。
+
+他Processが同一/祖先/子孫の表示ルートを変更すると先行Activityを直前イベントで閉じ、元Processの再開は新Groupにする。read-only観測は境界を作らず、UnverifiedGapは常に独立Groupにする。表示ルートは製品要件15章のアンカー手順に従い、新規フォルダー配下だけなら新規フォルダー、空フォルダーだけなら親を返す。
+
+ProcessCatalogは記録済みの親Process Instanceだけを辿り、explorer.exeはExplorer操作、Unknownは不明なプロセスとして表示する。主なテストはtimeout、Unknown、競合、親子Process、10万イベント fixture。
