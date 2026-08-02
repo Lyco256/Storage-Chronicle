@@ -26,6 +26,20 @@ public sealed class ActivityGrouper
         {
             var route = pathResolver.ResolveAnchor(value, paths);
             var isRead = ProjectionOperationRules.IsRead(value);
+
+            // Unknown attribution is keyed by source, volume, mount session and route,
+            // rather than by the immediately preceding event. This keeps an activity
+            // intact when another mount interleaves events in the ordered stream.
+            if (IsUnknownAttribution(value))
+            {
+                var existing = FindUnknownActivity(groups, current, value, route, paths, timeout);
+                if (existing is not null && !existing.IsGap)
+                {
+                    existing.Add(value, route);
+                    continue;
+                }
+            }
+
             var sameActor = current is not null && current.MatchesActor(value);
             var withinTimeout = current is not null && value.Time.RecordedUtc - current.LastTime <= timeout;
             var compatibleRoute = current is not null && current.CanAcceptRoute(value, route, paths);
@@ -60,6 +74,37 @@ public sealed class ActivityGrouper
 
         if (current is not null) groups.Add(current);
         return groups.Select(builder => builder.Build(processCatalog)).ToArray();
+    }
+
+    private static bool IsUnknownAttribution(CanonicalEvent value) =>
+        value.ProcessQuality == ProcessAttributionQuality.Unknown || value.ProcessInstanceId is null;
+
+    private static ActivityBuilder? FindUnknownActivity(
+        IReadOnlyList<ActivityBuilder> groups,
+        ActivityBuilder? current,
+        CanonicalEvent value,
+        string? route,
+        IReadOnlyDictionary<EventId, string?> paths,
+        TimeSpan timeout)
+    {
+        if (current is not null && current.MatchesActor(value) &&
+            value.Time.RecordedUtc - current.LastTime <= timeout && current.CanAcceptRoute(value, route, paths))
+        {
+            return current;
+        }
+
+        for (var index = groups.Count - 1; index >= 0; index--)
+        {
+            var candidate = groups[index];
+            if (candidate.MatchesActor(value) &&
+                value.Time.RecordedUtc - candidate.LastTime <= timeout &&
+                candidate.CanAcceptRoute(value, route, paths))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
     }
 
     private sealed class ActivityBuilder
