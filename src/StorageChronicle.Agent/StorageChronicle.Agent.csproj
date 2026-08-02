@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RootNamespace>StorageChronicle.Agent</RootNamespace>
+    <AssemblyName>StorageChronicle.Agent</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\StorageChronicle.Application\StorageChronicle.Application.csproj" />
+    <ProjectReference Include="..\StorageChronicle.Storage\StorageChronicle.Storage.csproj" />
+    <ProjectReference Include="..\StorageChronicle.Normalization\StorageChronicle.Normalization.csproj" />
+    <ProjectReference Include="..\StorageChronicle.Platform.Windows.FileSystem\StorageChronicle.Platform.Windows.FileSystem.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" />
+  </ItemGroup>
+</Project>

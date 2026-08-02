@@ -1,0 +1,3 @@
+# StorageChronicle.Projection.csproj
+
+ProjectionアセンブリはStorageChronicle.Domainと安定したStorageChronicle.Contractsだけを参照する。net10.0、nullable、暗黙using、警告をエラーにする共通ビルド規則を継承し、AvaloniaやWindows APIを参照しない。

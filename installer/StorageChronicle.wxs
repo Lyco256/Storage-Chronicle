@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package Name="Storage Chronicle" Manufacturer="Storage Chronicle" Version="$(var.ProductVersion)" UpgradeCode="2E73399B-3A54-4C03-A0C6-80E1D4AC3B5E" Scope="perMachine" Compressed="yes">
+    <MajorUpgrade DowngradeErrorMessage="A newer Storage Chronicle version is already installed." />
+    <MediaTemplate />
+    <Feature Id="MainFeature" Title="Storage Chronicle" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+    </Feature>
+  </Package>
+  <Fragment>
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Storage Chronicle" />
+    </StandardDirectory>
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Component Id="AgentServiceComponent" Guid="4F5B0D43-3CB7-4D99-8E20-9FC5B4FA5A01" Bitness="always64">
+        <File Id="AgentExe" Source="$(var.AgentSource)" KeyPath="yes" />
+        <ServiceInstall Id="AgentServiceInstall" Name="StorageChronicleAgent" DisplayName="Storage Chronicle Agent" Type="ownProcess" Start="auto" Account="LocalSystem" ErrorControl="normal" Vital="yes" />
+        <ServiceControl Id="AgentServiceControl" Name="StorageChronicleAgent" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+        <util:ServiceConfig ServiceName="StorageChronicleAgent" FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart" ResetPeriodInDays="1" />
+      </Component>
+      <Component Id="SessionAgentComponent" Guid="4F5B0D43-3CB7-4D99-8E20-9FC5B4FA5A02" Bitness="always64">
+        <File Id="SessionAgentExe" Source="$(var.SessionAgentSource)" KeyPath="yes" />
+      </Component>
+      <Component Id="UiComponent" Guid="4F5B0D43-3CB7-4D99-8E20-9FC5B4FA5A03" Bitness="always64">
+        <File Id="UiExe" Source="$(var.UiSource)" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>
