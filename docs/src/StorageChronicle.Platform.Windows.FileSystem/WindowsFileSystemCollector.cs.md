@@ -1,0 +1,3 @@
+# WindowsFileSystemCollector
+
+Coordinates volume enumeration, initial snapshots, and per-volume event-driven directory monitors. The monitor starts before the snapshot, notifications cross a bounded initial-scan boundary, and overflow/monitor loss becomes an `UnverifiedGap` source event. Volumes are isolated so access denied, removal, and I/O failures do not stop other volumes; cancellation is scoped to the collector token. Exclusion policy runs before source events are created. Tests cover the components through injected boundaries and the full collector is intended for integration with the agent host.
