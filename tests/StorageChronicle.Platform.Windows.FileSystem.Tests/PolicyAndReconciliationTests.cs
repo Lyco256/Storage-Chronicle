@@ -20,6 +20,15 @@ public sealed class PolicyAndReconciliationTests
     }
 
     [Fact]
+    public void SubdirectoryMonitoringDoesNotPretendTheWholeNtfsVolumeIsScoped()
+    {
+        var policy = new WindowsExclusionPolicy(new WindowsFileSystemOptions { MonitoredRoots = ["C:\\Users\\alice\\Documents"] });
+
+        Assert.True(policy.IsMonitoredRoot("C:\\"));
+        Assert.False(policy.IsWholeVolumeMonitored("C:\\"));
+    }
+
+    [Fact]
     public async Task DecliningReconciliationLeavesGapAndDoesNotReturnDiff()
     {
         var reconciler = new DirectoryReconciler();

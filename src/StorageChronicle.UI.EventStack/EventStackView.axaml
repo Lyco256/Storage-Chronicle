@@ -1,0 +1,140 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:StorageChronicle.UI.EventStack"
+             xmlns:domain="using:StorageChronicle.Domain.Contracts"
+             x:Class="StorageChronicle.UI.EventStack.EventStackView"
+             x:DataType="vm:EventStackViewModel"
+             x:CompileBindings="True"
+             AutomationProperties.Name="Event Stack">
+  <Grid RowDefinitions="Auto,Auto,*,Auto" ColumnDefinitions="*,320" Margin="16" RowSpacing="8" ColumnSpacing="12">
+    <Border Grid.Row="0" Grid.ColumnSpan="2" Padding="8" CornerRadius="4" Background="#20252B">
+      <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto" ColumnSpacing="6">
+        <TextBlock Grid.Column="0" Text="Mode" VerticalAlignment="Center" Margin="0,0,4,0" />
+        <Button Grid.Column="1" Content="Source" Command="{Binding SetModeCommand}" CommandParameter="{x:Static domain:EventStackMode.Source}" AutomationProperties.Name="Source mode" />
+        <Button Grid.Column="2" Content="Normalized" Command="{Binding SetModeCommand}" CommandParameter="{x:Static domain:EventStackMode.Normalized}" AutomationProperties.Name="Normalized mode" />
+        <Button Grid.Column="3" Content="Grouped" Command="{Binding SetModeCommand}" CommandParameter="{x:Static domain:EventStackMode.Grouped}" AutomationProperties.Name="Grouped mode" />
+        <TextBlock Grid.Column="4" />
+        <Button Grid.Column="5" Content="Newest first" Command="{Binding SetSortDirectionCommand}" CommandParameter="{x:Static vm:EventStackSortDirection.Descending}" AutomationProperties.Name="Sort newest first" />
+        <Button Grid.Column="6" Content="Oldest first" Command="{Binding SetSortDirectionCommand}" CommandParameter="{x:Static vm:EventStackSortDirection.Ascending}" AutomationProperties.Name="Sort oldest first" />
+        <Button Grid.Column="7" Content="Live" Command="{Binding ToggleFollowCommand}" AutomationProperties.Name="Toggle live follow" />
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="1" Grid.ColumnSpan="2" Padding="8" CornerRadius="4" Background="#15181C">
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="6">
+        <TextBox Grid.Column="0" Text="{Binding SearchText, Mode=TwoWay}" PlaceholderText="Filter events" AutomationProperties.Name="Event filter" />
+        <Button Grid.Column="1" Content="Apply" Command="{Binding ApplyFilterCommand}" AutomationProperties.Name="Apply event filter" />
+        <Button Grid.Column="2" Content="Save filter" Command="{Binding SaveFilterCommand}" AutomationProperties.Name="Save current filter" />
+        <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="4">
+          <ComboBox ItemsSource="{Binding SavedFilters}" SelectedItem="{Binding SelectedSavedFilter, Mode=TwoWay}" AutomationProperties.Name="Saved filters" />
+          <Button Content="Use" Command="{Binding ApplySavedFilterCommand}" CommandParameter="{Binding SelectedSavedFilter}" AutomationProperties.Name="Apply saved filter" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="2" Grid.Column="0" Padding="4" BorderBrush="#41474F" BorderThickness="1" CornerRadius="4">
+      <ListBox x:Name="RowsList" ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedItem, Mode=TwoWay}" AutomationProperties.Name="Event Stack rows">
+        <ListBox.ItemsPanel>
+          <ItemsPanelTemplate>
+            <VirtualizingStackPanel />
+          </ItemsPanelTemplate>
+        </ListBox.ItemsPanel>
+        <ListBox.ItemTemplate>
+          <DataTemplate x:DataType="vm:EventStackItemViewModel">
+            <Border Padding="8" Margin="2" CornerRadius="3" ToolTip.Tip="{Binding AccessibleDescription}" AutomationProperties.Name="{Binding AccessibleDescription}">
+              <Grid ColumnDefinitions="Auto,Auto,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                <Button Grid.RowSpan="3" Grid.Column="0" Content="▸" Command="{Binding ToggleExpansionCommand}" IsVisible="{Binding HasChildren}" AutomationProperties.Name="Expand event group" />
+                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding IconKey}" AutomationProperties.Name="Operation icon" />
+                <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding DisplaySummary}" FontWeight="SemiBold" />
+                <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding FileSummary}" Opacity="0.82" />
+                <TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding ProcessDisplay}" Opacity="0.82" />
+                <TextBlock Grid.Row="0" Grid.Column="3" Text="{Binding QualityDisplay}" AutomationProperties.Name="Event quality" />
+                <ItemsControl Grid.Row="3" Grid.Column="2" Grid.ColumnSpan="2" ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:EventStackChildViewModel">
+                      <StackPanel Spacing="2">
+                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="12,4,0,0">
+                          <TextBlock Text="↳" />
+                          <TextBlock Text="{Binding DisplaySummary}" />
+                          <TextBlock Text="{Binding QualityDisplay}" Opacity="0.75" />
+                        </StackPanel>
+                        <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding HasChildren}" Margin="24,0,0,0">
+                          <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:EventStackChildViewModel">
+                              <StackPanel Spacing="2">
+                                <StackPanel Orientation="Horizontal" Spacing="6" Margin="12,2,0,0">
+                                  <TextBlock Text="•" />
+                                  <TextBlock Text="{Binding DisplaySummary}" />
+                                  <TextBlock Text="{Binding QualityDisplay}" Opacity="0.75" />
+                                </StackPanel>
+                                <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding HasChildren}" Margin="36,0,0,0">
+                                  <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:EventStackChildViewModel">
+                                      <StackPanel Orientation="Horizontal" Spacing="6" Margin="12,2,0,0">
+                                        <TextBlock Text="└" />
+                                        <TextBlock Text="{Binding DisplaySummary}" />
+                                        <TextBlock Text="{Binding QualityDisplay}" Opacity="0.75" />
+                                      </StackPanel>
+                                    </DataTemplate>
+                                  </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                              </StackPanel>
+                            </DataTemplate>
+                          </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                      </StackPanel>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </Grid>
+            </Border>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+    </Border>
+
+    <Border Grid.Row="2" Grid.Column="1" Padding="12" BorderBrush="#41474F" BorderThickness="1" CornerRadius="4" IsVisible="{Binding IsDetailsOpen}">
+      <ScrollViewer>
+        <StackPanel Spacing="8">
+          <DockPanel>
+            <TextBlock Text="Details" FontSize="18" FontWeight="SemiBold" />
+            <Button DockPanel.Dock="Right" Content="Close" Command="{Binding CloseDetailsCommand}" AutomationProperties.Name="Close details" />
+          </DockPanel>
+          <TextBlock Text="{Binding SelectedDetails.Row.Summary}" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding SelectedDetails.SourceOrigin}" />
+          <TextBlock Text="{Binding SelectedDetails.Quality}" />
+          <TextBlock Text="{Binding SelectedDetails.RecordedUtc}" />
+          <TextBlock Text="{Binding SelectedDetails.LocalOffset}" />
+          <TextBlock Text="{Binding SelectedDetails.SourceSequence}" />
+          <TextBlock Text="{Binding SelectedDetails.MountSequence}" />
+          <TextBlock Text="{Binding SelectedDetails.ProcessName, FallbackValue=Unknown process}" />
+          <TextBlock Text="Reconciliation / gap flags" FontWeight="SemiBold" />
+          <TextBlock Text="{Binding SelectedDetails.IsReconciliation}" />
+          <TextBlock Text="{Binding SelectedDetails.IsUnverifiedGap}" />
+          <TextBlock Text="{Binding SelectedDetails.IsExistenceOnly}" />
+          <Button Content="Parent process" Command="{Binding NavigateToParentProcessCommand}" AutomationProperties.Name="Navigate to parent process" />
+          <ItemsControl ItemsSource="{Binding ChildProcessLinks}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:ProcessNavigationViewModel">
+                <Button Content="Child process" Command="{Binding NavigateCommand}" AutomationProperties.Name="Navigate to child process" />
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+
+    <DockPanel Grid.Row="3" Grid.ColumnSpan="2">
+      <TextBlock DockPanel.Dock="Left" Text="{Binding StatusMessage}" VerticalAlignment="Center" />
+      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
+        <Button Content="50" Command="{Binding SetPageSizeCommand}" CommandParameter="{Binding PageSize50}" AutomationProperties.Name="50 rows per page" />
+        <Button Content="100" Command="{Binding SetPageSizeCommand}" CommandParameter="{Binding PageSize100}" AutomationProperties.Name="100 rows per page" />
+        <Button Content="250" Command="{Binding SetPageSizeCommand}" CommandParameter="{Binding PageSize250}" AutomationProperties.Name="250 rows per page" />
+        <Button Content="Previous" Command="{Binding PreviousPageCommand}" IsEnabled="{Binding CanGoPrevious}" AutomationProperties.Name="Previous page" />
+        <TextBlock Text="{Binding CurrentPage}" VerticalAlignment="Center" />
+        <Button Content="Next" Command="{Binding NextPageCommand}" IsEnabled="{Binding HasMore}" AutomationProperties.Name="Next page" />
+        <Button Content="Current" Command="{Binding ReturnToCurrentCommand}" AutomationProperties.Name="Return to current" />
+      </StackPanel>
+    </DockPanel>
+  </Grid>
+</UserControl>

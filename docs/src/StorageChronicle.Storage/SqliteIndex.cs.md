@@ -1,5 +1,7 @@
 # SqliteIndex.cs
 
+The index exposes bounded payload-page and count queries used by the Agent projection adapter. Queries are parameterized, ordered by recorded/source/segment sequence, and never expose file contents or content hashes.
+
 ## 役割
 
 追記ログを正本とするSQLite索引・現在状態・projection cacheを保持する。SQLiteは`Microsoft.Data.Sqlite`を直接使用し、WAL、`synchronous=FULL`、foreign keys、有限busy timeoutを設定する。
