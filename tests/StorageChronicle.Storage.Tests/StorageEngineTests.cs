@@ -221,4 +221,6 @@ public sealed class StorageEngineTests
 
     private sealed class FixedCapacityProbe(long available) : IStorageCapacityProbe
     {
-        public long GetAvailableBytes(string
+        public long GetAvailableBytes(string storageDirectory) => available;
+    }
+}

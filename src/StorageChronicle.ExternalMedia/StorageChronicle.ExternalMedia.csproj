@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><RootNamespace>StorageChronicle.ExternalMedia</RootNamespace><AssemblyName>StorageChronicle.ExternalMedia</AssemblyName></PropertyGroup>
+  <ItemGroup><ProjectReference Include="..\StorageChronicle.Domain\StorageChronicle.Domain.csproj" /><ProjectReference Include="..\StorageChronicle.Contracts\StorageChronicle.Contracts.csproj" /><PackageReference Include="System.IO.Hashing" /></ItemGroup>
+</Project>

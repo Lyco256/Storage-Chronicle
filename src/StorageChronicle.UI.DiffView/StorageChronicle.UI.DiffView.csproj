@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><RootNamespace>StorageChronicle.UI.DiffView</RootNamespace><AssemblyName>StorageChronicle.UI.DiffView</AssemblyName></PropertyGroup>
+  <ItemGroup><ProjectReference Include="..\StorageChronicle.Domain\StorageChronicle.Domain.csproj" /><ProjectReference Include="..\StorageChronicle.Contracts\StorageChronicle.Contracts.csproj" /><ProjectReference Include="..\StorageChronicle.UI.Shared\StorageChronicle.UI.Shared.csproj" /><PackageReference Include="CommunityToolkit.Mvvm" /></ItemGroup>
+</Project>
