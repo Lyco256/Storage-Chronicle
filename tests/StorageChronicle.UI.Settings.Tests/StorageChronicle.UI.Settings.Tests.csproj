@@ -6,9 +6,9 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\StorageChronicle.UI.Settings\StorageChronicle.UI.Settings.csproj" />
-    <PackageReference Include="xunit.v3" />
+
     <PackageReference Include="xunit.v3.runner.inproc.console" />
-    <PackageReference Include="xunit.v3.mtp-v1" />
+    <PackageReference Include="xunit.v3.mtp-v2" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="Microsoft.Testing.Platform" />
     <PackageReference Include="Microsoft.Testing.Platform.MSBuild" />

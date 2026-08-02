@@ -68,7 +68,8 @@ public sealed record EventStackItem(
     string? FileSummary,
     string? ProcessName,
     bool IsGroup,
-    bool IsExpanded);
+    bool IsExpanded,
+    IReadOnlyList<EventStackItem>? NestedChildren = null);
 
 /// <summary>Contains one page of materialized Event Stack rows.</summary>
 public sealed record EventStackPage(

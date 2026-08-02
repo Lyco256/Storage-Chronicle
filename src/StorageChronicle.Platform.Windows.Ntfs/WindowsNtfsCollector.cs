@@ -12,6 +12,9 @@ public sealed class WindowsNtfsCollector : ISourceEventCollector
     private readonly IUsnJournalReader reader;
     private readonly VolumeId volumeId;
 
+    /// <summary>Gets the latest cursor observed by the real reader, when the injected reader exposes one.</summary>
+    public UsnJournalState? LastObservedJournalState => (reader as UsnJournalReader)?.LastObservedState;
+
     /// <summary>Initializes a collector around a reader boundary, which is useful for driver replacement and tests.</summary>
     public WindowsNtfsCollector(VolumeId volumeId, IUsnJournalReader reader)
     {

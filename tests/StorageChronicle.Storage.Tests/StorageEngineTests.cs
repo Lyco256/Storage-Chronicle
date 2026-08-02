@@ -22,6 +22,9 @@ public sealed class StorageEngineTests
                 var canonical = CreateCanonical(source);
                 await store.AppendCanonicalAsync(canonical);
                 await store.ApplyAsync(canonical);
+                Assert.Equal(1, await store.CountEventsAsync(canonical: false));
+                Assert.Equal(1, await store.CountEventsAsync(canonical: true));
+                Assert.Single(await store.ReadCanonicalPageAsync(0, 10));
                 await store.StopAsync();
 
                 var sourceEvents = await ToListAsync(store.ReadSourceAsync());
@@ -177,6 +180,35 @@ public sealed class StorageEngineTests
         finally
         {
             RemoveDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task RelocationFlushesCopiesSegmentsRebuildsIndexAndKeepsOldHistory()
+    {
+        var directory = CreateDirectory();
+        var destination = CreateDirectory();
+        try
+        {
+            await using var store = CreateStore(directory);
+            var source = CreateSource(1);
+            await store.AppendSourceAsync(source);
+            var canonical = CreateCanonical(source);
+            await store.AppendCanonicalAsync(canonical);
+            await store.ApplyAsync(canonical);
+            await store.RelocateAsync(destination);
+
+            Assert.Equal(Path.GetFullPath(destination), store.StorageDirectory);
+            Assert.Single(await ToListAsync(store.ReadSourceAsync()));
+            Assert.Single(await ToListAsync(store.ReadCanonicalAsync()));
+            Assert.Single((await store.GetSnapshotAsync(DateTimeOffset.UtcNow)).Entries);
+            Assert.NotEmpty(Directory.GetFiles(directory, "segment-*"));
+            Assert.NotEmpty(Directory.GetFiles(destination, "segment-*"));
+        }
+        finally
+        {
+            RemoveDirectory(directory);
+            RemoveDirectory(destination);
         }
     }
 

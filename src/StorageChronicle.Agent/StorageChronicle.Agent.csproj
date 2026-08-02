@@ -11,6 +11,9 @@
     <ProjectReference Include="..\StorageChronicle.Storage\StorageChronicle.Storage.csproj" />
     <ProjectReference Include="..\StorageChronicle.Normalization\StorageChronicle.Normalization.csproj" />
     <ProjectReference Include="..\StorageChronicle.Platform.Windows.FileSystem\StorageChronicle.Platform.Windows.FileSystem.csproj" />
+    <ProjectReference Include="..\StorageChronicle.Platform.Windows.Ntfs\StorageChronicle.Platform.Windows.Ntfs.csproj" />
+    <ProjectReference Include="..\StorageChronicle.Platform.Windows.Session\StorageChronicle.Platform.Windows.Session.csproj" />
+    <ProjectReference Include="..\StorageChronicle.ExternalMedia\StorageChronicle.ExternalMedia.csproj" />
     <ProjectReference Include="..\StorageChronicle.Projection\StorageChronicle.Projection.csproj" />
     <ProjectReference Include="..\StorageChronicle.Settings\StorageChronicle.Settings.csproj" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />

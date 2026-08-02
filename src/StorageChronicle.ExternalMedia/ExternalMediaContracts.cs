@@ -69,7 +69,8 @@ public sealed record MediaImportResult(
     int DuplicateSegmentCount,
     HistoryBranchId Branch,
     MediaHistoryQuality Quality,
-    IReadOnlyList<MediaImportWarning> Warnings);
+    IReadOnlyList<MediaImportWarning> Warnings,
+    IReadOnlyList<string>? ImportedSegmentHashes = null);
 
 /// <summary>Persistent deduplication state for imported manifest and segment hashes.</summary>
 public sealed record MediaImportLedger(

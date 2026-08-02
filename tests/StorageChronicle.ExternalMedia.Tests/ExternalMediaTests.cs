@@ -86,6 +86,23 @@ public sealed class ExternalMediaTests
     }
 
     [Fact]
+    public async Task CorruptImportLedgerRecoversAsEmptyAndCanBeReplaced()
+    {
+        var root = TestRoot();
+        var ledgerPath = Path.Combine(Path.GetTempPath(), "StorageChronicle.Media.Tests", Guid.NewGuid().ToString("N"), "ledger.json");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(ledgerPath)!);
+            await File.WriteAllBytesAsync(ledgerPath, [0xFF, 0x00, 0x01], TestContext.Current.CancellationToken);
+            var store = new MediaImportLedgerStore(ledgerPath);
+            Assert.Equal(MediaImportLedger.Empty.ManifestHashes, (await store.LoadAsync(TestContext.Current.CancellationToken)).ManifestHashes);
+            await store.SaveAsync(MediaImportLedger.Empty, TestContext.Current.CancellationToken);
+            Assert.NotEqual(new byte[] { 0xFF, 0x00, 0x01 }, await File.ReadAllBytesAsync(ledgerPath, TestContext.Current.CancellationToken));
+        }
+        finally { DeleteRoot(root); DeleteRoot(Path.GetDirectoryName(ledgerPath)!); }
+    }
+
+    [Fact]
     public async Task DistinctValidChildrenWithSameParentBecomeBranch()
     {
         var root = TestRoot();

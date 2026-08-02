@@ -16,7 +16,7 @@ public static class Program
 /// <summary>Measures one-million identity workloads and one-hundred-thousand projection/storage-shaped workloads.</summary>
 [MemoryDiagnoser]
 [MarkdownExporterAttribute.GitHub]
-public sealed class StorageChronicleBenchmarks
+public class StorageChronicleBenchmarks
 {
     private string[] fileIds = [];
     private CanonicalEvent[] events = [];

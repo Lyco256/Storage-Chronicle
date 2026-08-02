@@ -1,3 +1,3 @@
 # ResourceMonitor/Program.cs
 
-Samples a caller-selected process ID at a bounded interval. It records private bytes, working set, normalized process CPU percentage, threshold results, and the samples as JSON. The portable tool does not infer disk writes; host-specific disk accounting remains an explicit acceptance-host responsibility.
+Samples one or more caller-selected process IDs at a bounded interval. On supported Windows 10/11 builds it records the combined `PROCESS_MEMORY_COUNTERS_EX2.PrivateWorkingSetSize`, working set, normalized process CPU percentage, and Windows process-I/O write bytes, plus threshold results and samples as JSON. Queue depth is exposed by the Agent health IPC surface rather than fabricated from thread counts. Passing both the Agent and Session Agent PIDs measures the product-level 50 MiB/0.5% budget without fabricating a missing process.

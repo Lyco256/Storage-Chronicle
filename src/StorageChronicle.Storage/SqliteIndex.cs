@@ -6,7 +6,7 @@ namespace StorageChronicle.Storage;
 
 internal sealed class SqliteIndex : IAsyncDisposable
 {
-    private const int CurrentSchemaVersion = 1;
+    private const int CurrentSchemaVersion = 2;
     private readonly string _databasePath;
     private readonly TimeSpan _busyTimeout;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -254,6 +254,7 @@ internal sealed class SqliteIndex : IAsyncDisposable
         var version = ReadUserVersion();
         if (version > CurrentSchemaVersion) throw new StorageException($"SQLite schema version {version} is newer than {CurrentSchemaVersion}.");
         if (version == 0) ApplyMigrationOne();
+        else if (version == 1) ApplyMigrationTwo();
     }
 
     private void ApplyMigrationOne()
@@ -265,7 +266,7 @@ internal sealed class SqliteIndex : IAsyncDisposable
             CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_utc TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS event_index (
                 sequence INTEGER PRIMARY KEY,
-                event_id TEXT NOT NULL UNIQUE,
+                event_id TEXT NOT NULL,
                 kind INTEGER NOT NULL,
                 schema_major INTEGER NOT NULL,
                 schema_minor INTEGER NOT NULL,
@@ -292,9 +293,60 @@ internal sealed class SqliteIndex : IAsyncDisposable
             CREATE TABLE IF NOT EXISTS projection_cache (cache_key TEXT PRIMARY KEY, payload BLOB NOT NULL, updated_utc TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS storage_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS ix_event_index_recorded_utc ON event_index (recorded_utc);
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_event_index_event_kind ON event_index (event_id, kind);
             CREATE INDEX IF NOT EXISTS ix_path_search_name ON path_search (name);
             INSERT INTO schema_migrations(version, applied_utc) VALUES (1, $now);
-            PRAGMA user_version = 1;
+            INSERT INTO schema_migrations(version, applied_utc) VALUES (2, $now);
+            PRAGMA user_version = 2;
+            """;
+        AddParameter(command, "$now", DateTimeOffset.UtcNow.ToString("O"));
+        command.ExecuteNonQuery();
+        transaction.Commit();
+    }
+
+    internal async ValueTask<bool> ContainsEventAsync(StorageRecordKind kind, EventId eventId, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "SELECT 1 FROM event_index WHERE event_id = $event_id AND kind = $kind LIMIT 1;";
+            AddParameter(command, "$event_id", eventId.ToString());
+            AddParameter(command, "$kind", (int)kind);
+            return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private void ApplyMigrationTwo()
+    {
+        using var transaction = _connection.BeginTransaction();
+        using var command = _connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            ALTER TABLE event_index RENAME TO event_index_v1;
+            CREATE TABLE event_index (
+                sequence INTEGER PRIMARY KEY,
+                event_id TEXT NOT NULL,
+                kind INTEGER NOT NULL,
+                schema_major INTEGER NOT NULL,
+                schema_minor INTEGER NOT NULL,
+                recorded_utc TEXT NOT NULL,
+                source_sequence INTEGER NOT NULL,
+                file_id TEXT,
+                parent_file_id TEXT,
+                name TEXT,
+                payload BLOB NOT NULL);
+            INSERT INTO event_index (sequence, event_id, kind, schema_major, schema_minor, recorded_utc, source_sequence, file_id, parent_file_id, name, payload)
+                SELECT sequence, event_id, kind, schema_major, schema_minor, recorded_utc, source_sequence, file_id, parent_file_id, name, payload FROM event_index_v1;
+            DROP TABLE event_index_v1;
+            CREATE INDEX IF NOT EXISTS ix_event_index_recorded_utc ON event_index (recorded_utc);
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_event_index_event_kind ON event_index (event_id, kind);
+            INSERT INTO schema_migrations(version, applied_utc) VALUES (2, $now);
+            PRAGMA user_version = 2;
             """;
         AddParameter(command, "$now", DateTimeOffset.UtcNow.ToString("O"));
         command.ExecuteNonQuery();

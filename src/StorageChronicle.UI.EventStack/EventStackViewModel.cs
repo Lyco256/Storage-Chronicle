@@ -68,6 +68,15 @@ public sealed class EventStackViewModel : ObservableObject, IFeatureView
     /// <summary>Supported page sizes; the projection still materializes only the selected page.</summary>
     public IReadOnlyList<int> PageSizeOptions { get; } = [50, 100, 250, 500];
 
+    /// <summary>First page-size binding value exposed as an integer for compiled Avalonia bindings.</summary>
+    public int PageSize50 => 50;
+
+    /// <summary>Second page-size binding value exposed as an integer for compiled Avalonia bindings.</summary>
+    public int PageSize100 => 100;
+
+    /// <summary>Third page-size binding value exposed as an integer for compiled Avalonia bindings.</summary>
+    public int PageSize250 => 250;
+
     /// <summary>Current Source/Normalized/Grouped mode.</summary>
     public EventStackMode Mode { get => mode; private set => SetProperty(ref mode, value); }
 
@@ -366,7 +375,10 @@ public sealed class EventStackItemViewModel : ObservableObject
     internal EventStackItemViewModel(EventStackItem item, Action<EventStackItemViewModel> toggleExpansion, IOperationIconResolver iconResolver)
     {
         Row = item.Row;
-        Children = new ObservableCollection<EventStackChildViewModel>(item.Children.Select(child => new EventStackChildViewModel(child)));
+        Children = new ObservableCollection<EventStackChildViewModel>((item.NestedChildren is { Count: > 0 }
+            ? item.NestedChildren
+            : item.Children.Select(child => new EventStackItem(child, Array.Empty<EventStackRow>(), null, null, false, false)))
+            .Select(child => new EventStackChildViewModel(child)));
         FileSummary = item.FileSummary ?? item.Row.Summary;
         ProcessDisplay = item.ProcessName ?? "Unknown process";
         IsGroup = item.IsGroup;
@@ -442,10 +454,20 @@ public sealed class EventStackItemViewModel : ObservableObject
 /// <summary>Bindable child row for a grouped operation.</summary>
 public sealed class EventStackChildViewModel
 {
-    internal EventStackChildViewModel(EventStackRow row) => Row = row;
+    internal EventStackChildViewModel(EventStackItem item)
+    {
+        Row = item.Row;
+        Children = new ObservableCollection<EventStackChildViewModel>((item.NestedChildren ?? Array.Empty<EventStackItem>()).Select(child => new EventStackChildViewModel(child)));
+    }
 
     /// <summary>Underlying child row.</summary>
     public EventStackRow Row { get; }
+
+    /// <summary>Nested file, normalized, and source rows retained by the recursive projection.</summary>
+    public ObservableCollection<EventStackChildViewModel> Children { get; }
+
+    /// <summary>Whether this child has another expandable level.</summary>
+    public bool HasChildren => Children.Count > 0;
 
     /// <summary>Child operation summary.</summary>
     public string DisplaySummary => $"{Row.Operation}: {Row.Summary}";

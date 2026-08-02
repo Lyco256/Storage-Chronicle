@@ -1,11 +1,12 @@
 using System.Buffers.Binary;
 using System.Text.Json;
 using StorageChronicle.Domain.Contracts;
+using StorageChronicle.Contracts.Runtime;
 
 namespace StorageChronicle.SessionAgent;
 
 /// <summary>A versioned clipboard candidate sent from the user-session process.</summary>
-public sealed record ClipboardCandidateMessage(long Generation, IReadOnlyList<string> Paths, bool IsCut, string Quality, DateTimeOffset ObservedUtc)
+public sealed record ClipboardCandidateMessage(long Generation, IReadOnlyList<string> Paths, bool IsCut, string Quality, DateTimeOffset ObservedUtc, long SourceSequence = 0)
 {
     /// <summary>Creates a bounded IPC payload from a clipboard SourceEvent.</summary>
     public static ClipboardCandidateMessage FromSourceEvent(SourceEvent value)
@@ -19,8 +20,11 @@ public sealed record ClipboardCandidateMessage(long Generation, IReadOnlyList<st
         var generation = value.Properties.TryGetValue("clipboardGeneration", out var generationText) && long.TryParse(generationText, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsedGeneration) ? parsedGeneration : 0;
         var isCut = value.Properties.TryGetValue("clipboardIsCut", out var isCutText) && bool.TryParse(isCutText, out var parsedIsCut) && parsedIsCut;
         var quality = value.Properties.TryGetValue("clipboardQuality", out var qualityText) ? qualityText : "NotIdentified";
-        return new ClipboardCandidateMessage(generation, paths, isCut, quality, value.Time.RecordedUtc);
+        return new ClipboardCandidateMessage(generation, paths, isCut, quality, value.Time.RecordedUtc, value.Time.SourceSequence.Value);
     }
+
+    /// <summary>Maps the session-owned message to the Agent's source-generated IPC contract.</summary>
+    public ClipboardCandidateRequest ToAgentRequest() => new(Generation, Paths, IsCut, Quality, ObservedUtc, SourceSequence);
 }
 
 /// <summary>Decoded versioned session-agent message.</summary>

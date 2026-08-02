@@ -36,6 +36,7 @@ public sealed class MediaHistoryImporter
         var manifestHashes = new HashSet<string>(ledger.ManifestHashes, StringComparer.OrdinalIgnoreCase);
         var segmentHashes = new HashSet<string>(ledger.SegmentHashes, StringComparer.OrdinalIgnoreCase);
         var importedManifests = new List<string>();
+        var importedSegments = new List<string>();
         var events = new List<CanonicalEvent>();
         var duplicates = 0;
 
@@ -58,13 +59,14 @@ public sealed class MediaHistoryImporter
                     var segmentEvents = await pair.Store.ReadSegmentAsync(segment, cancellationToken).ConfigureAwait(false);
                     var effectiveFilter = filter.IsSpecified ? filter : new MediaOnlyFilter(LogicalMediaId: manifest.LogicalMediaId);
                     events.AddRange(MediaEventFilter.Apply(segmentEvents, effectiveFilter));
+                    importedSegments.Add(segment.Sha256);
                 }
                 catch (InvalidDataException) { warnings.Add(MediaImportWarning.SegmentCorrupt); }
                 catch (FileNotFoundException) { warnings.Add(MediaImportWarning.SegmentCorrupt); }
             }
         }
 
-        return new MediaImportResult(events, importedManifests, duplicates, branch, warnings.Contains(MediaImportWarning.SegmentCorrupt) ? MediaHistoryQuality.UnverifiedGap : MediaHistoryQuality.Exact, warnings.OrderBy(value => value).ToArray());
+        return new MediaImportResult(events, importedManifests, duplicates, branch, warnings.Contains(MediaImportWarning.SegmentCorrupt) ? MediaHistoryQuality.UnverifiedGap : MediaHistoryQuality.Exact, warnings.OrderBy(value => value).ToArray(), importedSegments);
     }
 }
 
@@ -86,10 +88,23 @@ public sealed class MediaImportLedgerStore
     public async ValueTask<MediaImportLedger> LoadAsync(CancellationToken cancellationToken = default)
     {
         if (!File.Exists(path)) return MediaImportLedger.Empty;
-        var document = JsonSerializer.Deserialize<LedgerDocument>(await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false), Options);
-        return document is null
-            ? MediaImportLedger.Empty
-            : new MediaImportLedger((document.ManifestHashes ?? Array.Empty<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase), (document.SegmentHashes ?? Array.Empty<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase), (document.BranchHashes ?? Array.Empty<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase));
+        try
+        {
+            var document = JsonSerializer.Deserialize<LedgerDocument>(await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false), Options);
+            return document is null
+                ? MediaImportLedger.Empty
+                : new MediaImportLedger((document.ManifestHashes ?? Array.Empty<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase), (document.SegmentHashes ?? Array.Empty<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase), (document.BranchHashes ?? Array.Empty<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase));
+        }
+        catch (JsonException)
+        {
+            // A corrupt PC-side ledger must not stop media monitoring. Confirmed manifests and
+            // CRC/SHA validation remain authoritative; the next save atomically replaces the ledger.
+            return MediaImportLedger.Empty;
+        }
+        catch (IOException)
+        {
+            return MediaImportLedger.Empty;
+        }
     }
 
     /// <summary>Saves the ledger atomically so a process stop cannot erase prior deduplication.</summary>

@@ -52,10 +52,36 @@
                 <ItemsControl Grid.Row="3" Grid.Column="2" Grid.ColumnSpan="2" ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:EventStackChildViewModel">
-                      <StackPanel Orientation="Horizontal" Spacing="6" Margin="12,4,0,0">
-                        <TextBlock Text="↳" />
-                        <TextBlock Text="{Binding DisplaySummary}" />
-                        <TextBlock Text="{Binding QualityDisplay}" Opacity="0.75" />
+                      <StackPanel Spacing="2">
+                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="12,4,0,0">
+                          <TextBlock Text="↳" />
+                          <TextBlock Text="{Binding DisplaySummary}" />
+                          <TextBlock Text="{Binding QualityDisplay}" Opacity="0.75" />
+                        </StackPanel>
+                        <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding HasChildren}" Margin="24,0,0,0">
+                          <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:EventStackChildViewModel">
+                              <StackPanel Spacing="2">
+                                <StackPanel Orientation="Horizontal" Spacing="6" Margin="12,2,0,0">
+                                  <TextBlock Text="•" />
+                                  <TextBlock Text="{Binding DisplaySummary}" />
+                                  <TextBlock Text="{Binding QualityDisplay}" Opacity="0.75" />
+                                </StackPanel>
+                                <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding HasChildren}" Margin="36,0,0,0">
+                                  <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:EventStackChildViewModel">
+                                      <StackPanel Orientation="Horizontal" Spacing="6" Margin="12,2,0,0">
+                                        <TextBlock Text="└" />
+                                        <TextBlock Text="{Binding DisplaySummary}" />
+                                        <TextBlock Text="{Binding QualityDisplay}" Opacity="0.75" />
+                                      </StackPanel>
+                                    </DataTemplate>
+                                  </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                              </StackPanel>
+                            </DataTemplate>
+                          </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                       </StackPanel>
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
@@ -101,9 +127,9 @@
     <DockPanel Grid.Row="3" Grid.ColumnSpan="2">
       <TextBlock DockPanel.Dock="Left" Text="{Binding StatusMessage}" VerticalAlignment="Center" />
       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
-        <Button Content="50" Command="{Binding SetPageSizeCommand}" CommandParameter="50" AutomationProperties.Name="50 rows per page" />
-        <Button Content="100" Command="{Binding SetPageSizeCommand}" CommandParameter="100" AutomationProperties.Name="100 rows per page" />
-        <Button Content="250" Command="{Binding SetPageSizeCommand}" CommandParameter="250" AutomationProperties.Name="250 rows per page" />
+        <Button Content="50" Command="{Binding SetPageSizeCommand}" CommandParameter="{Binding PageSize50}" AutomationProperties.Name="50 rows per page" />
+        <Button Content="100" Command="{Binding SetPageSizeCommand}" CommandParameter="{Binding PageSize100}" AutomationProperties.Name="100 rows per page" />
+        <Button Content="250" Command="{Binding SetPageSizeCommand}" CommandParameter="{Binding PageSize250}" AutomationProperties.Name="250 rows per page" />
         <Button Content="Previous" Command="{Binding PreviousPageCommand}" IsEnabled="{Binding CanGoPrevious}" AutomationProperties.Name="Previous page" />
         <TextBlock Text="{Binding CurrentPage}" VerticalAlignment="Center" />
         <Button Content="Next" Command="{Binding NextPageCommand}" IsEnabled="{Binding HasMore}" AutomationProperties.Name="Next page" />

@@ -1,5 +1,7 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 
 namespace StorageChronicle.ResourceMonitor;
@@ -20,8 +22,8 @@ public static class Program
 
         try
         {
-            using var process = Process.GetProcessById(options.ProcessId);
-            var samples = Sample(process, options.Duration, options.IntervalMilliseconds);
+            using var processes = new ProcessSet(options.ProcessIds);
+            var samples = Sample(processes, options.Duration, options.IntervalMilliseconds);
             var result = BuildResult(options, samples);
             var json = JsonSerializer.Serialize(result, JsonOptions);
             if (options.OutputPath is null) Console.WriteLine(json);
@@ -41,10 +43,10 @@ public static class Program
         }
     }
 
-    private static IReadOnlyList<ResourceSample> Sample(Process process, TimeSpan duration, int intervalMilliseconds)
+    private static IReadOnlyList<ResourceSample> Sample(ProcessSet processes, TimeSpan duration, int intervalMilliseconds)
     {
-        process.Refresh();
-        var startCpu = process.TotalProcessorTime;
+        processes.Refresh();
+        var startCpu = processes.TotalProcessorTime;
         var stopwatch = Stopwatch.StartNew();
         var samples = new List<ResourceSample>();
         while (stopwatch.Elapsed < duration)
@@ -52,8 +54,13 @@ public static class Program
             Thread.Sleep(intervalMilliseconds);
             try
             {
-                process.Refresh();
-                samples.Add(new ResourceSample(DateTimeOffset.UtcNow, process.PrivateMemorySize64, process.WorkingSet64));
+                processes.Refresh();
+                if (processes.PrivateWorkingSetBytes is not { } privateWorkingSet)
+                {
+                    throw new InvalidOperationException("Private working set is unavailable for one or more processes.");
+                }
+
+                samples.Add(new ResourceSample(DateTimeOffset.UtcNow, privateWorkingSet, processes.WorkingSetBytes, processes.WriteBytes));
             }
             catch (InvalidOperationException)
             {
@@ -63,7 +70,7 @@ public static class Program
 
         var elapsed = stopwatch.Elapsed;
         if (samples.Count == 0) throw new InvalidOperationException("the process exited before a sample could be collected.");
-        var cpu = process.HasExited ? startCpu : process.TotalProcessorTime;
+        var cpu = processes.TotalProcessorTime;
         var cpuPercent = elapsed.TotalMilliseconds <= 0
             ? 0
             : (cpu - startCpu).TotalMilliseconds / (elapsed.TotalMilliseconds * Environment.ProcessorCount) * 100;
@@ -72,23 +79,29 @@ public static class Program
 
     private static ResourceResult BuildResult(MonitorOptions options, IReadOnlyList<ResourceSample> samples)
     {
-        var peakPrivate = samples.Max(sample => sample.PrivateBytes);
+        var peakPrivateWorkingSet = samples.Max(sample => sample.PrivateWorkingSetBytes);
+        var peakWorkingSet = samples.Max(sample => sample.WorkingSetBytes);
         var averageCpu = samples.Average(sample => sample.CpuPercent);
+        var writes = samples.Where(sample => sample.WriteBytes is not null).Select(sample => sample.WriteBytes!.Value).ToArray();
+        long? diskWriteBytes = writes.Length < 2 ? null : Math.Max(0, writes[^1] - writes[0]);
         return new ResourceResult(
-            options.ProcessId,
+            options.ProcessIds,
             samples.Count,
-            peakPrivate,
-            peakPrivate / 1024d / 1024d,
+            peakPrivateWorkingSet,
+            peakPrivateWorkingSet / 1024d / 1024d,
+            peakWorkingSet,
+            peakWorkingSet / 1024d / 1024d,
             averageCpu,
-            peakPrivate / 1024d / 1024d > options.MaxPrivateMiB,
+            peakPrivateWorkingSet / 1024d / 1024d > options.MaxPrivateMiB,
             averageCpu > options.MaxCpuPercent,
-            "Disk-write accounting is intentionally reported by the host-specific collector; this portable monitor does not infer it.",
+            diskWriteBytes,
+            "Queue depth is reported by the Agent health IPC surface; this process monitor does not infer it from OS thread counts.",
             samples);
     }
 
     private static bool TryParse(string[] args, out MonitorOptions options)
     {
-        var pid = 0;
+        var processIds = new List<int>();
         var durationSeconds = 10;
         var intervalMilliseconds = 250;
         string? outputPath = null;
@@ -98,7 +111,7 @@ public static class Program
         {
             switch (args[index])
             {
-                case "--pid" when ++index < args.Length && int.TryParse(args[index], NumberStyles.Integer, CultureInfo.InvariantCulture, out pid) && pid > 0: break;
+                case "--pid" when ++index < args.Length && int.TryParse(args[index], NumberStyles.Integer, CultureInfo.InvariantCulture, out var pid) && pid > 0: processIds.Add(pid); break;
                 case "--duration-seconds" when ++index < args.Length && int.TryParse(args[index], NumberStyles.Integer, CultureInfo.InvariantCulture, out durationSeconds) && durationSeconds is >= 1 and <= 600: break;
                 case "--interval-ms" when ++index < args.Length && int.TryParse(args[index], NumberStyles.Integer, CultureInfo.InvariantCulture, out intervalMilliseconds) && intervalMilliseconds is >= 50 and <= 10_000: break;
                 case "--output" when ++index < args.Length: outputPath = args[index]; break;
@@ -108,11 +121,106 @@ public static class Program
             }
         }
 
-        options = new MonitorOptions(pid, TimeSpan.FromSeconds(durationSeconds), intervalMilliseconds, outputPath, maxPrivateMiB, maxCpuPercent);
-        return pid > 0;
+        options = new MonitorOptions(processIds, TimeSpan.FromSeconds(durationSeconds), intervalMilliseconds, outputPath, maxPrivateMiB, maxCpuPercent);
+        return processIds.Count > 0;
     }
 
-    private readonly record struct MonitorOptions(int ProcessId, TimeSpan Duration, int IntervalMilliseconds, string? OutputPath, double MaxPrivateMiB, double MaxCpuPercent);
-    private sealed record ResourceSample(DateTimeOffset RecordedUtc, long PrivateBytes, long WorkingSetBytes, double CpuPercent = 0);
-    private sealed record ResourceResult(int ProcessId, int SampleCount, long PeakPrivateBytes, double PeakPrivateMiB, double AverageCpuPercent, bool PrivateMemoryLimitExceeded, bool CpuLimitExceeded, string DiskWriteNote, IReadOnlyList<ResourceSample> Samples);
+    private sealed class ProcessSet : IDisposable
+    {
+        private readonly IReadOnlyList<Process> processes;
+
+        public ProcessSet(IReadOnlyList<int> processIds) => processes = processIds.Select(Process.GetProcessById).ToArray();
+
+        public long WorkingSetBytes => processes.Sum(process => process.WorkingSet64);
+        public long? PrivateWorkingSetBytes => OperatingSystem.IsWindows() ? TryGetPrivateWorkingSetBytes() : null;
+        public long? WriteBytes => OperatingSystem.IsWindows() ? TryGetWriteBytes() : null;
+        public TimeSpan TotalProcessorTime => processes.Aggregate(TimeSpan.Zero, (total, process) => total + process.TotalProcessorTime);
+        public void Refresh()
+        {
+            foreach (var process in processes) process.Refresh();
+        }
+
+        public void Dispose()
+        {
+            foreach (var process in processes) process.Dispose();
+        }
+
+        private long? TryGetWriteBytes()
+        {
+            ulong total = 0;
+            foreach (var process in processes)
+            {
+                try
+                {
+                    if (!GetProcessIoCounters(process.Handle, out var counters)) return null;
+                    total = checked(total + counters.WriteTransferCount);
+                }
+                catch (InvalidOperationException) { return null; }
+                catch (Win32Exception) { return null; }
+                catch (UnauthorizedAccessException) { return null; }
+            }
+
+            return total > long.MaxValue ? long.MaxValue : (long)total;
+        }
+
+        private long? TryGetPrivateWorkingSetBytes()
+        {
+            ulong total = 0;
+            foreach (var process in processes)
+            {
+                try
+                {
+                    var counters = new ProcessMemoryCountersEx2 { Size = (uint)Marshal.SizeOf<ProcessMemoryCountersEx2>() };
+                    if (!GetProcessMemoryInfo(process.Handle, ref counters, counters.Size)) return null;
+                    total = checked(total + counters.PrivateWorkingSetSize.ToUInt64());
+                }
+                catch (InvalidOperationException) { return null; }
+                catch (Win32Exception) { return null; }
+                catch (UnauthorizedAccessException) { return null; }
+            }
+
+            return total > long.MaxValue ? long.MaxValue : (long)total;
+        }
+    }
+
+    private readonly record struct MonitorOptions(IReadOnlyList<int> ProcessIds, TimeSpan Duration, int IntervalMilliseconds, string? OutputPath, double MaxPrivateMiB, double MaxCpuPercent);
+    private sealed record ResourceSample(DateTimeOffset RecordedUtc, long PrivateWorkingSetBytes, long WorkingSetBytes, long? WriteBytes, double CpuPercent = 0);
+    private sealed record ResourceResult(IReadOnlyList<int> ProcessIds, int SampleCount, long PeakPrivateWorkingSetBytes, double PeakPrivateWorkingSetMiB, long PeakWorkingSetBytes, double PeakWorkingSetMiB, double AverageCpuPercent, bool PrivateMemoryLimitExceeded, bool CpuLimitExceeded, long? DiskWriteBytes, string QueueDepthNote, IReadOnlyList<ResourceSample> Samples);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IoCounters
+    {
+        public ulong ReadOperationCount;
+        public ulong WriteOperationCount;
+        public ulong OtherOperationCount;
+        public ulong ReadTransferCount;
+        public ulong WriteTransferCount;
+        public ulong OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessMemoryCountersEx2
+    {
+        public uint Size;
+        public uint PageFaultCount;
+        public UIntPtr PeakWorkingSetSize;
+        public UIntPtr WorkingSetSize;
+        public UIntPtr QuotaPeakPagedPoolUsage;
+        public UIntPtr QuotaPagedPoolUsage;
+        public UIntPtr QuotaPeakNonPagedPoolUsage;
+        public UIntPtr QuotaNonPagedPoolUsage;
+        public UIntPtr PagefileUsage;
+        public UIntPtr PeakPagefileUsage;
+        public UIntPtr PrivateUsage;
+        public UIntPtr PrivateWorkingSetSize;
+        public ulong SharedCommitUsage;
+    }
+
+    [DllImport("kernel32.dll", EntryPoint = "K32GetProcessMemoryInfo", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetProcessMemoryInfo(IntPtr processHandle, ref ProcessMemoryCountersEx2 counters, uint size);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetProcessIoCounters(IntPtr processHandle, out IoCounters counters);
 }

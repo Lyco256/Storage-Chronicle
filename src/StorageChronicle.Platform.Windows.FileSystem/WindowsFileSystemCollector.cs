@@ -35,7 +35,13 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
     public async IAsyncEnumerable<SourceEvent> CollectAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var volumes = await volumeEnumerator.EnumerateAsync(cancellationToken).ConfigureAwait(false);
-        var output = Channel.CreateUnbounded<SourceEvent>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
+        var output = Channel.CreateBounded<SourceEvent>(new BoundedChannelOptions(Math.Max(options.InitialNotificationCapacity, options.SnapshotBatchSize))
+        {
+            SingleReader = true,
+            SingleWriter = false,
+            FullMode = BoundedChannelFullMode.Wait,
+            AllowSynchronousContinuations = false
+        });
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var workers = volumes.Select(volume => CollectVolumeAsync(volume, output.Writer, linkedCancellation.Token)).ToArray();
         var completion = CompleteOutputAsync(workers, output.Writer, linkedCancellation.Token);
@@ -61,16 +67,27 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
         var volumeToken = volumeCancellation.Token;
         try
         {
+            var rootPath = ResolveRootPath(volume);
+            if (rootPath is null) return;
+
+            if (string.Equals(volume.FileSystem, "NTFS", StringComparison.OrdinalIgnoreCase) && exclusionPolicy.IsWholeVolumeMonitored(ResolveVolumeRoot(volume))) return;
+            if (options.SkipFileSystems.Contains(volume.FileSystem)) return;
+
             if (!volume.IsDirectoryReadable)
             {
                 await output.WriteAsync(WindowsSourceEventFactory.Gap(volume.Id, "Volume cannot be enumerated as a directory", 0), cancellationToken).ConfigureAwait(false);
                 return;
             }
 
-            var rootPath = volume.MountPoints.Count == 0 ? volume.Id.Value + Path.DirectorySeparatorChar : volume.MountPoints[0];
             var monitor = monitorFactory.Create(volume.Id, rootPath, options.NotificationBufferSize);
-            var nativeReads = Channel.CreateUnbounded<DirectoryChangeRead>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
-            var liveReads = Channel.CreateUnbounded<DirectoryChangeRead>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
+            var nativeReads = Channel.CreateBounded<DirectoryChangeRead>(new BoundedChannelOptions(options.InitialNotificationCapacity)
+            {
+                SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait
+            });
+            var liveReads = Channel.CreateBounded<DirectoryChangeRead>(new BoundedChannelOptions(options.InitialNotificationCapacity)
+            {
+                SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait
+            });
             var monitorTask = PumpMonitorAsync(monitor, nativeReads.Writer, volumeToken);
             var pending = new InitialScanNotificationBuffer(options.InitialNotificationCapacity);
             pending.Begin(0);
@@ -218,6 +235,15 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
         var oldPath = notification.OldRelativePath is null ? null : Path.Combine(rootPath, notification.OldRelativePath);
         return exclusionPolicy.ShouldExclude(newPath) || (oldPath is not null && exclusionPolicy.ShouldExclude(oldPath));
     }
+
+    private string? ResolveRootPath(VolumeDescriptor volume)
+    {
+        var mountRoot = ResolveVolumeRoot(volume);
+        return exclusionPolicy.ResolveMonitoringRoot(mountRoot);
+    }
+
+    private static string ResolveVolumeRoot(VolumeDescriptor volume)
+        => volume.MountPoints.Count == 0 ? volume.Id.Value + Path.DirectorySeparatorChar : volume.MountPoints[0];
 
     private static SourceEvent ToSourceEvent(VolumeDescriptor volume, DirectoryChangeNotification notification, long sequence)
     {

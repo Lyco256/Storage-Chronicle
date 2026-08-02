@@ -23,6 +23,19 @@ public sealed class AgentPipelineTests
     }
 
     [Fact]
+    public async Task BoundedQueueReportsDepthAndReturnsToZeroAfterDrain()
+    {
+        var depths = new System.Collections.Concurrent.ConcurrentBag<int>();
+        var pipeline = new AgentPipeline(new FakeStore(), new FakeState(), new EventNormalizer(), 1);
+        pipeline.QueueDepthChanged += depths.Add;
+
+        await pipeline.RunAsync(new FakeCollector(Source(11)));
+
+        Assert.Contains(1, depths);
+        Assert.Contains(0, depths);
+    }
+
+    [Fact]
     public async Task CancellationDoesNotLeaveAnUnboundedProducer()
     {
         var cts = new CancellationTokenSource();
@@ -30,11 +43,51 @@ public sealed class AgentPipelineTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new AgentPipeline(new FakeStore(), new FakeState(), new EventNormalizer()).RunAsync(new FakeCollector(Source(1)), cts.Token));
     }
 
+    [Fact]
+    public async Task OneCollectorFailureIsReportedWithoutDroppingAnotherCollector()
+    {
+        var store = new FakeStore();
+        var state = new FakeState();
+        var pipeline = new AgentPipeline(store, state, new EventNormalizer());
+        var failures = 0;
+        var observed = 0;
+        pipeline.CollectorFailed += (_, _) => failures++;
+        pipeline.SourceObserved += _ => observed++;
+        await pipeline.RunAsync(new ISourceEventCollector[] { new ThrowingCollector(), new FakeCollector(Source(2)) });
+        Assert.Equal(1, failures);
+        Assert.Equal(1, observed);
+        Assert.Single(store.Sources);
+        Assert.Single(state.Values);
+    }
+
+    [Fact]
+    public async Task DuplicateSourceEventIdIsPersistedOnlyOnceWithinTheBoundedWindow()
+    {
+        var store = new FakeStore();
+        var state = new FakeState();
+        var source = Source(3);
+        await new AgentPipeline(store, state, new EventNormalizer(), 2).RunAsync(new FakeCollector(source, source));
+
+        Assert.Single(store.Sources);
+        Assert.Single(store.Canonicals);
+        Assert.Single(state.Values);
+    }
+
     private static SourceEvent Source(long sequence) { var now = DateTimeOffset.UtcNow; return new(EventId.New(), EventSchemaVersion.Current, EventOrigin.LiveUsn, VolumeId.Create("v"), FileId.Create("f"), null, "f", null, CanonicalOperation.Create, null, new EventTime(now, TimeSpan.Zero, null, now, new SourceSequence(sequence), new MountSequence(sequence)), EventQuality.Exact, null, ProcessAttributionQuality.Unknown, null, null, ImmutableDictionary<string, string>.Empty); }
 
     private sealed class FakeCollector(params SourceEvent[] values) : ISourceEventCollector
     {
         public async IAsyncEnumerable<SourceEvent> CollectAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default) { foreach (var value in values) { cancellationToken.ThrowIfCancellationRequested(); yield return value; await Task.Yield(); } }
+    }
+
+    private sealed class ThrowingCollector : ISourceEventCollector
+    {
+        public async IAsyncEnumerable<SourceEvent> CollectAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Yield();
+            if (cancellationToken.IsCancellationRequested) yield break;
+            throw new IOException("collector failure");
+        }
     }
 
     private sealed class FakeStore : IEventStore

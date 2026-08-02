@@ -1,4 +1,5 @@
 using System.Text.Json;
+using StorageChronicle.Platform.Windows.FileSystem.Policy;
 using StorageChronicle.Settings;
 using StorageChronicle.Storage;
 
@@ -38,7 +39,7 @@ public sealed class NamedPipeSettingsAuthorizer : IAgentSettingsAuthorizer
 }
 
 /// <summary>Persists settings change facts as append-only UTF-8 JSON without storing values or secrets.</summary>
-public sealed class SettingsHistoryStore : ISettingsChangeHistory
+public sealed class SettingsHistoryStore : ISettingsChangeHistory, IDisposable
 {
     private readonly string path;
     private readonly SemaphoreSlim gate = new(1, 1);
@@ -71,16 +72,44 @@ public sealed class SettingsHistoryStore : ISettingsChangeHistory
             gate.Release();
         }
     }
+
+    /// <summary>Releases the serialized history writer gate.</summary>
+    public void Dispose() => gate.Dispose();
 }
 
-/// <summary>Flushes durable history before a settings-triggered monitoring restart.</summary>
-public sealed class StorageFlushMonitoringLifecycle : IMonitoringLifecycle
+/// <summary>Delegates a settings-triggered restart to the hosted monitoring supervisor.</summary>
+public sealed class AgentMonitoringLifecycle : IMonitoringLifecycle
 {
-    private readonly AppendOnlyStorageEngine storage;
+    private readonly AgentWorker worker;
+    private readonly ISettingsStore<MachineSettings>? machineSettings;
+    private readonly WindowsExclusionPolicy? exclusionPolicy;
+    private readonly AppendOnlyStorageEngine? storage;
 
     /// <summary>Initializes the lifecycle adapter.</summary>
-    public StorageFlushMonitoringLifecycle(AppendOnlyStorageEngine storage) => this.storage = storage ?? throw new ArgumentNullException(nameof(storage));
+    public AgentMonitoringLifecycle(AgentWorker worker, ISettingsStore<MachineSettings>? machineSettings = null, WindowsExclusionPolicy? exclusionPolicy = null, AppendOnlyStorageEngine? storage = null)
+    {
+        this.worker = worker ?? throw new ArgumentNullException(nameof(worker));
+        this.machineSettings = machineSettings!;
+        this.exclusionPolicy = exclusionPolicy;
+        this.storage = storage;
+    }
 
     /// <inheritdoc />
-    public ValueTask RestartAsync(CancellationToken cancellationToken = default) => storage.FlushAsync(cancellationToken);
+    public async ValueTask RestartAsync(CancellationToken cancellationToken = default)
+    {
+        if (machineSettings is not null)
+        {
+            var current = machineSettings.Load().Settings;
+            exclusionPolicy?.SetUserExcludedRoots(current.ExcludedPaths);
+            exclusionPolicy?.SetMonitoredRoots(current.MonitoringPaths);
+            storage?.UpdateFlushInterval(TimeSpan.FromSeconds(Math.Clamp(current.FlushIntervalSeconds, 1, 3600)));
+            if (storage is not null && !string.Equals(storage.StorageDirectory, Path.GetFullPath(current.LogStoragePath), StringComparison.OrdinalIgnoreCase))
+            {
+                await storage.RelocateAsync(current.LogStoragePath, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        if (storage is not null) await storage.TryResumeAsync(cancellationToken).ConfigureAwait(false);
+        await worker.RestartAsync(cancellationToken).ConfigureAwait(false);
+    }
 }

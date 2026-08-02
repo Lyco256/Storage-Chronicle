@@ -1,4 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><TargetFramework>net10.0-windows10.0.19041.0</TargetFramework><RootNamespace>StorageChronicle.Platform.Windows.Ntfs</RootNamespace><AssemblyName>StorageChronicle.Platform.Windows.Ntfs</AssemblyName><SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion></PropertyGroup>
-  <ItemGroup><ProjectReference Include="..\StorageChronicle.Domain\StorageChronicle.Domain.csproj" /><ProjectReference Include="..\StorageChronicle.Contracts\StorageChronicle.Contracts.csproj" /><ProjectReference Include="..\StorageChronicle.Platform.Abstractions\StorageChronicle.Platform.Abstractions.csproj" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="..\StorageChronicle.Domain\StorageChronicle.Domain.csproj" /><ProjectReference Include="..\StorageChronicle.Contracts\StorageChronicle.Contracts.csproj" /><ProjectReference Include="..\StorageChronicle.Platform.Abstractions\StorageChronicle.Platform.Abstractions.csproj" /><PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" /></ItemGroup>
 </Project>

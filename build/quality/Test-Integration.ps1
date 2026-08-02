@@ -10,9 +10,7 @@ $projects = @(
 foreach ($project in $projects) {
     $projectPath = Join-Path $root $project
     $assembly = [IO.Path]::GetFileNameWithoutExtension($projectPath)
-    $exe = Get-ChildItem (Join-Path (Split-Path $projectPath) 'bin') -Recurse -Filter "$assembly.exe" | Where-Object { $_.FullName -match "\\Debug\\" } | Select-Object -First 1
-    if ($null -eq $exe) { Write-Error "Test executable not found: $assembly.exe" }
-    & $exe.FullName -noLogo -automated sync -xml (Join-Path $artifact "$assembly.xml")
+    dotnet test $projectPath --no-build --results-directory $artifact
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 exit 0
