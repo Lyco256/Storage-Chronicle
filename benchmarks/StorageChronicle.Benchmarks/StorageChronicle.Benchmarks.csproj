@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><RootNamespace>StorageChronicle.Benchmarks</RootNamespace><AssemblyName>StorageChronicle.Benchmarks</AssemblyName></PropertyGroup>
+  <ItemGroup><ProjectReference Include="..\..\src\StorageChronicle.Projection\StorageChronicle.Projection.csproj" /><PackageReference Include="BenchmarkDotNet" /></ItemGroup>
+</Project>

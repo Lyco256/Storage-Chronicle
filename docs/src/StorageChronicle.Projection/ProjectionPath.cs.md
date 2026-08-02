@@ -1,0 +1,7 @@
+# ProjectionPath.cs
+
+記録済みpath、parentPath、Metadataの親ID、既知の親パスからOS非依存にパスを再構成する。イベント順序はRecordedUtc、SourceSequence、MountSequence、EventIdで決定し、ファイルシステムへ問い合わせない。
+
+Activityの初期アンカーは変更項目の親フォルダーであり、同じ/祖先/子孫関係と新規フォルダーの配下判定をこのファイルの境界判定で行う。兄弟フォルダーを共通祖先へ昇格させない。パス不明はProjection側で仮想ルートへ渡す。
+
+主なテストは新規フォルダー表示ルート、競合プロセス境界、Unknown grouping、Diffの場所不明仮想ルート。

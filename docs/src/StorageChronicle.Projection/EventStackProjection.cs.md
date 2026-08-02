@@ -1,0 +1,7 @@
+# EventStackProjection.cs
+
+Source、Normalized、Groupedの3モードを生成する。GroupedはActivityをルートに、ファイル要約、Normalized Event、Source Eventの順で展開可能なEventStackNodeを作る。ProjectionPageはルートだけをページングし、子孫はルートと一緒に返すためページ境界で分断しない。
+
+初期順序は新しいものが上で、Ascendingも選択できる。行ごとにProcess表示名と品質を保持し、UnverifiedGapはGap nodeとして独立する。SourceとNormalizedの関連は記録済みnormalizedEventIdだけを使い、推測やSource Eventの変更は行わない。
+
+依存はDomain/ContractsとPath/Activity projectionのみ。主なテストは3モード、展開、並び順、ページング、Source/Normalized関連、Gap。
