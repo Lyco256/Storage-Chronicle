@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>StorageChronicle.Normalization</RootNamespace>
+    <AssemblyName>StorageChronicle.Normalization</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\StorageChronicle.Contracts\StorageChronicle.Contracts.csproj" />
+    <ProjectReference Include="..\StorageChronicle.Domain\StorageChronicle.Domain.csproj" />
+  </ItemGroup>
+</Project>
