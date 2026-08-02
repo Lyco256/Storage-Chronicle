@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/StorageChronicle.Benchmarks/StorageChronicle.Benchmarks.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/StorageChronicle.Domain/StorageChronicle.Domain.csproj" />
     <Project Path="src/StorageChronicle.Contracts/StorageChronicle.Contracts.csproj" />
@@ -22,10 +25,14 @@
     <Project Path="src/StorageChronicle.UI.Desktop/StorageChronicle.UI.Desktop.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/StorageChronicle.Architecture.Tests/StorageChronicle.Architecture.Tests.csproj" />
     <Project Path="tests/StorageChronicle.Domain.Tests/StorageChronicle.Domain.Tests.csproj" />
+    <Project Path="tests/StorageChronicle.Installer.Tests/StorageChronicle.Installer.Tests.csproj" />
+    <Project Path="tests/StorageChronicle.Integration.Tests/StorageChronicle.Integration.Tests.csproj" />
     <Project Path="tests/StorageChronicle.Normalization.Tests/StorageChronicle.Normalization.Tests.csproj" />
     <Project Path="tests/StorageChronicle.State.Tests/StorageChronicle.State.Tests.csproj" />
     <Project Path="tests/StorageChronicle.Agent.Tests/StorageChronicle.Agent.Tests.csproj" />
+    <Project Path="tests/StorageChronicle.EndToEnd.Tests/StorageChronicle.EndToEnd.Tests.csproj" />
     <Project Path="tests/StorageChronicle.ExternalMedia.Tests/StorageChronicle.ExternalMedia.Tests.csproj" />
     <Project Path="tests/StorageChronicle.UI.EventStack.Tests/StorageChronicle.UI.EventStack.Tests.csproj" />
     <Project Path="tests/StorageChronicle.UI.DiffView.Tests/StorageChronicle.UI.DiffView.Tests.csproj" />
@@ -35,6 +42,13 @@
     <Project Path="tests/StorageChronicle.Projection.Tests/StorageChronicle.Projection.Tests.csproj" />
     <Project Path="tests/StorageChronicle.Storage.Tests/StorageChronicle.Storage.Tests.csproj" />
     <Project Path="tests/StorageChronicle.Settings.Tests/StorageChronicle.Settings.Tests.csproj" />
+    <Project Path="tests/StorageChronicle.UI.Headless.Tests/StorageChronicle.UI.Headless.Tests.csproj" />
     <Project Path="tests/StorageChronicle.UI.Settings.Tests/StorageChronicle.UI.Settings.Tests.csproj" />
+    <Project Path="tests/StorageChronicle.WindowsIntegration.Tests/StorageChronicle.WindowsIntegration.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/StorageChronicle.DocMirrorValidator/StorageChronicle.DocMirrorValidator.csproj" />
+    <Project Path="tools/StorageChronicle.LogInspector/StorageChronicle.LogInspector.csproj" />
+    <Project Path="tools/StorageChronicle.TestDataGenerator/StorageChronicle.TestDataGenerator.csproj" />
   </Folder>
 </Solution>

@@ -1,3 +1,3 @@
 # Program.cs
 
-Creates the agent host entry point. Collector, storage, and settings composition is injected by deployment; service mode never reads clipboard state directly.
+Creates the LocalSystem-compatible Windows Service host. It composes durable append storage, normalization, and the Windows filesystem collector; file contents and clipboard contents are never retained.
