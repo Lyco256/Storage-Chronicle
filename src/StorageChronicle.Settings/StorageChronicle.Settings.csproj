@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>StorageChronicle.Settings</RootNamespace>
+    <AssemblyName>StorageChronicle.Settings</AssemblyName>
+  </PropertyGroup>
+</Project>
