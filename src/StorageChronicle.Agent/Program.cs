@@ -4,6 +4,8 @@ using StorageChronicle.Application;
 using StorageChronicle.Contracts;
 using StorageChronicle.Normalization;
 using StorageChronicle.Platform.Windows.FileSystem;
+using StorageChronicle.Projection;
+using StorageChronicle.Settings;
 using StorageChronicle.Storage;
 
 namespace StorageChronicle.Agent;
@@ -21,9 +23,18 @@ public static class Program
         builder.Services.AddSingleton<IEventStore>(services => services.GetRequiredService<AppendOnlyStorageEngine>());
         builder.Services.AddSingleton<IStateStore>(services => services.GetRequiredService<AppendOnlyStorageEngine>());
         builder.Services.AddSingleton<IEventNormalizer, EventNormalizer>();
+        builder.Services.AddSingleton<ISettingsStore<MachineSettings>, MachineSettingsStore>();
+        builder.Services.AddSingleton<ISettingsStore<UserSettings>, UserSettingsStore>();
+        builder.Services.AddSingleton<ISettingsChangeHistory, SettingsHistoryStore>();
+        builder.Services.AddSingleton<IAgentSettingsAuthorizer, NamedPipeSettingsAuthorizer>();
+        builder.Services.AddSingleton<IMonitoringLifecycle, StorageFlushMonitoringLifecycle>();
+        builder.Services.AddSingleton<AgentSettingsService>();
+        builder.Services.AddSingleton<IAgentSettingsGateway>(services => services.GetRequiredService<AgentSettingsService>());
         builder.Services.AddSingleton<ISourceEventCollector, WindowsFileSystemCollector>();
+        builder.Services.AddSingleton<IProjectionService, AgentProjectionService>();
         builder.Services.AddSingleton<AgentPipeline>();
         builder.Services.AddHostedService<AgentWorker>();
+        builder.Services.AddHostedService<NamedPipeAgentServer>();
         return builder.Build().RunAsync();
     }
 }

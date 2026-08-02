@@ -10,9 +10,45 @@ public sealed record ProtocolVersion(int Major, int Minor);
 /// <summary>JSON payload carried by the local named-pipe protocol.</summary>
 public sealed record IpcEnvelope(ProtocolVersion Protocol, string MessageType, JsonElement Payload);
 
+/// <summary>Defines the protocol version accepted by the current Agent.</summary>
+public static class IpcProtocol
+{
+    /// <summary>Current protocol major version.</summary>
+    public const int Major = 1;
+    /// <summary>Current protocol minor version.</summary>
+    public const int Minor = 0;
+
+    /// <summary>Creates a source-generated envelope for one typed message.</summary>
+    public static IpcEnvelope Create<T>(string messageType, T payload)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(messageType);
+        ArgumentNullException.ThrowIfNull(payload);
+        return new IpcEnvelope(new ProtocolVersion(Major, Minor), messageType, JsonSerializer.SerializeToElement(payload, IpcJsonContext.Default.Options));
+    }
+
+    /// <summary>Reads the typed payload from an envelope.</summary>
+    public static T Read<T>(IpcEnvelope envelope)
+    {
+        ArgumentNullException.ThrowIfNull(envelope);
+        return envelope.Payload.Deserialize<T>(IpcJsonContext.Default.Options)
+            ?? throw new InvalidDataException("IPC payload is empty.");
+    }
+}
+
 /// <summary>System.Text.Json source-generated metadata for IPC envelopes.</summary>
 [JsonSerializable(typeof(IpcEnvelope))]
 [JsonSerializable(typeof(ProtocolVersion))]
+[JsonSerializable(typeof(ProjectionPageRequest))]
+[JsonSerializable(typeof(DiffProjectionRequest))]
+[JsonSerializable(typeof(ProjectionPageResponse))]
+[JsonSerializable(typeof(DiffProjectionResponse))]
+[JsonSerializable(typeof(AgentHealth))]
+[JsonSerializable(typeof(AgentHealthRequest))]
+[JsonSerializable(typeof(SettingsSnapshotRequest))]
+[JsonSerializable(typeof(SettingsUpdateRequest))]
+[JsonSerializable(typeof(SettingsSnapshot))]
+[JsonSerializable(typeof(ReconciliationDecision))]
+[JsonSerializable(typeof(VolumeHealth))]
 public partial class IpcJsonContext : JsonSerializerContext;
 
 /// <summary>Implements the 4-byte little-endian length-prefixed local frame.</summary>

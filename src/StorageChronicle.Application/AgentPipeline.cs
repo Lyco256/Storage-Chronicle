@@ -27,11 +27,20 @@ public sealed class AgentPipeline
     /// <summary>Maximum in-flight source events.</summary>
     public int Capacity => capacity;
 
+    /// <summary>Raised when one collector fails; other collectors remain supervised and continue.</summary>
+    public event Action<ISourceEventCollector, Exception>? CollectorFailed;
+
     /// <summary>Processes a collector until cancellation or completion.</summary>
     public async Task RunAsync(ISourceEventCollector collector, CancellationToken cancellationToken = default)
+        => await RunAsync(new[] { collector }, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>Processes multiple collectors through one bounded durable pipeline.</summary>
+    public async Task RunAsync(IReadOnlyList<ISourceEventCollector> collectors, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(collector);
-        var producer = ProduceAsync(collector, cancellationToken);
+        ArgumentNullException.ThrowIfNull(collectors);
+        if (collectors.Count == 0) throw new ArgumentException("At least one collector is required.", nameof(collectors));
+        var producers = collectors.Select(collector => ProduceAsync(collector, cancellationToken)).ToArray();
+        var producerCompletion = CompleteProducersAsync(producers);
         try
         {
             await foreach (var source in queue.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
@@ -42,12 +51,19 @@ public sealed class AgentPipeline
                 await eventStore.AppendCanonicalAsync(canonical, cancellationToken).ConfigureAwait(false);
                 await stateStore.ApplyAsync(canonical, cancellationToken).ConfigureAwait(false);
             }
-            await producer.ConfigureAwait(false);
+            await producerCompletion.ConfigureAwait(false);
         }
         finally
         {
+            try { await producerCompletion.ConfigureAwait(false); } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
             queue.Writer.TryComplete();
         }
+    }
+
+    private async Task CompleteProducersAsync(IReadOnlyList<Task> producers)
+    {
+        await Task.WhenAll(producers).ConfigureAwait(false);
+        queue.Writer.TryComplete();
     }
 
     private async Task ProduceAsync(ISourceEventCollector collector, CancellationToken cancellationToken)
@@ -59,9 +75,12 @@ public sealed class AgentPipeline
                 await queue.Writer.WriteAsync(value, cancellationToken).ConfigureAwait(false);
             }
         }
-        finally
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            queue.Writer.TryComplete();
+        }
+        catch (Exception exception)
+        {
+            CollectorFailed?.Invoke(collector, exception);
         }
     }
 }

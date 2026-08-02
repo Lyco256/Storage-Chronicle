@@ -135,6 +135,75 @@ internal sealed class SqliteIndex : IAsyncDisposable
         }
     }
 
+    internal async ValueTask<IReadOnlyList<byte[]>> ReadEventPayloadsAsync(StorageRecordKind kind, int offset, int limit, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            var predicates = new List<string> { "kind = $kind" };
+            AddParameter(command, "$kind", (int)kind);
+            if (fromUtc is { } from)
+            {
+                predicates.Add("recorded_utc >= $from_utc");
+                AddParameter(command, "$from_utc", from.ToUniversalTime().ToString("O"));
+            }
+
+            if (toUtc is { } to)
+            {
+                predicates.Add("recorded_utc <= $to_utc");
+                AddParameter(command, "$to_utc", to.ToUniversalTime().ToString("O"));
+            }
+
+            command.CommandText = $"SELECT payload FROM event_index WHERE {string.Join(" AND ", predicates)} ORDER BY recorded_utc, source_sequence, sequence LIMIT $limit OFFSET $offset;";
+            AddParameter(command, "$limit", limit);
+            AddParameter(command, "$offset", offset);
+            var result = new List<byte[]>(limit);
+            using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                result.Add((byte[])reader[0]);
+            }
+
+            return result;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    internal async ValueTask<int> CountEventsAsync(StorageRecordKind kind, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            var predicates = new List<string> { "kind = $kind" };
+            AddParameter(command, "$kind", (int)kind);
+            if (fromUtc is { } from)
+            {
+                predicates.Add("recorded_utc >= $from_utc");
+                AddParameter(command, "$from_utc", from.ToUniversalTime().ToString("O"));
+            }
+
+            if (toUtc is { } to)
+            {
+                predicates.Add("recorded_utc <= $to_utc");
+                AddParameter(command, "$to_utc", to.ToUniversalTime().ToString("O"));
+            }
+
+            command.CommandText = $"SELECT COUNT(*) FROM event_index WHERE {string.Join(" AND ", predicates)};";
+            return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     internal async ValueTask StoreFinalSequenceAsync(long sequence, long sourceSequence, RecordingState state, string? reason, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);

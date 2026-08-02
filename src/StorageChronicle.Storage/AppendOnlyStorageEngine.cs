@@ -244,6 +244,40 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
     /// <inheritdoc />
     public ValueTask<FileStateSnapshot> GetSnapshotAsync(DateTimeOffset atUtc, CancellationToken cancellationToken = default) => _index.GetSnapshotAsync(atUtc, cancellationToken);
 
+    /// <summary>Reads a bounded page of canonical event payloads from the rebuildable SQLite index.</summary>
+    public async ValueTask<IReadOnlyList<CanonicalEvent>> ReadCanonicalPageAsync(int offset, int limit, DateTimeOffset? fromUtc = null, DateTimeOffset? toUtc = null, CancellationToken cancellationToken = default)
+    {
+        var payloads = await _index.ReadEventPayloadsAsync(StorageRecordKind.CanonicalEvent, offset, limit, fromUtc, toUtc, cancellationToken).ConfigureAwait(false);
+        var result = new List<CanonicalEvent>(payloads.Count);
+        foreach (var payload in payloads)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var value = JsonSerializer.Deserialize<CanonicalEvent>(payload, JsonOptions);
+            if (value is not null) result.Add(value);
+        }
+
+        return result;
+    }
+
+    /// <summary>Reads a bounded page of source event payloads from the rebuildable SQLite index.</summary>
+    public async ValueTask<IReadOnlyList<SourceEvent>> ReadSourcePageAsync(int offset, int limit, DateTimeOffset? fromUtc = null, DateTimeOffset? toUtc = null, CancellationToken cancellationToken = default)
+    {
+        var payloads = await _index.ReadEventPayloadsAsync(StorageRecordKind.SourceEvent, offset, limit, fromUtc, toUtc, cancellationToken).ConfigureAwait(false);
+        var result = new List<SourceEvent>(payloads.Count);
+        foreach (var payload in payloads)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var value = JsonSerializer.Deserialize<SourceEvent>(payload, JsonOptions);
+            if (value is not null) result.Add(value);
+        }
+
+        return result;
+    }
+
+    /// <summary>Counts indexed event records without materializing their payloads.</summary>
+    public ValueTask<int> CountEventsAsync(bool canonical, DateTimeOffset? fromUtc = null, DateTimeOffset? toUtc = null, CancellationToken cancellationToken = default)
+        => _index.CountEventsAsync(canonical ? StorageRecordKind.CanonicalEvent : StorageRecordKind.SourceEvent, fromUtc, toUtc, cancellationToken);
+
     private async ValueTask AppendAsync<T>(StorageRecordKind kind, EventSchemaVersion schemaVersion, long sourceSequence, T value, EventId eventId, EventTime time, FileId? fileId, FileId? parentFileId, string? name, CancellationToken cancellationToken)
     {
         EnsureRunning();
