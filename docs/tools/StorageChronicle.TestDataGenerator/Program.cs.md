@@ -1,3 +1,3 @@
 # TestDataGenerator/Program.cs
 
-Produces deterministic newline-delimited event metadata for load and recovery tests. The fixture intentionally contains no paths, file contents, or content hashes.
+Produces deterministic newline-delimited event metadata or a Golden JSON document with `--format ndjson|golden`, bounded by five million records and controlled by `--seed`. The fixture intentionally contains no file contents or content hashes.

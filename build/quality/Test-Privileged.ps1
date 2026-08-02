@@ -1,6 +1,6 @@
 param([string]$Configuration = 'Debug')
 $ErrorActionPreference = 'Stop'
-if (-not $IsWindows) { Write-Host 'Windows privileged tests are skipped on a non-Windows host.'; exit 0 }
+if (-not [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) { Write-Host 'Windows privileged tests are skipped on a non-Windows host.'; exit 0 }
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $artifact = Join-Path $root 'artifacts/quality/privileged'
 New-Item -ItemType Directory -Force -Path $artifact | Out-Null
