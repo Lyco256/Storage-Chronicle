@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>StorageChronicle.Projection</RootNamespace>
+    <AssemblyName>StorageChronicle.Projection</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\StorageChronicle.Domain\StorageChronicle.Domain.csproj" />
+    <ProjectReference Include="..\StorageChronicle.Contracts\StorageChronicle.Contracts.csproj" />
+  </ItemGroup>
+</Project>

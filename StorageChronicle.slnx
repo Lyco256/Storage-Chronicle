@@ -4,6 +4,19 @@
     <Project Path="src/StorageChronicle.Contracts/StorageChronicle.Contracts.csproj" />
     <Project Path="src/StorageChronicle.Platform.Abstractions/StorageChronicle.Platform.Abstractions.csproj" />
     <Project Path="src/StorageChronicle.Normalization/StorageChronicle.Normalization.csproj" />
+    <Project Path="src/StorageChronicle.State/StorageChronicle.State.csproj" />
+    <Project Path="src/StorageChronicle.Settings/StorageChronicle.Settings.csproj" />
+    <Project Path="src/StorageChronicle.UI.Settings/StorageChronicle.UI.Settings.csproj" />
+    <Project Path="src/StorageChronicle.Application/StorageChronicle.Application.csproj" />
+    <Project Path="src/StorageChronicle.Agent/StorageChronicle.Agent.csproj" />
+    <Project Path="src/StorageChronicle.ExternalMedia/StorageChronicle.ExternalMedia.csproj" />
+    <Project Path="src/StorageChronicle.UI.EventStack/StorageChronicle.UI.EventStack.csproj" />
+    <Project Path="src/StorageChronicle.UI.DiffView/StorageChronicle.UI.DiffView.csproj" />
+    <Project Path="src/StorageChronicle.Platform.Windows.Ntfs/StorageChronicle.Platform.Windows.Ntfs.csproj" />
+    <Project Path="src/StorageChronicle.Platform.Windows.FileSystem/StorageChronicle.Platform.Windows.FileSystem.csproj" />
+    <Project Path="src/StorageChronicle.Platform.Windows.Session/StorageChronicle.Platform.Windows.Session.csproj" />
+    <Project Path="src/StorageChronicle.SessionAgent/StorageChronicle.SessionAgent.csproj" />
+    <Project Path="src/StorageChronicle.Projection/StorageChronicle.Projection.csproj" />
     <Project Path="src/StorageChronicle.Storage/StorageChronicle.Storage.csproj" />
     <Project Path="src/StorageChronicle.UI.Shared/StorageChronicle.UI.Shared.csproj" />
     <Project Path="src/StorageChronicle.UI.Desktop/StorageChronicle.UI.Desktop.csproj" />
@@ -11,6 +24,17 @@
   <Folder Name="/tests/">
     <Project Path="tests/StorageChronicle.Domain.Tests/StorageChronicle.Domain.Tests.csproj" />
     <Project Path="tests/StorageChronicle.Normalization.Tests/StorageChronicle.Normalization.Tests.csproj" />
+    <Project Path="tests/StorageChronicle.State.Tests/StorageChronicle.State.Tests.csproj" />
+    <Project Path="tests/StorageChronicle.Agent.Tests/StorageChronicle.Agent.Tests.csproj" />
+    <Project Path="tests/StorageChronicle.ExternalMedia.Tests/StorageChronicle.ExternalMedia.Tests.csproj" />
+    <Project Path="tests/StorageChronicle.UI.EventStack.Tests/StorageChronicle.UI.EventStack.Tests.csproj" />
+    <Project Path="tests/StorageChronicle.UI.DiffView.Tests/StorageChronicle.UI.DiffView.Tests.csproj" />
+    <Project Path="tests/StorageChronicle.Platform.Windows.Ntfs.Tests/StorageChronicle.Platform.Windows.Ntfs.Tests.csproj" />
+    <Project Path="tests/StorageChronicle.Platform.Windows.FileSystem.Tests/StorageChronicle.Platform.Windows.FileSystem.Tests.csproj" />
+    <Project Path="tests/StorageChronicle.Platform.Windows.Session.Tests/StorageChronicle.Platform.Windows.Session.Tests.csproj" />
+    <Project Path="tests/StorageChronicle.Projection.Tests/StorageChronicle.Projection.Tests.csproj" />
     <Project Path="tests/StorageChronicle.Storage.Tests/StorageChronicle.Storage.Tests.csproj" />
+    <Project Path="tests/StorageChronicle.Settings.Tests/StorageChronicle.Settings.Tests.csproj" />
+    <Project Path="tests/StorageChronicle.UI.Settings.Tests/StorageChronicle.UI.Settings.Tests.csproj" />
   </Folder>
 </Solution>
