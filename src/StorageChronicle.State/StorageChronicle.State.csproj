@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>StorageChronicle.State</RootNamespace>
+    <AssemblyName>StorageChronicle.State</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\StorageChronicle.Domain\StorageChronicle.Domain.csproj" />
+  </ItemGroup>
+</Project>
