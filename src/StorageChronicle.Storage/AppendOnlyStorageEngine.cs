@@ -10,15 +10,16 @@ namespace StorageChronicle.Storage;
 public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.General);
-    private readonly StorageEngineOptions _options;
-    private readonly SegmentLog _segments;
-    private readonly SqliteIndex _index;
+    private StorageEngineOptions _options;
+    private SegmentLog _segments;
+    private SqliteIndex _index;
     private readonly SemaphoreSlim _writerGate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
     private readonly Task _flushLoop;
     private long _nextSequence;
     private long _lastSourceSequence;
     private RecordingStatus _status = new(RecordingState.Running, 0, 0, null);
+    private long _flushIntervalTicks;
     private int _disposed;
 
     /// <summary>Opens or creates an append store at the configured path.</summary>
@@ -27,6 +28,7 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
         ArgumentNullException.ThrowIfNull(options);
         options.Validate();
         _options = options;
+        _flushIntervalTicks = options.FlushInterval.Ticks;
         Directory.CreateDirectory(options.StorageDirectory);
         _segments = new SegmentLog(options);
         _segments.SegmentSkipped += issue => SegmentSkipped?.Invoke(issue);
@@ -70,12 +72,15 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
     /// <summary>Returns the current durable recording state.</summary>
     public RecordingStatus Status => _status;
 
+    /// <summary>Gets the directory currently receiving durable history.</summary>
+    public string StorageDirectory => _options.StorageDirectory;
+
     /// <inheritdoc />
     public async ValueTask AppendSourceAsync(SourceEvent value, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(value);
         await AppendAsync(StorageRecordKind.SourceEvent, value.SchemaVersion, value.Time.SourceSequence.Value, value, value.EventId, value.Time, value.FileId, value.ParentFileId, value.Name, cancellationToken).ConfigureAwait(false);
-        if (value.Hint is CanonicalOperation.Delete or CanonicalOperation.Rename or CanonicalOperation.Move || value.Properties.ContainsKey("media_removed"))
+        if (value.Hint is CanonicalOperation.Delete or CanonicalOperation.Rename or CanonicalOperation.Move || value.Properties.ContainsKey("media_removed") || value.Properties.ContainsKey("media.removed"))
         {
             await FlushAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -155,6 +160,107 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
                 : new StorageFlushException("The append log could not be flushed.", exception);
             SetStatus(new RecordingStatus(RecordingState.Stopped, _nextSequence, _lastSourceSequence, failure.Message));
             throw failure;
+        }
+        finally
+        {
+            _writerGate.Release();
+        }
+    }
+
+    /// <summary>Updates the periodic flush interval after validated machine settings are applied.</summary>
+    public void UpdateFlushInterval(TimeSpan interval)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(interval, TimeSpan.Zero);
+        Interlocked.Exchange(ref _flushIntervalTicks, interval.Ticks);
+    }
+
+    /// <summary>Moves immutable history and its rebuildable index to a new empty directory without losing records.</summary>
+    public async ValueTask RelocateAsync(string storageDirectory, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(storageDirectory);
+        var destination = Path.GetFullPath(storageDirectory);
+        if (string.Equals(destination, _options.StorageDirectory, StringComparison.OrdinalIgnoreCase)) return;
+        if (IsSameOrDescendant(destination, _options.StorageDirectory))
+        {
+            throw new IOException("The new history directory cannot be inside the current history directory.");
+        }
+
+        await _writerGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            EnsureRunning();
+            await FlushCoreAsync(cancellationToken).ConfigureAwait(false);
+            if (Directory.Exists(destination) && Directory.EnumerateFileSystemEntries(destination).Any())
+            {
+                throw new IOException("The new history directory must not already contain files.");
+            }
+
+            var parent = Path.GetDirectoryName(destination) ?? throw new IOException("The new history directory has no parent.");
+            Directory.CreateDirectory(parent);
+            var staging = destination + ".moving-" + Guid.NewGuid().ToString("N");
+            Directory.CreateDirectory(staging);
+            try
+            {
+                foreach (var path in Directory.EnumerateFiles(_options.StorageDirectory, "segment-*", SearchOption.TopDirectoryOnly))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    File.Copy(path, Path.Combine(staging, Path.GetFileName(path)), overwrite: false);
+                }
+
+                var stagingOptions = CloneOptions(staging);
+                await using (var stagingSegments = new SegmentLog(stagingOptions))
+                await using (var stagingIndex = new SqliteIndex(stagingOptions))
+                {
+                    await RebuildIndexAsync(stagingSegments, stagingIndex, cancellationToken).ConfigureAwait(false);
+                    await stagingIndex.StoreFinalSequenceAsync(_nextSequence, _lastSourceSequence, _status.State, _status.Reason, cancellationToken).ConfigureAwait(false);
+                }
+
+                if (Directory.Exists(destination)) Directory.Delete(destination);
+                Directory.Move(staging, destination);
+                var relocatedOptions = CloneOptions(destination);
+                var relocatedSegments = new SegmentLog(relocatedOptions);
+                var relocatedIndex = new SqliteIndex(relocatedOptions);
+                var previousSegments = _segments;
+                var previousIndex = _index;
+                relocatedSegments.SegmentSkipped += issue => SegmentSkipped?.Invoke(issue);
+                _segments = relocatedSegments;
+                _index = relocatedIndex;
+                _options = relocatedOptions;
+                await previousSegments.DisposeAsync().ConfigureAwait(false);
+                await previousIndex.DisposeAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
+                throw;
+            }
+        }
+        finally
+        {
+            _writerGate.Release();
+        }
+    }
+
+    /// <summary>Attempts to resume a stopped writer after capacity or transient I/O recovery.</summary>
+    public async ValueTask<bool> TryResumeAsync(CancellationToken cancellationToken = default)
+    {
+        await _writerGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_status.State == RecordingState.Completed) return false;
+            if (_status.State == RecordingState.Running) return true;
+            await EnsureCapacityAsync(cancellationToken).ConfigureAwait(false);
+            SetStatus(new RecordingStatus(RecordingState.Running, _nextSequence, _lastSourceSequence, null));
+            await TryStoreStatusAsync(_status).ConfigureAwait(false);
+            return true;
+        }
+        catch (StorageCapacityException)
+        {
+            return false;
+        }
+        catch (IOException)
+        {
+            return false;
         }
         finally
         {
@@ -244,6 +350,40 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
     /// <inheritdoc />
     public ValueTask<FileStateSnapshot> GetSnapshotAsync(DateTimeOffset atUtc, CancellationToken cancellationToken = default) => _index.GetSnapshotAsync(atUtc, cancellationToken);
 
+    /// <summary>Reads a bounded page of canonical event payloads from the rebuildable SQLite index.</summary>
+    public async ValueTask<IReadOnlyList<CanonicalEvent>> ReadCanonicalPageAsync(int offset, int limit, DateTimeOffset? fromUtc = null, DateTimeOffset? toUtc = null, CancellationToken cancellationToken = default)
+    {
+        var payloads = await _index.ReadEventPayloadsAsync(StorageRecordKind.CanonicalEvent, offset, limit, fromUtc, toUtc, cancellationToken).ConfigureAwait(false);
+        var result = new List<CanonicalEvent>(payloads.Count);
+        foreach (var payload in payloads)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var value = JsonSerializer.Deserialize<CanonicalEvent>(payload, JsonOptions);
+            if (value is not null) result.Add(value);
+        }
+
+        return result;
+    }
+
+    /// <summary>Reads a bounded page of source event payloads from the rebuildable SQLite index.</summary>
+    public async ValueTask<IReadOnlyList<SourceEvent>> ReadSourcePageAsync(int offset, int limit, DateTimeOffset? fromUtc = null, DateTimeOffset? toUtc = null, CancellationToken cancellationToken = default)
+    {
+        var payloads = await _index.ReadEventPayloadsAsync(StorageRecordKind.SourceEvent, offset, limit, fromUtc, toUtc, cancellationToken).ConfigureAwait(false);
+        var result = new List<SourceEvent>(payloads.Count);
+        foreach (var payload in payloads)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var value = JsonSerializer.Deserialize<SourceEvent>(payload, JsonOptions);
+            if (value is not null) result.Add(value);
+        }
+
+        return result;
+    }
+
+    /// <summary>Counts indexed event records without materializing their payloads.</summary>
+    public ValueTask<int> CountEventsAsync(bool canonical, DateTimeOffset? fromUtc = null, DateTimeOffset? toUtc = null, CancellationToken cancellationToken = default)
+        => _index.CountEventsAsync(canonical ? StorageRecordKind.CanonicalEvent : StorageRecordKind.SourceEvent, fromUtc, toUtc, cancellationToken);
+
     private async ValueTask AppendAsync<T>(StorageRecordKind kind, EventSchemaVersion schemaVersion, long sourceSequence, T value, EventId eventId, EventTime time, FileId? fileId, FileId? parentFileId, string? name, CancellationToken cancellationToken)
     {
         EnsureRunning();
@@ -251,6 +391,7 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (await _index.ContainsEventAsync(kind, eventId, cancellationToken).ConfigureAwait(false)) return;
             await EnsureCapacityAsync(cancellationToken).ConfigureAwait(false);
             var sequence = checked(++_nextSequence);
             var payload = JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions);
@@ -285,13 +426,54 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
         await _index.StoreFinalSequenceAsync(_nextSequence, _lastSourceSequence, _status.State, _status.Reason, cancellationToken).ConfigureAwait(false);
     }
 
+    private async ValueTask RebuildIndexAsync(SegmentLog segments, SqliteIndex index, CancellationToken cancellationToken)
+    {
+        foreach (var record in segments.ReadAllRecords())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (record.Kind == StorageRecordKind.SourceEvent)
+            {
+                var source = JsonSerializer.Deserialize<SourceEvent>(record.Payload, JsonOptions);
+                if (source is not null)
+                {
+                    await index.AppendEventAsync(record.Kind, record.Sequence, source.EventId, source.SchemaVersion, source.Time, source.FileId, source.ParentFileId, source.Name, record.Payload, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                var canonical = JsonSerializer.Deserialize<CanonicalEvent>(record.Payload, JsonOptions);
+                if (canonical is not null)
+                {
+                    await index.AppendEventAsync(record.Kind, record.Sequence, canonical.EventId, canonical.SchemaVersion, canonical.Time, canonical.FileId, canonical.ParentFileId, canonical.Name, record.Payload, cancellationToken).ConfigureAwait(false);
+                    await index.ApplyCanonicalAsync(canonical, cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
+    }
+
+    private StorageEngineOptions CloneOptions(string directory) => new(directory)
+    {
+        SegmentMaxBytes = _options.SegmentMaxBytes,
+        FlushInterval = TimeSpan.FromTicks(Interlocked.Read(ref _flushIntervalTicks)),
+        BusyTimeout = _options.BusyTimeout,
+        MinimumFreeBytes = _options.MinimumFreeBytes,
+        CompressClosedSegments = _options.CompressClosedSegments,
+        CapacityProbe = _options.CapacityProbe,
+        HistoryBranch = _options.HistoryBranch
+    };
+
+    private static bool IsSameOrDescendant(string path, string root) =>
+        string.Equals(path, root, StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith(root + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+
     private async Task FlushLoopAsync()
     {
-        using var timer = new PeriodicTimer(_options.FlushInterval);
         try
         {
-            while (await timer.WaitForNextTickAsync(_lifetime.Token).ConfigureAwait(false))
+            while (true)
             {
+                await Task.Delay(TimeSpan.FromTicks(Interlocked.Read(ref _flushIntervalTicks)), _lifetime.Token).ConfigureAwait(false);
                 try
                 {
                     await FlushAsync(_lifetime.Token).ConfigureAwait(false);

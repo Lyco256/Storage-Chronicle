@@ -1,4 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><RootNamespace>StorageChronicle.UI.Shared</RootNamespace><AssemblyName>StorageChronicle.UI.Shared</AssemblyName></PropertyGroup>
-  <ItemGroup><ProjectReference Include="..\StorageChronicle.Domain\StorageChronicle.Domain.csproj" /><PackageReference Include="CommunityToolkit.Mvvm" /><PackageReference Include="Avalonia" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="..\StorageChronicle.Domain\StorageChronicle.Domain.csproj" /><ProjectReference Include="..\StorageChronicle.Contracts\StorageChronicle.Contracts.csproj" /><PackageReference Include="CommunityToolkit.Mvvm" /><PackageReference Include="Avalonia" /></ItemGroup>
 </Project>

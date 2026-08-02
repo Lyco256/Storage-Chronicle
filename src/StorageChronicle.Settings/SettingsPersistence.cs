@@ -81,7 +81,15 @@ public sealed class MachineSettingsStore : ISettingsStore<MachineSettings>
     public MachineSettingsStore(ISettingsPathProvider paths, ISettingsFileSystem? fileSystem = null)
     {
         ArgumentNullException.ThrowIfNull(paths);
-        inner = new(paths.MachineSettingsPath, DefaultSettings.CreateMachine(Environment.CurrentDirectory, Environment.CurrentDirectory), SettingsValidator.EnsureValid, fileSystem ?? new PhysicalSettingsFileSystem());
+        var productRoot = Directory.GetParent(Path.GetDirectoryName(paths.MachineSettingsPath) ?? string.Empty)?.FullName
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Storage Chronicle");
+        inner = new(paths.MachineSettingsPath, new MachineSettings
+        {
+            MonitoringPaths = Array.Empty<string>(),
+            LogStoragePath = Path.Combine(productRoot, "history"),
+            FlushIntervalSeconds = 5,
+            NoiseFilter = NoiseFilterProfile.Standard
+        }, SettingsValidator.EnsureValid, fileSystem ?? new PhysicalSettingsFileSystem());
     }
 
     /// <inheritdoc />

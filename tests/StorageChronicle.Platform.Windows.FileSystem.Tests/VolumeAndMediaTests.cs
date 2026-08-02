@@ -1,6 +1,7 @@
 using StorageChronicle.Domain.Contracts;
 using StorageChronicle.Platform.Windows.FileSystem.Interop;
 using StorageChronicle.Platform.Windows.FileSystem.Volumes;
+using System.ComponentModel;
 using Xunit;
 
 namespace StorageChronicle.Platform.Windows.FileSystem.Tests;
@@ -46,9 +47,23 @@ public sealed class VolumeAndMediaTests
         Assert.Equal(ExternalMediaChangeKind.Connected, change.Kind);
     }
 
+    [Fact]
+    public async Task NotificationRegistrationFailureDoesNotStopMonitor()
+    {
+        await using var monitor = new WindowsExternalMediaMonitor(new ThrowingDeviceNative());
+
+        Assert.Contains("registration unavailable", monitor.RegistrationFailure, StringComparison.Ordinal);
+        await monitor.DisposeAsync();
+    }
+
     private static async Task<ExternalMediaChange> ReadOneAsync(WindowsExternalMediaMonitor monitor, CancellationToken cancellationToken)
     {
         await foreach (var change in monitor.ReadChangesAsync(cancellationToken)) return change;
         throw new InvalidOperationException("No device notification was received.");
     }
+}
+
+internal sealed class ThrowingDeviceNative : IWindowsDeviceNotificationNative
+{
+    public IDisposable Register(Action<ExternalMediaChangeKind> callback) => throw new Win32Exception("registration unavailable");
 }

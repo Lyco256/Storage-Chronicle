@@ -33,7 +33,9 @@ public sealed class WindowsVolumeSnapshotReader : IVolumeSnapshotReader
             yield break;
         }
 
-        var root = volume.MountPoints.Count == 0 ? volume.Id.Value + Path.DirectorySeparatorChar : volume.MountPoints[0];
+        var mountRoot = volume.MountPoints.Count == 0 ? volume.Id.Value + Path.DirectorySeparatorChar : volume.MountPoints[0];
+        var root = exclusionPolicy.ResolveMonitoringRoot(mountRoot);
+        if (root is null) yield break;
         var pendingDirectories = new Stack<(string Path, FileId? ParentFileId)>();
         pendingDirectories.Push((root, null));
         while (pendingDirectories.Count > 0)
@@ -118,6 +120,7 @@ public sealed class WindowsVolumeSnapshotReader : IVolumeSnapshotReader
         if (string.IsNullOrEmpty(name)) name = volume.Id.Value;
         return new NativeSnapshotEntry(FileId.Create("path:" + path), parentFileId, name, kind, null, null, null, null, null, null, 0, null, EventQuality.ExistenceOnly, true);
     }
+
 }
 
 internal sealed record SnapshotDirectoryBatch(IReadOnlyList<SourceEvent> Events, long NextSequence);
