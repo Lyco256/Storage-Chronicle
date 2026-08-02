@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><RootNamespace>StorageChronicle.Platform.Abstractions</RootNamespace><AssemblyName>StorageChronicle.Platform.Abstractions</AssemblyName></PropertyGroup>
+  <ItemGroup><ProjectReference Include="..\StorageChronicle.Domain\StorageChronicle.Domain.csproj" /><ProjectReference Include="..\StorageChronicle.Contracts\StorageChronicle.Contracts.csproj" /></ItemGroup>
+</Project>
