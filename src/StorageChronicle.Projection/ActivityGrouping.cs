@@ -44,17 +44,18 @@ public sealed class ActivityGrouper
 
             var shouldJoin = sameActor && withinTimeout && compatibleRoute &&
                              value.Operation != CanonicalOperation.UnverifiedGap;
-            if (shouldJoin)
+            if (shouldJoin && !current.IsGap)
             {
                 current.Add(value, route);
                 continue;
             }
 
+            var closedByCompetingActivity = !isRead &&
+                                            value.ProcessInstanceId != current.ProcessId &&
+                                            current.IsCompetingRoute(route);
+            current.ClosedByCompetingActivity = current.ClosedByCompetingActivity || closedByCompetingActivity;
             groups.Add(current);
-            current = new ActivityBuilder(value, route)
-            {
-                ClosedByCompetingActivity = !isRead && value.ProcessInstanceId != current.ProcessId
-            };
+            current = new ActivityBuilder(value, route);
         }
 
         if (current is not null) groups.Add(current);
@@ -84,12 +85,19 @@ public sealed class ActivityGrouper
         public MountSessionId? MountSession { get; }
         public bool ClosedByCompetingActivity { get; set; }
         public DateTimeOffset LastTime => values[^1].Time.RecordedUtc;
+        public bool IsGap => values.Any(value => value.Operation == CanonicalOperation.UnverifiedGap || value.Quality == EventQuality.UnverifiedGap);
 
         public bool MatchesActor(CanonicalEvent value)
         {
-            if (ProcessQuality == ProcessAttributionQuality.Unknown || ProcessId is null || value.ProcessQuality == ProcessAttributionQuality.Unknown || value.ProcessInstanceId is null)
+            var unknownActor = ProcessQuality == ProcessAttributionQuality.Unknown ||
+                               ProcessId is null ||
+                               value.ProcessQuality == ProcessAttributionQuality.Unknown ||
+                               value.ProcessInstanceId is null;
+            if (unknownActor)
             {
-                return Source == value.Origin && Volume == value.VolumeId && MountSession == value.MountSessionId;
+                return Source == value.Origin &&
+                       string.Equals(Volume?.Value, value.VolumeId?.Value, StringComparison.Ordinal) &&
+                       string.Equals(MountSession?.Value, value.MountSessionId?.Value, StringComparison.Ordinal);
             }
 
             return ProcessId == value.ProcessInstanceId;
@@ -104,6 +112,10 @@ public sealed class ActivityGrouper
                 .FirstOrDefault(path => path is not null);
             return newFolderPath is not null && ProjectionPathResolver.IsSameOrDescendant(newFolderPath, route);
         }
+
+        public bool IsCompetingRoute(string? route) =>
+            ProjectionPathResolver.IsSameOrDescendant(EffectiveRoute(), route) ||
+            ProjectionPathResolver.IsSameOrDescendant(route, EffectiveRoute());
 
         public void Add(CanonicalEvent value, string? route)
         {
@@ -193,7 +205,10 @@ internal sealed class ProcessCatalog
 
     public static ProcessCatalog Create(IReadOnlyList<CanonicalEvent> events)
     {
-        var ids = events.Where(value => value.ProcessInstanceId is not null).Select(value => value.ProcessInstanceId!.Value).Distinct().ToArray();
+        var firstByProcess = events.Where(value => value.ProcessInstanceId is not null)
+            .GroupBy(value => value.ProcessInstanceId!.Value)
+            .ToDictionary(group => group.Key, group => group.First());
+        var ids = firstByProcess.Keys.ToArray();
         var parentMap = events.Where(value => value.ProcessInstanceId is not null && value.Properties.ContainsKey(ProjectionPropertyNames.ParentProcessInstanceId))
             .GroupBy(value => value.ProcessInstanceId!.Value)
             .ToDictionary(group => group.Key, group => ParseProcessId(group.First().Properties[ProjectionPropertyNames.ParentProcessInstanceId]));
@@ -206,7 +221,7 @@ internal sealed class ProcessCatalog
         var projections = new Dictionary<ProcessInstanceId, ProcessProjection>();
         foreach (var id in ids)
         {
-            var value = events.First(candidate => candidate.ProcessInstanceId == id);
+            var value = firstByProcess[id];
             var name = value.ProcessQuality == ProcessAttributionQuality.Unknown
                 ? "不明なプロセス"
                 : value.Properties.TryGetValue(ProjectionPropertyNames.ProcessName, out var processName) ? processName : id.Value;

@@ -1,0 +1,7 @@
+# Filtering.cs
+
+リテラル検索の共通評価器を実装する。AllはAND、AnyはOR、Excludeは除外として評価し、名前、パス、拡張子、操作、プロセス、品質、ボリューム、削除、共有、照合差分、サイズなど製品要件のフィールドを同じDTOから扱う。
+
+現在のmatcherは大文字小文字を区別しない部分文字列リテラルのみを実装する。Regexは保存形式を壊さず後から実装できるようIProjectionFilterMatcherに分離し、現実装では未対応例外にする。イベントとDiffで内容検索は行わず、ファイル内容やハッシュを読み取らない。
+
+主なテストはDiffAndFilterTests.LiteralAndOrAndExclusionFiltersAreComposableと、Event StackのNormalized/Groupedフィルター経路。

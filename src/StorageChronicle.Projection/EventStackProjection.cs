@@ -76,7 +76,7 @@ public sealed class EventStackProjector
         var processCatalog = ProcessCatalog.Create(canonical);
         return canonical.Select(value =>
         {
-            var row = CanonicalRow(value, paths.GetValueOrDefault(value.EventId), value.EventId.ToString(), value.Operation.ToString());
+            var row = CanonicalRow(value, paths.GetValueOrDefault(value.EventId), value.EventId.ToString(), value.Name ?? value.Operation.ToString());
             var children = sourceByCanonical.TryGetValue(value.EventId, out var sources)
                 ? BuildSourceChildren(value.EventId, sources, row.DisplayRoute)
                 : Array.Empty<EventStackNode>();
@@ -99,7 +99,7 @@ public sealed class EventStackProjector
                 var fileRow = new EventStackRow(fileEvent.EventId, fileEvent.Time.RecordedUtc, file.DisplayPath, file.PrimaryOperation, $"{file.DisplayPath} ({file.OperationCount})", fileEvent.Quality, fileEvent.ProcessInstanceId, fileEvent.ProcessQuality, fileEvent.Origin, file.EventIds);
                 var normalizedChildren = file.EventIds.Select(eventId => group.Events.First(value => value.EventId == eventId)).Select(value =>
                 {
-                    var normalizedRow = CanonicalRow(value, paths.GetValueOrDefault(value.EventId), value.EventId.ToString(), value.Operation.ToString());
+                    var normalizedRow = CanonicalRow(value, paths.GetValueOrDefault(value.EventId), value.EventId.ToString(), value.Name ?? value.Operation.ToString());
                     var sourceChildren = sourceByCanonical.TryGetValue(value.EventId, out var sourceValues)
                         ? BuildSourceChildren(value.EventId, sourceValues, normalizedRow.DisplayRoute)
                         : Array.Empty<EventStackNode>();
