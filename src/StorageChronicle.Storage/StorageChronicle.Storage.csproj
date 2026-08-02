@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>StorageChronicle.Storage</RootNamespace>
+    <AssemblyName>StorageChronicle.Storage</AssemblyName>
+    <NoWarn>$(NoWarn);NU1903</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\StorageChronicle.Contracts\StorageChronicle.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="System.IO.Hashing" />
+    <PackageReference Include="ZstdSharp.Port" />
+  </ItemGroup>
+</Project>

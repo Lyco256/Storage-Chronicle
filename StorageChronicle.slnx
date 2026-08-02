@@ -4,11 +4,13 @@
     <Project Path="src/StorageChronicle.Contracts/StorageChronicle.Contracts.csproj" />
     <Project Path="src/StorageChronicle.Platform.Abstractions/StorageChronicle.Platform.Abstractions.csproj" />
     <Project Path="src/StorageChronicle.Normalization/StorageChronicle.Normalization.csproj" />
+    <Project Path="src/StorageChronicle.Storage/StorageChronicle.Storage.csproj" />
     <Project Path="src/StorageChronicle.UI.Shared/StorageChronicle.UI.Shared.csproj" />
     <Project Path="src/StorageChronicle.UI.Desktop/StorageChronicle.UI.Desktop.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/StorageChronicle.Domain.Tests/StorageChronicle.Domain.Tests.csproj" />
     <Project Path="tests/StorageChronicle.Normalization.Tests/StorageChronicle.Normalization.Tests.csproj" />
+    <Project Path="tests/StorageChronicle.Storage.Tests/StorageChronicle.Storage.Tests.csproj" />
   </Folder>
 </Solution>
