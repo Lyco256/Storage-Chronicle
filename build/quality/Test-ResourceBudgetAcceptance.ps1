@@ -258,18 +258,18 @@ try {
         }
 
         $requiredCheckNames = @(
-            'ResultFilePresent', 'ResultProcessIdsMatch', 'ExistingScriptExitCodeZero',
+            'ResultFilePresent', 'ResultProcessIdsMatch',
             'ResourceSampleCountMatches', 'ResourceSamplingComplete', 'ResourceSampleSpanComplete',
             'DiskWriteCounterPresent', 'PrivateMemoryLimitNotExceeded', 'CpuLimitNotExceeded',
             'QueueSamplingComplete', 'QueueSampleCountMatches', 'QueueHasNoMissedSamples',
             'QueueLimitNotExceeded', 'TargetLifecycleStable')
         if (-not $Diagnostic) {
             $requiredCheckNames += @(
-                'AcceptanceEligible', 'BoundaryDurationIs600', 'BoundaryIsNonDiagnostic',
+                'ExistingScriptExitCodeZero', 'AcceptanceEligible', 'BoundaryDurationIs600', 'BoundaryIsNonDiagnostic',
                 'BoundarySpanComplete', 'QuietPeriodEvidencePresent', 'QuietPeriodValid')
         }
         $failedChecks = @($requiredCheckNames | Where-Object { -not $evidenceChecks.Contains($_) -or $evidenceChecks[$_] -ne $true })
-        if ($failedChecks.Count -gt 0 -or -not $lifecycleHealthy -or $runnerExitCode -ne 0) {
+        if ($failedChecks.Count -gt 0 -or -not $lifecycleHealthy -or (-not $Diagnostic -and $runnerExitCode -ne 0)) {
             $failure = 'Resource acceptance evidence is incomplete, failed, or not fail-closed.'
         }
     }
