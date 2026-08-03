@@ -12,7 +12,7 @@ The repository is not yet ready for `main`. The top-agent merge sequence remains
 
 ## Blocking release evidence
 
-- A partial `build/Test-Privileged.ps1` run on 2026-08-03 passed ReadDirectoryChangesW and Session on a safe existing directory, but VHDX, USN, MFT, ETW, SMB, service, and removable-media capabilities remained `NOT_EXECUTED`; the overall fail-closed exit code was 2.
+- The latest partial `build/Test-WindowsPrivileged.ps1` Release run is recorded at `artifacts/acceptance/windows-privileged-20260803-230134.json`. It passed ReadDirectoryChangesW and Session on a safe existing directory, but VHDX, USN, MFT, ETW, SMB, service, and removable-media capabilities remained `NOT_EXECUTED`; the overall fail-closed exit code was 2.
 - Windows 10 22H2 compatibility, physical media insertion, ETW, service recovery, and clean installer/update/rollback are not available in this current environment.
 - The feature checkout is clean at the latest reviewed commit, but it has not yet been merged into `devenv`; no `main` merge is authorized.
 - A post-integration 600-second resource-budget diagnostic completed with complete lifecycle/resource/queue evidence, but the formal acceptance run remains pending because it was intentionally diagnostic and lacks independent final-five-minute quiet-period evidence. Live Agent/Explorer correlation measurements also remain pending; the deterministic correlation fixture is measured at Exact 1/3, Correlated 1/3, Unknown 1/3, Explorer 1/3.
