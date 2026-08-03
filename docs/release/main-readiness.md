@@ -19,4 +19,10 @@ The repository is not yet ready for `main`. The top-agent merge sequence remains
 - The current bounded-batch BenchmarkDotNet matrix completed all six non-MFT suites and 12/12 methods under `artifacts/benchmarks/portable-matrix-current/full-matrix-20260803T122827484Z`; its manifest remains `AcceptanceEligible=false` because no configured MFT capability run was supplied. The MFT suite and the supervised resource gate must still run before performance acceptance can be considered.
 - The R-03/R-19 supplemental gates are available at `build/quality/Test-FullBenchmarkMatrix.ps1` and `build/quality/Test-ResourceBudgetAcceptance.ps1`. The resource wrapper's 600-second diagnostic mode has executed, but its formal acceptance mode and the configured MFT matrix acceptance mode have not; no new success is implied by diagnostic evidence alone.
 
+## Additional implementation blockers found in the 2026-08-04 audit
+
+- The UI prompt and decline path for a continuity gap are present, but the confirmed Execute path currently only restarts monitoring. A selected-volume NTFS MFT or non-NTFS directory reconciliation runner is still required.
+- The NTFS startup path currently emits public-MFT identity/name/type facts as `ExistenceOnly`; the tested `DirectoryMetadataBatcher` is not wired to a production standard-metadata provider. Scoped `SeBackupPrivilege` enablement and OS low-priority I/O for reconciliation are also not implemented.
+- The shared build language-version override and release-signing procedure gaps were corrected in the current feature branch; Native AOT configuration is now opt-in and remains non-acceptance diagnostic work.
+
 No release document may say these items are verified until the corresponding acceptance artifacts exist. History retention, no-driver MVP, no-content/no-hash, and no-synthetic-descendant invariants remain mandatory in every acceptance run.

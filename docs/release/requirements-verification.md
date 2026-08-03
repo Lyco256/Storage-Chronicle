@@ -8,7 +8,7 @@
 |---|---|---|---|
 | V-01 | architecture and stable contracts | `tests/StorageChronicle.Architecture.Tests`, `StorageChronicle.slnx`, `docs/decisions` | verified |
 | V-02 | source/normalization/state/storage | normalization, state, storage, and integration test projects | verified |
-| V-03 | Windows filesystem/NTFS/session | platform test projects and `build/Test-WindowsPrivileged.ps1` | Latest Release manifest `artifacts/acceptance/windows-privileged-20260803-230134.json` records ReadDirectoryChangesW and Session passed; full privileged capability matrix remains pending |
+| V-03 | Windows filesystem/NTFS/session | platform test projects and `build/Test-WindowsPrivileged.ps1` | Notification/session boundaries are tested; initial NTFS metadata wiring and confirmed reconciliation execution remain implementation blockers, and the full privileged capability matrix remains pending |
 | V-04 | external media and mount history | `StorageChronicle.ExternalMedia.Tests` and filesystem tests | verified |
 | V-05 | Event Stack and Diff View | projection, Event Stack, Diff View, and headless tests | verified |
 | V-06 | IPC and bounded Agent pipeline | Agent tests, production named-pipe client/server test, and end-to-end smoke test | verified |
@@ -26,8 +26,8 @@
 | V-103 | Avalonia; MVVM limited to UI | UI project references and architecture tests | verified |
 | V-104 | UI, Service Agent, Session Agent separation | `src/StorageChronicle.Agent`, `src/StorageChronicle.SessionAgent`, UI projects, architecture tests | verified |
 | V-105 | No MVP driver and future replacement seam | collector contracts, installer manifest test, architecture tests | verified |
-| V-106 | NTFS USN and public-API MFT reconciliation | NTFS collector tests and privileged existing-journal test | verified at API boundary |
-| V-107 | Non-NTFS notification monitoring and directory reconciliation | filesystem collector tests | verified |
+| V-106 | NTFS USN and public-API MFT reconciliation | NTFS collector tests and privileged existing-journal test | USN/public-MFT API boundary verified; production initial standard-metadata wiring, confirmed MFT reconciliation execution, scoped backup privilege, and low-priority I/O remain pending |
+| V-107 | Non-NTFS notification monitoring and directory reconciliation | filesystem collector tests | notification and initial-scan boundary verified; confirmed diff-only Directory Reconciliation execution remains pending |
 | V-108 | Non-NTFS initial-scan boundary and gap handling | `PolicyAndReconciliationTests`, `VolumeAndMediaTests` | verified |
 | V-109 | Deterministic Source-to-Canonical normalization | `EventNormalizerTests`, normalization project | verified |
 | V-110 | Settings persistence, UI, and settings history | settings tests and headless settings tests | verified |
@@ -51,7 +51,7 @@
 | V-128 | External media, PC primary history, and optional mirror | external-media tests and agent collector tests | verified |
 | V-129 | Cross-PC import, Mount Session, and history branching | external-media manifest/import/recovery tests | verified |
 | V-130 | Log exclusion and no system-area mirror | exclusion policy, media policy, and installer tests | verified |
-| V-131 | Reconciliation only after detected gap; no manual command | health/reconciliation tests and IPC contract | verified |
+| V-131 | Reconciliation only after detected gap; no manual command | health/reconciliation tests and IPC contract | prompt/decline contract verified; Execute currently restarts monitoring without running selected-volume reconciliation, so the row is not complete |
 | V-132 | Defined reconciliation prompt and Yes/No decision | health panel, IPC, and headless tests | verified |
 | V-133 | Source/Normalized/Grouped Event Stack | projection, Event Stack, and end-to-end tests | verified |
 | V-134 | Group expansion, row process data, and paging | Event Stack tests and recursive IPC snapshots | verified |
@@ -75,6 +75,15 @@
 | V-152 | Ownership matrix and shared-contract synchronization | `Requirements/06_AGENT_OWNERSHIP_MATRIX.md`, handoffs, architecture tests | verified |
 | V-153 | Normal installer, one product, retained data | WiX manifest test and successful MSI build | MSI build verified; physical install matrix pending |
 | V-154 | Read-only I/O is not durable history | normalization tests, storage guard, architecture/source review | verified |
+
+## Supplemental audit rows
+
+| ID | Technical requirement | Verification evidence | Status |
+|---|---|---|---|
+| V-155 | C# language version uses the .NET 10 SDK default | `Directory.Build.props`, Release build | fixed in the current feature branch; `LangVersion=preview` was removed |
+| V-156 | Native AOT compatibility publication configuration exists for Agent and Session Agent | `build/Test-AotCompatibility.ps1`, conditional common properties | configuration present; publication is opt-in and not an MVP acceptance gate |
+| V-157 | Unsigned development and signed release procedures are separate without SmartScreen weakening | `docs/installer/signing-procedure.md` | documented; actual release signing remains an external release operation |
+| V-158 | Scoped backup privilege and OS low-priority reconciliation I/O | NTFS source audit and requirement 13 | not implemented; must be closed before final readiness |
 
 ## Explicit measured or environment-bound items
 

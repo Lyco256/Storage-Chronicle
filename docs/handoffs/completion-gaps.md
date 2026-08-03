@@ -1,10 +1,10 @@
 # Completion-gap integration plan
 
-Updated 2026-08-03. This is the top-agent audit of requirements that still need external evidence or final branch integration. An unexecuted acceptance lane is recorded as pending; it is never converted into a pass by a default script.
+Updated 2026-08-04. This is the top-agent audit of requirements that still need implementation work, external evidence, or final branch integration. An unexecuted acceptance lane is recorded as pending; it is never converted into a pass by a default script.
 
 ## Current verdict
 
-The implementation-level gates currently checked in this worktree are green, but Storage Chronicle is not ready for `devenv` or `main`. Seven completion groups remain. Five require a Windows acceptance environment or fresh measurements; one requires live correlation capture; one is the top-agent branch integration sequence.
+The ordinary build and non-privileged tests are green, but Storage Chronicle is not ready for `devenv` or `main`. Ten completion groups remain: three are implementation gaps, five require a Windows acceptance environment or fresh measurements, one requires live correlation capture, and one is the top-agent branch integration sequence.
 
 ## Verified in the current worktree
 
@@ -21,6 +21,7 @@ The implementation-level gates currently checked in this worktree are green, but
 - Made Agent and Projection process-property lookup case-insensitive so Normalizer safe-property canonicalization preserves recorded parent Process Instance links.
 - R-03/R-19 audit found the focused performance entry point selected only `StorageChronicleBenchmarks`; previous artifacts contained only `EventStackPage100K`. Added `build/quality/Test-FullBenchmarkMatrix.ps1` with per-suite JSON/method validation and fail-closed MFT eligibility. The current bounded-batch run completed all six non-MFT suites and all 12 expected methods at `artifacts/benchmarks/portable-matrix-current/full-matrix-20260803T122827484Z`; it is diagnostic evidence only because `PortableOnly=true` and `AcceptanceEligible=false`. The configured MFT capability benchmark remains pending.
 - R-03/R-19 audit found the existing resource gate lacked an independent lifecycle/timestamp-span/quiet-period evidence supervisor. Added `build/quality/Test-ResourceBudgetAcceptance.ps1`; it wraps the existing script without replacing it. The IPC client now uses cancellable asynchronous named-pipe I/O, diagnostic mode records a healthy shortened run without converting intentional ineligibility into a failure, and the actual Release Agent/Session Agent completed a 600-second diagnostic with 569 resource samples over 599.8615949 seconds, 596 queue samples, zero missed queue samples, maximum queue depth 0, stable process identities, peak combined private working set 23.66015625 MiB, and average normalized CPU 0.1997875688%. The run remains diagnostic-only (`AcceptanceEligible=false`) because independent final-five-minute quiet-period evidence was not supplied and the boundary was intentionally marked diagnostic; the formal acceptance gate remains pending.
+- The requirements audit removed the unsupported `LangVersion=preview` override; the repository now uses the .NET 10 SDK default language version. An opt-in `build/Test-AotCompatibility.ps1` publication configuration now covers only Agent and Session Agent, and `docs/installer/signing-procedure.md` records the separate unsigned-development and signed-release procedures without weakening SmartScreen or security boundaries.
 
 ## Unmet requirements and exit evidence
 
@@ -32,18 +33,21 @@ The implementation-level gates currently checked in this worktree are green, but
 | Full performance matrix | R-03 section 5, R-19 | Release BenchmarkDotNet reports for 100K Event Stack, 1M state/path reconstruction, append/Zstandard/SQLite/media workloads, large-folder move, and configured MFT capability | Current-code portable matrix passed all six non-MFT suites and 12/12 methods; `AcceptanceEligible=false` until a configured MFT capability run is completed |
 | Installer acceptance | R-20 | Windows 10/11 clean install, repair, update, rollback, uninstall, service/session, non-admin, storage-permission, and history-retention evidence | WiX/MSI build and manifest verified; physical matrix pending |
 | Process and Explorer correlation measurements | R-00 sections 8-9 | Fixed acceptance fixtures with measured Exact/Correlated/Unknown process attribution and Explorer source-correlation rates | Deterministic fixture measured (Exact 1/3, Correlated 1/3, Unknown 1/3; Explorer 1/3); live Agent/Explorer capture remains `NOT_EXECUTED` |
+| User-confirmed reconciliation execution | R-08, R-13, R-17, TOP_CODEX.md | A confirmed request must run the selected NTFS MFT or non-NTFS directory reconciliation, append only discovered differences as `ReconciliationDiscovered`, preserve unknown time/process quality, and resume normal monitoring | The prompt and decline path exist, but `NamedPipeAgentServer` currently handles Execute by restarting monitoring; no selected-volume MFT/directory reconciliation runner is wired |
+| NTFS initial metadata and reconciliation I/O policy | R-00, R-13, R-17 | Initial public MFT enumeration must feed the directory-batched standard metadata provider; protected enumeration must scope `SeBackupPrivilege`; reconciliation I/O must use OS low-priority mode | `WindowsNtfsVolumeCollector` currently emits MFT identity/name/type facts as `ExistenceOnly`; `DirectoryMetadataBatcher` has tests but no production provider wiring, and no scoped backup-privilege or low-priority I/O implementation was found |
 | Branch/worktree integration | R-02 and TOP_CODEX.md | Clean reviewed feature commit, `--no-ff` merge into `devenv`, final comprehensive gates, then `--no-ff` merge into `main` | Feature branch is clean at the latest reviewed commit; `devenv`/`main` integration remains pending |
 
 ## Execution plan and completion gates
 
-1. Review the current feature worktree. Exclude generated outputs and machine-specific files, stage only source/tests/docs/scripts, confirm every source mirror, then commit the reviewed feature change.
-2. On a disposable Windows 11 acceptance host, run the complete privileged capability matrix. Use isolated test media and preserve the manifest for both executed and explicitly blocked capabilities.
-3. On Windows 10 22H2, run the compatibility matrix covering capability detection, service, Avalonia, NTFS/USN/MFT, ETW, Clipboard, SMB/Share, cloud placeholder, removable media, and installer behavior. Record only executed evidence.
-4. Run the current Agent and Session Agent through the supplemental supervised 600-second resource gate with quiet-period evidence. Then run the configured MFT capability case to extend the already completed current-code portable BenchmarkDotNet matrix to a release-eligible matrix.
-5. Run fixed process and Explorer correlation fixtures and record Exact/Correlated/Unknown plus the Explorer source-correlation rate. Keep source facts distinct from correlation and UI interpretation.
-6. Execute installer acceptance on Windows 10 and 11: clean install, repair, update, rollback, uninstall with history retention, LocalSystem service recovery, Session Agent, normal-user UI, non-admin behavior, and storage-permission failures.
-7. Fix every failure without weakening record quality or hiding unexecuted acceptance. Rerun the non-privileged suite, privileged suite, quality/coverage gates, UI tests, benchmark/resource gates, and documentation validator.
-8. Only after all verification rows have executable evidence, merge the reviewed feature into `devenv` with `--no-ff`; rerun the final comprehensive suite on the integrated branch; then merge `devenv` into `main` with `--no-ff` and update readiness documents.
+1. Implement and test the selected-volume reconciliation runner, NTFS initial metadata provider wiring, scoped backup privilege, and low-priority reconciliation I/O. Keep source facts and quality explicit; do not make the prompt or test fakes stand in for the real operation.
+2. Review the current feature worktree. Exclude generated outputs and machine-specific files, stage only source/tests/docs/scripts, confirm every source mirror, then commit the reviewed feature change.
+3. On a disposable Windows 11 acceptance host, run the complete privileged capability matrix. Use isolated test media and preserve the manifest for both executed and explicitly blocked capabilities.
+4. On Windows 10 22H2, run the compatibility matrix covering capability detection, service, Avalonia, NTFS/USN/MFT, ETW, Clipboard, SMB/Share, cloud placeholder, removable media, and installer behavior. Record only executed evidence.
+5. Run the current Agent and Session Agent through the supplemental supervised 600-second resource gate with quiet-period evidence. Then run the configured MFT capability case to extend the already completed current-code portable BenchmarkDotNet matrix to a release-eligible matrix.
+6. Run fixed process and Explorer correlation fixtures and record Exact/Correlated/Unknown plus the Explorer source-correlation rate. Keep source facts distinct from correlation and UI interpretation.
+7. Execute installer acceptance on Windows 10 and 11: clean install, repair, update, rollback, uninstall with history retention, LocalSystem service recovery, Session Agent, normal-user UI, non-admin behavior, and storage-permission failures.
+8. Fix every failure without weakening record quality or hiding unexecuted acceptance. Rerun the non-privileged suite, privileged suite, quality/coverage gates, UI tests, benchmark/resource gates, and documentation validator.
+9. Only after all verification rows have executable evidence, merge the reviewed feature into `devenv` with `--no-ff`; rerun the final comprehensive suite on the integrated branch; then merge `devenv` into `main` with `--no-ff` and update readiness documents.
 
 ## Non-negotiable invariants during the plan
 
