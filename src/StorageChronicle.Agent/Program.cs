@@ -21,9 +21,10 @@ public static class Program
     /// <summary>Starts the LocalSystem service with durable storage and the Windows filesystem collector.</summary>
     public static Task Main(string[] args)
     {
-        _ = WindowsServiceRecoveryConfigurator.TryConfigure();
+        var diagnosticMode = args.Any(value => string.Equals(value, "--diagnostic", StringComparison.OrdinalIgnoreCase));
+        if (!diagnosticMode) _ = WindowsServiceRecoveryConfigurator.TryConfigure();
         var builder = Host.CreateApplicationBuilder(args);
-        builder.Services.AddWindowsService(options => options.ServiceName = "Storage Chronicle Agent");
+        if (!diagnosticMode) builder.Services.AddWindowsService(options => options.ServiceName = "Storage Chronicle Agent");
         var productRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Storage Chronicle");
         var defaultHistoryRoot = Path.Combine(productRoot, "history");
         var machineSettingsStore = new MachineSettingsStore();

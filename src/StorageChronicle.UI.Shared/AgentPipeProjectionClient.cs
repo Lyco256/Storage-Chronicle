@@ -88,6 +88,8 @@ public sealed class AgentPipeProjectionClient : IVirtualizedPageSource<EventStac
     {
         await using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
         await pipe.ConnectAsync(ConnectTimeoutMilliseconds, cancellationToken).ConfigureAwait(false);
+        var hello = codec.Encode(IpcProtocol.Create("ClientHello", new IpcClientHello(IpcClientRole.DesktopUi, System.Diagnostics.Process.GetCurrentProcess().SessionId)), IpcProtocol.Major, IpcProtocol.Minor);
+        await pipe.WriteAsync(hello, cancellationToken).ConfigureAwait(false);
         var frame = codec.Encode(IpcProtocol.Create(messageType, request), IpcProtocol.Major, IpcProtocol.Minor);
         await pipe.WriteAsync(frame, cancellationToken).ConfigureAwait(false);
         await pipe.FlushAsync(cancellationToken).ConfigureAwait(false);

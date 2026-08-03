@@ -58,6 +58,8 @@ public static class Program
         timeout.CancelAfter(TimeSpan.FromSeconds(5));
         await pipe.ConnectAsync(timeout.Token).ConfigureAwait(false);
         var codec = new LengthPrefixedJsonCodec();
+        var hello = codec.Encode(IpcProtocol.Create("ClientHello", new IpcClientHello(IpcClientRole.SessionAgent, System.Diagnostics.Process.GetCurrentProcess().SessionId)), IpcProtocol.Major, IpcProtocol.Minor);
+        await pipe.WriteAsync(hello, cancellationToken).ConfigureAwait(false);
         var frame = codec.Encode(IpcProtocol.Create("ClipboardCandidate", request), IpcProtocol.Major, IpcProtocol.Minor);
         await pipe.WriteAsync(frame, cancellationToken).ConfigureAwait(false);
         await pipe.FlushAsync(cancellationToken).ConfigureAwait(false);

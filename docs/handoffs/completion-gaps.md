@@ -4,7 +4,7 @@ Updated 2026-08-04. This is the top-agent audit of requirements that still need 
 
 ## Current verdict
 
-The ordinary build and non-privileged tests are green, but Storage Chronicle is not ready for `devenv` or `main`. Ten completion groups remain: three are implementation gaps, five require a Windows acceptance environment or fresh measurements, one requires live correlation capture, and one is the top-agent branch integration sequence.
+The ordinary build and non-privileged tests are green, but Storage Chronicle is not ready for `devenv` or `main`. Nine completion groups remain: two are implementation gaps, five require a Windows acceptance environment or fresh measurements, one requires live correlation capture, and one is the top-agent branch integration sequence.
 
 ## Verified in the current worktree
 
@@ -22,6 +22,7 @@ The ordinary build and non-privileged tests are green, but Storage Chronicle is 
 - R-03/R-19 audit found the focused performance entry point selected only `StorageChronicleBenchmarks`; previous artifacts contained only `EventStackPage100K`. Added `build/quality/Test-FullBenchmarkMatrix.ps1` with per-suite JSON/method validation and fail-closed MFT eligibility. The current bounded-batch run completed all six non-MFT suites and all 12 expected methods at `artifacts/benchmarks/portable-matrix-current/full-matrix-20260803T122827484Z`; it is diagnostic evidence only because `PortableOnly=true` and `AcceptanceEligible=false`. The configured MFT capability benchmark remains pending.
 - R-03/R-19 audit found the existing resource gate lacked an independent lifecycle/timestamp-span/quiet-period evidence supervisor. Added `build/quality/Test-ResourceBudgetAcceptance.ps1`; it wraps the existing script without replacing it. The IPC client now uses cancellable asynchronous named-pipe I/O, diagnostic mode records a healthy shortened run without converting intentional ineligibility into a failure, and the actual Release Agent/Session Agent completed a 600-second diagnostic with 569 resource samples over 599.8615949 seconds, 596 queue samples, zero missed queue samples, maximum queue depth 0, stable process identities, peak combined private working set 23.66015625 MiB, and average normalized CPU 0.1997875688%. The run remains diagnostic-only (`AcceptanceEligible=false`) because independent final-five-minute quiet-period evidence was not supplied and the boundary was intentionally marked diagnostic; the formal acceptance gate remains pending.
 - The requirements audit removed the unsupported `LangVersion=preview` override; the repository now uses the .NET 10 SDK default language version. An opt-in `build/Test-AotCompatibility.ps1` publication configuration now covers only Agent and Session Agent, and `docs/installer/signing-procedure.md` records the separate unsigned-development and signed-release procedures without weakening SmartScreen or security boundaries.
+- R-17 IPC role separation is now explicit: the Agent accepts a versioned ClientHello only when its session matches the authenticated pipe process, recognizes the published Session Agent executable, limits Session Agent connections to ClipboardCandidate, and rejects an unpublished Session Agent role. Agent `--diagnostic` mode also skips Windows service registration and recovery configuration; source-generated protocol, production UI health, role rejection, and 16 Agent tests pass.
 
 ## Unmet requirements and exit evidence
 
@@ -39,7 +40,7 @@ The ordinary build and non-privileged tests are green, but Storage Chronicle is 
 
 ## Execution plan and completion gates
 
-1. Implement and test the selected-volume reconciliation runner, NTFS initial metadata provider wiring, scoped backup privilege, and low-priority reconciliation I/O. Keep source facts and quality explicit; do not make the prompt or test fakes stand in for the real operation.
+1. Implement and test the selected-volume reconciliation runner, scoped backup privilege, and low-priority reconciliation I/O. Keep source facts and quality explicit; do not make the prompt or test fakes stand in for the real operation.
 2. Review the current feature worktree. Exclude generated outputs and machine-specific files, stage only source/tests/docs/scripts, confirm every source mirror, then commit the reviewed feature change.
 3. On a disposable Windows 11 acceptance host, run the complete privileged capability matrix. Use isolated test media and preserve the manifest for both executed and explicitly blocked capabilities.
 4. On Windows 10 22H2, run the compatibility matrix covering capability detection, service, Avalonia, NTFS/USN/MFT, ETW, Clipboard, SMB/Share, cloud placeholder, removable media, and installer behavior. Record only executed evidence.

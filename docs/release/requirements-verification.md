@@ -84,6 +84,7 @@
 | V-156 | Native AOT compatibility publication configuration exists for Agent and Session Agent | `build/Test-AotCompatibility.ps1`, conditional common properties | configuration present; publication is opt-in and not an MVP acceptance gate |
 | V-157 | Unsigned development and signed release procedures are separate without SmartScreen weakening | `docs/installer/signing-procedure.md` | documented; actual release signing remains an external release operation |
 | V-158 | Scoped backup privilege and OS low-priority reconciliation I/O | NTFS source audit and requirement 13 | not implemented; must be closed before final readiness |
+| V-159 | Agent diagnostic mode and Session Agent Clipboard-only IPC role | Agent entry point, named-pipe server identity, `NamedPipeServerTests`, and requirement 17 | verified in current feature branch; diagnostic mode is explicit, role/session hello is source-generated and validated, Session Agent is ClipboardCandidate-only, and an unpublished Session Agent process is rejected |
 
 ## Explicit measured or environment-bound items
 

@@ -10,6 +10,18 @@ public sealed record ProtocolVersion(int Major, int Minor);
 /// <summary>JSON payload carried by the local named-pipe protocol.</summary>
 public sealed record IpcEnvelope(ProtocolVersion Protocol, string MessageType, JsonElement Payload);
 
+/// <summary>Identifies the allowed role of one named-pipe client connection.</summary>
+public enum IpcClientRole
+{
+    /// <summary>Interactive desktop UI client.</summary>
+    DesktopUi,
+    /// <summary>Interactive Session Agent clipboard client.</summary>
+    SessionAgent
+}
+
+/// <summary>Authenticates a client role against the pipe client's Windows session.</summary>
+public sealed record IpcClientHello(IpcClientRole Role, int SessionId);
+
 /// <summary>Defines the protocol version accepted by the current Agent.</summary>
 public static class IpcProtocol
 {
@@ -38,6 +50,7 @@ public static class IpcProtocol
 /// <summary>System.Text.Json source-generated metadata for IPC envelopes.</summary>
 [JsonSerializable(typeof(IpcEnvelope))]
 [JsonSerializable(typeof(ProtocolVersion))]
+[JsonSerializable(typeof(IpcClientHello))]
 [JsonSerializable(typeof(ProjectionPageRequest))]
 [JsonSerializable(typeof(DiffProjectionRequest))]
 [JsonSerializable(typeof(ProjectionPageResponse))]

@@ -2,7 +2,7 @@
 
 ## Role
 
-Starts the logged-on Session Agent, creates the hidden event-driven clipboard listener, and forwards only bounded clipboard metadata to the Agent's versioned named pipe.
+Starts the logged-on Session Agent, creates the hidden event-driven clipboard listener, and forwards only bounded clipboard metadata to the Agent's versioned named pipe. Each connection identifies itself as the Session Agent role before sending its ClipboardCandidate request; the Agent verifies the session and published executable role.
 
 ## Boundary and failure behavior
 

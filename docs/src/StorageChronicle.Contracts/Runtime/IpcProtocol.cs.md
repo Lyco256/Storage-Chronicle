@@ -1,6 +1,6 @@
 # IpcProtocol.cs
 
-Defines versioned local IPC envelopes and a 4-byte little-endian length prefix with an 8 MiB cap. Protocol major mismatches and malformed lengths are rejected before payload allocation. JSON metadata is source-generated and shared by Agent, Desktop, and Session Agent.
+Defines versioned local IPC envelopes and a 4-byte little-endian length prefix with an 8 MiB cap. Protocol major mismatches and malformed lengths are rejected before payload allocation. JSON metadata is source-generated and shared by Agent, Desktop, and Session Agent; the ClientHello contract binds each connection to its authenticated session and process role.
 
 ## Role
 
