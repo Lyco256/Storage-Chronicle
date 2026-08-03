@@ -14,7 +14,7 @@ Requirement: `Requirements/20_AGENT_INSTALLER_PACKAGING.md`. The WiX project pac
 
 ## Verification
 
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/package/Build-Installer.ps1`: MSI build previously passed with WiX Toolset SDK 6.0.2, 0 warnings/errors.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/package/Build-Installer.ps1`: passed on the current 2026-08-03 checkout with self-contained Agent/Session Agent/UI publish and WiX Toolset SDK 6.0.2; MSI build completed with 0 warnings/errors at `installer/bin/x64/Release/StorageChronicle.msi`.
 - `tests/StorageChronicle.Installer.Tests/`: manifest tests pass in the non-privileged test gate.
 - `build/package/Test-Installer.ps1` without a disposable target: all ten cases recorded `NOT_EXECUTED`, exit code 2; no physical acceptance was misreported.
 
