@@ -45,11 +45,17 @@ function Read-ExactBytes {
         [Parameter(Mandatory = $true)][byte[]]$Buffer
     )
 
-    $offset = 0
-    while ($offset -lt $Buffer.Length) {
-        $read = $Stream.Read($Buffer, $offset, $Buffer.Length - $offset)
-        if ($read -le 0) { throw 'The Agent health named pipe closed before the response frame was complete.' }
-        $offset += $read
+    $timeout = [System.Threading.CancellationTokenSource]::new(2000)
+    try {
+        $offset = 0
+        while ($offset -lt $Buffer.Length) {
+            [void]($read = $Stream.ReadAsync($Buffer, $offset, $Buffer.Length - $offset, $timeout.Token).GetAwaiter().GetResult())
+            if ($read -le 0) { throw 'The Agent health named pipe closed before the response frame was complete.' }
+            $offset += $read
+        }
+    }
+    finally {
+        $timeout.Dispose()
     }
 }
 
@@ -58,28 +64,31 @@ function Get-AgentQueueDepth {
     try {
         $pipe = [System.IO.Pipes.NamedPipeClientStream]::new('.', $AgentPipeName, [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::None)
         $pipe.Connect(2000)
-        $pipe.ReadTimeout = 2000
-        $pipe.WriteTimeout = 2000
-
         $requestJson = '{"Protocol":{"Major":1,"Minor":0},"MessageType":"AgentHealthRequest","Payload":{}}'
         $payload = [Text.Encoding]::UTF8.GetBytes($requestJson)
         $frame = [byte[]]::new(4 + $payload.Length)
         [BitConverter]::GetBytes([int32]$payload.Length).CopyTo($frame, 0)
         [Array]::Copy($payload, 0, $frame, 4, $payload.Length)
-        $pipe.Write($frame, 0, $frame.Length)
-        $pipe.Flush()
+        $timeout = [System.Threading.CancellationTokenSource]::new(2000)
+        try {
+            [void]($pipe.WriteAsync($frame, 0, $frame.Length, $timeout.Token).GetAwaiter().GetResult())
+            [void]($pipe.FlushAsync($timeout.Token).GetAwaiter().GetResult())
+        }
+        finally {
+            $timeout.Dispose()
+        }
 
         $header = [byte[]]::new(4)
-        Read-ExactBytes -Stream $pipe -Buffer $header
+        [void](Read-ExactBytes -Stream $pipe -Buffer $header)
         $length = [BitConverter]::ToInt32($header, 0)
         if ($length -le 0 -or $length -gt 8MB) { throw "The Agent health response frame length $length is outside the IPC limit." }
         $responseBytes = [byte[]]::new($length)
-        Read-ExactBytes -Stream $pipe -Buffer $responseBytes
+        [void](Read-ExactBytes -Stream $pipe -Buffer $responseBytes)
         $response = [Text.Encoding]::UTF8.GetString($responseBytes) | ConvertFrom-Json
         if ($response.MessageType -ne 'AgentHealth') { throw "The Agent health pipe returned message type '$($response.MessageType)' instead of AgentHealth." }
         $depth = [int]$response.Payload.QueueDepth
         if ($depth -lt 0) { throw 'The Agent returned a negative queue depth.' }
-        return $depth
+        return [int]$depth
     }
     finally {
         if ($pipe -is [IDisposable]) { $pipe.Dispose() }
