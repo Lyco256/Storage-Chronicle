@@ -29,4 +29,20 @@ public sealed class ResilienceAndScaleTests
         Assert.Equal(before, after);
         Assert.Equal(100_000, groups.Sum(group => group.Metrics.OperationCount));
     }
+
+    [Fact]
+    public async Task LargeUnknownActivityKeepsAllFileAndSourceDescendants()
+    {
+        var events = Enumerable.Range(0, 5_000)
+            .Select(index => ProjectionFixture.Event(index, CanonicalOperation.DataWrite, $"/root/file-{index}.dat", $"file-{index}", null, ProcessAttributionQuality.Unknown))
+            .ToArray();
+
+        var result = await new ProjectionService(ProjectionFixture.Document(events)).GetEventStackTreeAsync(
+            new EventStackQuery(EventStackMode.Grouped, 1, 1), TestContext.Current.CancellationToken);
+
+        var root = Assert.Single(result.Items);
+        Assert.Equal(5_000, root.Row.Children.Count);
+        Assert.Equal(5_000, root.Children.Count);
+        Assert.All(root.Children, file => Assert.Single(file.Children));
+    }
 }

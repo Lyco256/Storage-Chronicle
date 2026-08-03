@@ -44,4 +44,17 @@ public sealed class AgentHealthStateTests
 
         Assert.Equal(MonitoringContinuity.ReconciledState, Assert.Single(state.Snapshot(new RecordingStatus(RecordingState.Running, 1, 1, null)).Volumes).Continuity);
     }
+
+    [Fact]
+    public void PipelineFailureIsExposedAsQualityStateWithoutChangingRecordingStatus()
+    {
+        var state = new AgentHealthState();
+
+        state.RecordPipelineFailure(new IOException("SQLite is temporarily locked."));
+
+        var snapshot = state.Snapshot(new RecordingStatus(RecordingState.Running, 3, 3, null));
+        Assert.Equal("Running", snapshot.State);
+        Assert.Contains("Pipeline:", snapshot.Reason, StringComparison.Ordinal);
+        Assert.Contains("temporarily locked", snapshot.Reason, StringComparison.Ordinal);
+    }
 }

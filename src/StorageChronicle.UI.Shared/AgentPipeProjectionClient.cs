@@ -75,6 +75,15 @@ public sealed class AgentPipeProjectionClient : IVirtualizedPageSource<EventStac
         return IpcProtocol.Read<AgentHealth>(response);
     }
 
+    /// <summary>Sends one versioned request through the existing Agent pipe transport.</summary>
+    /// <remarks>This boundary is shared by UI features that have their own typed gateway.</remarks>
+    public ValueTask<IpcEnvelope> SendRequestAsync<T>(string messageType, T request, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(messageType);
+        ArgumentNullException.ThrowIfNull(request);
+        return SendAsync(messageType, request, cancellationToken);
+    }
+
     private async ValueTask<IpcEnvelope> SendAsync<T>(string messageType, T request, CancellationToken cancellationToken)
     {
         await using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);

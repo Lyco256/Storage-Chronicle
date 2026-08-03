@@ -20,6 +20,10 @@ foreach ($buildProject in $projects) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 $project = Join-Path $root 'tests/StorageChronicle.Architecture.Tests/StorageChronicle.Architecture.Tests.csproj'
-$assembly = [IO.Path]::GetFileNameWithoutExtension($project)
-dotnet test $project -c $Configuration --no-build --results-directory $artifact
+$assemblyName = [IO.Path]::GetFileNameWithoutExtension($project)
+$assembly = Get-ChildItem (Join-Path (Split-Path -Parent $project) "bin\$Configuration") -Recurse -File -Filter ($assemblyName + '.dll') |
+    Sort-Object LastWriteTimeUtc -Descending |
+    Select-Object -First 1
+if ($null -eq $assembly) { Write-Error "Architecture test assembly was not found: $assemblyName"; exit 6 }
+dotnet test $assembly.FullName.Substring($root.Length + 1) --no-restore --results-directory $artifact
 exit $LASTEXITCODE

@@ -1,17 +1,18 @@
-using Avalonia.Controls;
-using Avalonia.Layout;
 using Avalonia.Automation;
-using System.Collections.ObjectModel;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Layout;
 using StorageChronicle.Contracts;
 using StorageChronicle.Contracts.Runtime;
 using StorageChronicle.Domain.Contracts;
 using StorageChronicle.Projection;
 using StorageChronicle.UI.DiffView;
 using StorageChronicle.UI.Shared;
+using System.Collections.ObjectModel;
 
 namespace StorageChronicle.UI.Desktop;
 
-/// <summary>Small desktop host for the shared Diff View model and all four time modes.</summary>
+/// <summary>Desktop host for the shared Tree/Explorer Diff View and its four time modes.</summary>
 public sealed class DiffProjectionPanel : UserControl
 {
     private readonly DiffViewModel viewModel;
@@ -21,6 +22,11 @@ public sealed class DiffProjectionPanel : UserControl
     private readonly ListBox explorerList;
     private readonly TextBlock status;
     private readonly TextBox filter;
+    private readonly Grid resultGrid;
+    private readonly TextBlock leftPanePath;
+    private readonly TextBlock rightPanePath;
+    private readonly Button openButton;
+        private readonly Button replayPlayButton;
 
     /// <summary>Creates a Diff View backed by the Agent projection pipe.</summary>
     public DiffProjectionPanel(IProjectionService projection)
@@ -28,10 +34,17 @@ public sealed class DiffProjectionPanel : UserControl
         viewModel = projection is AgentPipeProjectionClient agent
             ? new DiffViewModel(new AgentDiffProjectionSource(agent))
             : new DiffViewModel(projection);
+
         treeList = new ListBox { ItemsSource = treeRows, [AutomationProperties.NameProperty] = "Diff View tree" };
         explorerList = new ListBox { ItemsSource = explorerRows, IsVisible = false, [AutomationProperties.NameProperty] = "Diff View Explorer" };
+        treeList.SelectionChanged += (_, _) => SelectTreeRow();
+        explorerList.SelectionChanged += (_, _) => SelectExplorerRow();
         status = new TextBlock { Text = "Diff View: Agent connection is idle." };
         filter = new TextBox { PlaceholderText = "Name, path, or operation", [AutomationProperties.NameProperty] = "Diff filter" };
+
+        var expandTree = new Button { Content = "Expand/collapse tree", [AutomationProperties.NameProperty] = "Expand or collapse selected diff tree row" };
+        expandTree.Click += async (_, _) => await ToggleSelectedTreeNodeAsync().ConfigureAwait(true);
+
         var refresh = new Button { Content = "Refresh", [AutomationProperties.NameProperty] = "Refresh diff" };
         refresh.Click += async (_, _) => await RefreshAsync(viewModel.Mode).ConfigureAwait(true);
         var modes = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
@@ -41,17 +54,59 @@ public sealed class DiffProjectionPanel : UserControl
             button.Click += async (_, _) => await RefreshAsync(mode).ConfigureAwait(true);
             modes.Children.Add(button);
         }
-        var treeButton = new Button { Content = "Tree", [AutomationProperties.NameProperty] = "Show diff tree" };
-        treeButton.Click += (_, _) => { treeList.IsVisible = true; explorerList.IsVisible = false; };
-        var explorerButton = new Button { Content = "Explorer", [AutomationProperties.NameProperty] = "Show diff Explorer" };
-        explorerButton.Click += (_, _) => { treeList.IsVisible = false; explorerList.IsVisible = true; };
-        var presentations = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { treeButton, explorerButton } };
-        var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { filter, refresh, presentations } };
 
-        Content = new DockPanel { Margin = new Avalonia.Thickness(16), Children =
+        var treeButton = new Button { Content = "Tree", [AutomationProperties.NameProperty] = "Show diff tree" };
+        treeButton.Click += (_, _) => ShowTree();
+        var explorerButton = new Button { Content = "Explorer", [AutomationProperties.NameProperty] = "Show diff Explorer" };
+        explorerButton.Click += (_, _) => ShowExplorer();
+        var presentations = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { treeButton, explorerButton } };
+
+        var explorerModes = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        foreach (var mode in DiffExplorerView.SupportedModes)
         {
-            new StackPanel { Orientation = Orientation.Vertical, Spacing = 8, Children = { modes, toolbar, status, treeList, explorerList } }
-        }};
+            var button = new Button { Content = mode.ToString(), [AutomationProperties.NameProperty] = $"Explorer layout {mode}" };
+            button.Click += (_, _) => { viewModel.SetViewMode(mode); RenderRows(); };
+            explorerModes.Children.Add(button);
+        }
+
+        var back = new Button { Content = "Back", [AutomationProperties.NameProperty] = "Diff navigation back" };
+        back.Click += (_, _) => { viewModel.NavigateBack(); UpdatePaneState(); };
+        var forward = new Button { Content = "Forward", [AutomationProperties.NameProperty] = "Diff navigation forward" };
+        forward.Click += (_, _) => { viewModel.NavigateForward(); UpdatePaneState(); };
+        openButton = new Button { Content = "Open in Explorer", [AutomationProperties.NameProperty] = "Open selected diff item in Explorer" };
+        openButton.Click += async (_, _) => await OpenSelectedAsync().ConfigureAwait(true);
+        var split = new ToggleButton { Content = "Split panes", [AutomationProperties.NameProperty] = "Toggle diff split panes" };
+        split.IsCheckedChanged += (_, _) => { viewModel.SplitPanes.SetSplit(split.IsChecked == true); UpdateSplitLayout(); UpdatePaneState(); };
+        replayPlayButton = new Button { Content = "Play replay", [AutomationProperties.NameProperty] = "Play or pause diff replay" };
+        replayPlayButton.Click += (_, _) => ToggleReplay();
+        var present = new Button { Content = "Present", [AutomationProperties.NameProperty] = "Return replay to present" };
+        present.Click += (_, _) => { viewModel.ReturnReplayToPresent(); UpdatePaneState(); };
+        var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { filter, refresh, presentations, expandTree, back, forward, openButton, split, replayPlayButton, present } };
+
+        leftPanePath = new TextBlock { Text = "Left pane: no selection", [AutomationProperties.NameProperty] = "Diff left pane" };
+        rightPanePath = new TextBlock { Text = "Right pane: no selection", [AutomationProperties.NameProperty] = "Diff right pane" };
+        var leftPane = new StackPanel { Spacing = 4, Children = { leftPanePath, treeList, explorerList } };
+        var rightPane = new StackPanel { Spacing = 4, Children = { rightPanePath, new TextBlock { Text = "Replay and comparison state is derived from the selected projection." } } };
+        resultGrid = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("1* 1*"),
+            Children =
+            {
+                new Border { Child = leftPane },
+                new Border { Child = rightPane, [Grid.ColumnProperty] = 1 }
+            }
+        };
+        UpdateSplitLayout();
+
+        Content = new DockPanel
+        {
+            Margin = new Avalonia.Thickness(16),
+            Children =
+            {
+                new StackPanel { Orientation = Orientation.Vertical, Spacing = 8, Children = { modes, toolbar, explorerModes, status, resultGrid } }
+            }
+        };
+        AttachedToVisualTree += async (_, _) => await RefreshAsync(DiffMode.Live).ConfigureAwait(true);
     }
 
     private async Task RefreshAsync(DiffMode mode)
@@ -63,23 +118,114 @@ public sealed class DiffProjectionPanel : UserControl
                 ? ProjectionFilter.Empty
                 : new ProjectionFilter(Any: new[] { new FilterTerm(FilterField.Name, filter.Text.Trim()) });
             await viewModel.RefreshAsync(new DiffProjectionQuery(mode == DiffMode.PointInTime ? null : now.AddHours(-1), now, mode, projectionFilter)).ConfigureAwait(true);
-            treeRows.Clear();
-            foreach (var row in viewModel.Tree.GetVisibleRows())
-            {
-                treeRows.Add($"{new string(' ', row.Depth * 2)}{row.Visuals.Primary.IconKey} {row.Node.Projection.DisplayName} ({row.Node.Projection.DescendantCount})");
-            }
-            explorerRows.Clear();
-            foreach (var row in viewModel.ExplorerRows)
-            {
-                var openState = row.CanOpenInExplorer ? "" : $" [{row.OpenDisabledReason}]";
-                explorerRows.Add($"{row.Visuals.Primary.IconKey} {row.Projection.DisplayName} — {row.Projection.DisplayPath}{openState}");
-            }
-            status.Text = $"{mode}: {viewModel.Items.Count} rows";
+            RenderRows();
+            status.Text = $"{mode}: {viewModel.Items.Count} rows; Explorer layout: {viewModel.ViewMode}";
         }
         catch (Exception exception) when (exception is IOException or TimeoutException or UnauthorizedAccessException)
         {
             status.Text = $"Agent unavailable: {exception.Message}";
         }
+    }
+
+    private void RenderRows()
+    {
+        treeRows.Clear();
+        foreach (var row in viewModel.Tree.GetVisibleRows())
+        {
+            var secondary = row.Visuals.Secondary.Count == 0 ? string.Empty : $" +{row.Visuals.Secondary.Count} markers";
+            treeRows.Add($"{new string(' ', row.Depth * 2)}{row.Visuals.Primary.IconKey}{secondary} {row.Node.Projection.DisplayName} ({row.Node.Projection.DescendantCount})");
+        }
+
+        explorerRows.Clear();
+        foreach (var row in viewModel.Explorer.GetPage(1, 250))
+        {
+            var openState = row.CanOpenInExplorer ? string.Empty : $" [{row.OpenDisabledReason}]";
+            explorerRows.Add($"{row.Visuals.Primary.IconKey} {viewModel.ViewMode}: {row.Projection.DisplayName} — {row.Projection.DisplayPath}{openState}");
+        }
+        UpdatePaneState();
+    }
+
+    private void ShowTree()
+    {
+        treeList.IsVisible = true;
+        explorerList.IsVisible = false;
+    }
+
+    private void ShowExplorer()
+    {
+        treeList.IsVisible = false;
+        explorerList.IsVisible = true;
+    }
+
+    private void SelectTreeRow()
+    {
+        var rows = viewModel.Tree.GetVisibleRows();
+        if (treeList.SelectedIndex is < 0 || treeList.SelectedIndex >= rows.Count) return;
+        viewModel.Select(rows[treeList.SelectedIndex].Node);
+        UpdatePaneState();
+    }
+
+    private async Task ToggleSelectedTreeNodeAsync()
+    {
+        var rows = viewModel.Tree.GetVisibleRows();
+        if (treeList.SelectedIndex is < 0 || treeList.SelectedIndex >= rows.Count)
+        {
+            status.Text = "Select a Tree row before expanding it.";
+            return;
+        }
+
+        var row = rows[treeList.SelectedIndex];
+        if (!row.IsExpandable)
+        {
+            status.Text = "The selected Tree row has no descendants.";
+            return;
+        }
+
+        if (row.IsExpanded) row.Node.Collapse();
+        else await row.Node.ExpandAsync().ConfigureAwait(true);
+        RenderRows();
+        status.Text = row.IsExpanded ? "Tree row expanded." : "Tree row collapsed.";
+    }
+
+    private void SelectExplorerRow()
+    {
+        if (explorerList.SelectedIndex is < 0 || explorerList.SelectedIndex >= viewModel.ExplorerRows.Count) return;
+        viewModel.NavigateToPath(viewModel.ExplorerRows[explorerList.SelectedIndex].Projection.DisplayPath);
+        UpdatePaneState();
+    }
+
+    private async Task OpenSelectedAsync()
+    {
+        var result = await viewModel.OpenSelectedInExplorerAsync().ConfigureAwait(true);
+        status.Text = result.Succeeded ? "Opened the selected current item." : result.Error ?? "The selected item could not be opened.";
+    }
+
+    private void ToggleReplay()
+    {
+        if (viewModel.Replay.IsPlaying)
+        {
+            viewModel.Replay.Pause();
+            replayPlayButton.Content = "Play replay";
+        }
+        else
+        {
+            viewModel.Replay.Play();
+            replayPlayButton.Content = "Pause replay";
+        }
+        UpdatePaneState();
+    }
+
+    private void UpdatePaneState()
+    {
+        var selected = viewModel.SelectedNode?.Projection;
+        leftPanePath.Text = $"Left pane: {viewModel.SplitPanes.Left.CurrentPath ?? "no selection"}";
+        rightPanePath.Text = $"Right pane: {(viewModel.SplitPanes.IsSplit ? viewModel.SplitPanes.Right.CurrentPath ?? "no selection" : "split disabled")}";
+        openButton.IsEnabled = selected?.CanOpenInExplorer == true && !selected.IsDeleted;
+    }
+
+    private void UpdateSplitLayout()
+    {
+        if (resultGrid.Children.Count > 1) resultGrid.Children[1].IsVisible = viewModel.SplitPanes.IsSplit;
     }
 }
 

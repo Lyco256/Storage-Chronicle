@@ -29,10 +29,28 @@ public sealed record EventDetailsSnapshot(
     bool IsExistenceOnly);
 
 /// <summary>Controls which event-stack projection is returned.</summary>
-public enum EventStackMode { Source, Normalized, Grouped }
+public enum EventStackMode
+{
+    /// <summary>Returns source events.</summary>
+    Source,
+    /// <summary>Returns normalized events.</summary>
+    Normalized,
+    /// <summary>Returns grouped activity rows.</summary>
+    Grouped
+}
 
 /// <summary>Controls the diff projection time semantics.</summary>
-public enum DiffMode { Live, Period, PointInTime, Replay }
+public enum DiffMode
+{
+    /// <summary>Shows the current live projection.</summary>
+    Live,
+    /// <summary>Compares two points in a period.</summary>
+    Period,
+    /// <summary>Shows a single point-in-time state.</summary>
+    PointInTime,
+    /// <summary>Replays the selected historical timeline.</summary>
+    Replay
+}
 
 /// <summary>Describes a bounded page of projection rows.</summary>
 public sealed record ProjectionPage<T>(IReadOnlyList<T> Items, int Page, int PageSize, int TotalCount, bool HasMore);

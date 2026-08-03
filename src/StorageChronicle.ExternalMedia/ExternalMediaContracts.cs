@@ -35,17 +35,36 @@ public sealed record MediaMirrorConfiguration(bool Enabled, string MediaRoot, bo
 /// <summary>Quality assigned to media monitoring and recovery facts.</summary>
 public enum MediaHistoryQuality
 {
+    /// <summary>Media facts are exact.</summary>
     Exact,
+    /// <summary>Facts were recovered from USN.</summary>
     UsnRecovered,
+    /// <summary>Facts came from best-effort directory enumeration.</summary>
     DirectoryBestEffort,
+    /// <summary>Media is readable only.</summary>
     ReadOnly,
+    /// <summary>State reconciliation is required.</summary>
     ReconciliationRequired,
+    /// <summary>The media format is unsupported.</summary>
     UnsupportedFormat,
+    /// <summary>Continuity is unverified.</summary>
     UnverifiedGap
 }
 
 /// <summary>Reason a media recovery plan was selected.</summary>
-public enum MediaRecoveryKind { None, UsnRecovery, FullReconciliation, ReadOnly, Unsupported }
+public enum MediaRecoveryKind
+{
+    /// <summary>No recovery is required.</summary>
+    None,
+    /// <summary>Recover from the existing USN journal.</summary>
+    UsnRecovery,
+    /// <summary>Run full reconciliation.</summary>
+    FullReconciliation,
+    /// <summary>Keep the media history read-only.</summary>
+    ReadOnly,
+    /// <summary>The media format cannot be recovered.</summary>
+    Unsupported
+}
 
 /// <summary>Assessment of a media volume without changing its journal.</summary>
 public sealed record MediaQualityAssessment(MediaHistoryQuality Quality, MediaRecoveryKind Recovery, string FileSystem, bool SupportsUsn, bool IsReadOnly, string Explanation);
@@ -60,7 +79,23 @@ public sealed record InterruptedSegmentRecovery(string FileName, bool Finalized,
 public sealed record MediaLogDeletionRecovery(bool LogWasMissing, HistoryBranchId Branch, string? LostManifestSha256, string MarkerPath);
 
 /// <summary>Warnings emitted while importing media history.</summary>
-public enum MediaImportWarning { None, ConcurrentWritersDetected, ParentManifestUnavailable, InvalidManifestSkipped, SegmentCorrupt, ReadOnlyMedia, ReconciliationRequired }
+public enum MediaImportWarning
+{
+    /// <summary>No warning.</summary>
+    None,
+    /// <summary>Concurrent writers were detected.</summary>
+    ConcurrentWritersDetected,
+    /// <summary>The parent manifest is unavailable.</summary>
+    ParentManifestUnavailable,
+    /// <summary>An invalid manifest was skipped.</summary>
+    InvalidManifestSkipped,
+    /// <summary>A referenced segment is corrupt.</summary>
+    SegmentCorrupt,
+    /// <summary>The media is read-only.</summary>
+    ReadOnlyMedia,
+    /// <summary>Reconciliation is required.</summary>
+    ReconciliationRequired
+}
 
 /// <summary>Result of importing confirmed segments from another PC.</summary>
 public sealed record MediaImportResult(

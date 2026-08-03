@@ -206,7 +206,16 @@ public sealed class AgentProjectionService : IProjectionService
     private static EventStackRow CreateRow(EventId id, EventTime time, CanonicalOperation operation, string? name, EventQuality quality, ProcessInstanceId? process, ProcessAttributionQuality processQuality, EventOrigin origin, IReadOnlyDictionary<string, string> properties)
         => new(id, time.RecordedUtc, GetProperty(properties, "path") is { Length: > 0 } path ? path : name ?? "場所を特定できない項目", operation, name ?? operation.ToString(), quality, process, processQuality, origin, Array.Empty<EventId>());
 
-    private static string GetProperty(IReadOnlyDictionary<string, string> properties, string key) => properties.TryGetValue(key, out var value) ? value : string.Empty;
+    private static string GetProperty(IReadOnlyDictionary<string, string> properties, string key)
+    {
+        if (properties.TryGetValue(key, out var value)) return value;
+        foreach (var pair in properties)
+        {
+            if (string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase)) return pair.Value;
+        }
+
+        return string.Empty;
+    }
 
     private static ProcessInstanceId? ParseProcess(string value) => string.IsNullOrWhiteSpace(value) ? null : ProcessInstanceId.Create(value);
 

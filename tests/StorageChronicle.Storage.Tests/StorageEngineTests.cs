@@ -161,6 +161,36 @@ public sealed class StorageEngineTests
     }
 
     [Fact]
+    public async Task BoundedCanonicalBatchKeepsOrderDeduplicatesAndRebuilds()
+    {
+        var directory = CreateDirectory();
+        try
+        {
+            var first = CreateCanonical(CreateSource(1));
+            var second = CreateCanonical(CreateSource(2));
+            await using (var store = CreateStore(directory))
+            {
+                await store.AppendCanonicalBatchAsync(new[] { first, first, second });
+                Assert.Equal(2, await store.CountEventsAsync(canonical: true));
+                await store.StopAsync();
+                var recorded = await ToListAsync(store.ReadCanonicalAsync());
+                Assert.Equal(new[] { first.EventId, second.EventId }, recorded.Select(value => value.EventId).ToArray());
+            }
+
+            File.Delete(Path.Combine(directory, "index.sqlite"));
+            File.Delete(Path.Combine(directory, "index.sqlite-wal"));
+            File.Delete(Path.Combine(directory, "index.sqlite-shm"));
+            await using var recovered = CreateStore(directory);
+            await recovered.RebuildSqliteAsync();
+            Assert.Equal(2, await recovered.CountEventsAsync(canonical: true));
+        }
+        finally
+        {
+            RemoveDirectory(directory);
+        }
+    }
+
+    [Fact]
     public async Task ConcurrentReadersObserveSingleWriterHistory()
     {
         var directory = CreateDirectory();

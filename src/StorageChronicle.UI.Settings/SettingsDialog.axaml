@@ -1,0 +1,93 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="StorageChronicle.UI.Settings.SettingsDialogWindow"
+        x:CompileBindings="False"
+        Title="Storage Chronicle Settings"
+        Width="820"
+        Height="720"
+        MinWidth="640"
+        MinHeight="520"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        AutomationProperties.Name="Settings dialog">
+  <Grid RowDefinitions="Auto,*,Auto" Margin="20" RowSpacing="12">
+    <StackPanel Grid.Row="0" Spacing="4">
+      <TextBlock Text="Settings" FontSize="24" FontWeight="SemiBold" />
+      <TextBlock Text="Changes are validated here and applied through the monitoring Agent." Opacity="0.78" />
+    </StackPanel>
+
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+      <StackPanel Spacing="12">
+        <Expander Header="Machine Settings" IsExpanded="True">
+          <Grid ColumnDefinitions="190,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="10" Margin="8,12,8,4">
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Monitoring paths" VerticalAlignment="Top" />
+            <TextBox x:Name="MonitoringPathsInput" Grid.Row="0" Grid.Column="1" Text="{Binding MonitoringPathsText, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="64" PlaceholderText="One absolute path per line" AutomationProperties.Name="Monitoring paths" />
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Excluded paths" VerticalAlignment="Top" />
+            <TextBox x:Name="ExcludedPathsInput" Grid.Row="1" Grid.Column="1" Text="{Binding ExcludedPathsText, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="64" PlaceholderText="One absolute path per line" AutomationProperties.Name="Excluded paths" />
+
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="Noise-filter profile" VerticalAlignment="Center" />
+            <ComboBox x:Name="NoiseFilterInput" Grid.Row="2" Grid.Column="1" ItemsSource="{Binding NoiseFilterProfiles}" SelectedItem="{Binding NoiseFilter, Mode=TwoWay}" AutomationProperties.Name="Noise filter profile" />
+
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="Log storage path" VerticalAlignment="Center" />
+            <TextBox x:Name="LogStoragePathInput" Grid.Row="3" Grid.Column="1" Text="{Binding LogStoragePathText, Mode=TwoWay}" PlaceholderText="Absolute local path" AutomationProperties.Name="Log storage path" />
+
+            <TextBlock Grid.Row="4" Grid.Column="0" Text="Media mirrors" VerticalAlignment="Top" />
+            <StackPanel Grid.Row="4" Grid.Column="1" Spacing="4">
+              <TextBox x:Name="MediaMirrorsInput" Text="{Binding MediaMirrorsText, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="64" PlaceholderText="media-id=absolute-path, one per line" AutomationProperties.Name="Media mirrors" />
+              <TextBlock Text="An entry enables a mirror for that media identifier; remove it to disable the mirror." Opacity="0.7" TextWrapping="Wrap" />
+            </StackPanel>
+
+            <TextBlock Grid.Row="5" Grid.Column="0" Text="Flush interval (seconds)" VerticalAlignment="Center" />
+            <NumericUpDown x:Name="FlushIntervalInput" Grid.Row="5" Grid.Column="1" Value="{Binding FlushIntervalSeconds, Mode=TwoWay}" Minimum="1" Maximum="60" Increment="1" FormatString="0" AutomationProperties.Name="Flush interval" />
+          </Grid>
+        </Expander>
+
+        <Expander Header="User Settings" IsExpanded="True">
+          <Grid ColumnDefinitions="190,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="10" Margin="8,12,8,4">
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Activity Group timeout (seconds)" VerticalAlignment="Center" />
+            <NumericUpDown x:Name="ActivityGroupTimeoutInput" Grid.Row="0" Grid.Column="1" Value="{Binding ActivityGroupTimeoutSeconds, Mode=TwoWay}" Minimum="0.5" Maximum="60" Increment="0.5" FormatString="0.##" AutomationProperties.Name="Activity Group timeout" />
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Pane timeout (seconds)" VerticalAlignment="Center" />
+            <NumericUpDown x:Name="PaneTimeoutInput" Grid.Row="1" Grid.Column="1" Value="{Binding PaneTimeoutSeconds, Mode=TwoWay}" Minimum="0.5" Maximum="60" Increment="0.5" FormatString="0.##" AutomationProperties.Name="Pane timeout" />
+
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="Event Stack page size" VerticalAlignment="Center" />
+            <NumericUpDown x:Name="EventStackPageSizeInput" Grid.Row="2" Grid.Column="1" Value="{Binding EventStackPageSize, Mode=TwoWay}" Minimum="50" Maximum="5000" Increment="50" FormatString="0" AutomationProperties.Name="Event Stack page size" />
+
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="Event Stack sort" VerticalAlignment="Center" />
+            <ComboBox x:Name="EventStackSortInput" Grid.Row="3" Grid.Column="1" ItemsSource="{Binding EventStackSortOrders}" SelectedItem="{Binding EventStackSort, Mode=TwoWay}" AutomationProperties.Name="Event Stack sort" />
+
+            <TextBlock Grid.Row="4" Grid.Column="0" Text="Initial Event Stack mode" VerticalAlignment="Center" />
+            <ComboBox x:Name="InitialEventStackModeInput" Grid.Row="4" Grid.Column="1" ItemsSource="{Binding EventStackInitialModes}" SelectedItem="{Binding InitialEventStackMode, Mode=TwoWay}" AutomationProperties.Name="Initial Event Stack mode" />
+
+            <TextBlock Grid.Row="5" Grid.Column="0" Text="Diff View format" VerticalAlignment="Center" />
+            <ComboBox x:Name="DiffFormatInput" Grid.Row="5" Grid.Column="1" ItemsSource="{Binding DiffDisplayFormats}" SelectedItem="{Binding DiffFormat, Mode=TwoWay}" AutomationProperties.Name="Diff View format" />
+
+            <TextBlock Grid.Row="6" Grid.Column="0" Text="Diff View zoom (%)" VerticalAlignment="Center" />
+            <NumericUpDown x:Name="DiffZoomInput" Grid.Row="6" Grid.Column="1" Value="{Binding DiffZoomPercent, Mode=TwoWay}" Minimum="50" Maximum="300" Increment="10" FormatString="0" AutomationProperties.Name="Diff View zoom" />
+
+            <TextBlock Grid.Row="7" Grid.Column="0" Text="Diff View columns" VerticalAlignment="Center" />
+            <ComboBox x:Name="DiffColumnsInput" Grid.Row="7" Grid.Column="1" ItemsSource="{Binding DiffColumnOrders}" SelectedItem="{Binding DiffColumns, Mode=TwoWay}" AutomationProperties.Name="Diff View columns" />
+
+            <TextBlock Grid.Row="8" Grid.Column="0" Text="Saved filters" VerticalAlignment="Top" />
+            <TextBox x:Name="SavedFiltersInput" Grid.Row="8" Grid.Column="1" Text="{Binding SavedFiltersText, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="64" PlaceholderText="One saved filter per line" AutomationProperties.Name="Saved filters" />
+          </Grid>
+        </Expander>
+      </StackPanel>
+    </ScrollViewer>
+
+    <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+      <StackPanel Grid.Column="0" Spacing="3" VerticalAlignment="Center">
+        <TextBlock x:Name="StatusText" Text="{Binding StatusMessage}" TextWrapping="Wrap" />
+        <TextBlock x:Name="ErrorText" Text="{Binding ErrorMessage}" Foreground="#E57373" TextWrapping="Wrap" />
+        <TextBlock x:Name="InputErrorText" Text="{Binding InputErrorMessage}" Foreground="#E57373" TextWrapping="Wrap" />
+      </StackPanel>
+      <ProgressBar Grid.Column="1" Width="90" IsIndeterminate="True" IsVisible="{Binding IsBusy}" VerticalAlignment="Center" />
+      <Button x:Name="CancelApplyButton" Grid.Column="2" Content="Cancel apply" Command="{Binding CancelApplyCommand}" IsVisible="{Binding IsBusy}" AutomationProperties.Name="Cancel settings apply" />
+      <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8">
+        <Button x:Name="CancelButton" Content="Cancel" Click="OnCancelClick" AutomationProperties.Name="Cancel settings" />
+        <Button x:Name="ApplyButton" Content="Apply" Command="{Binding ApplyCommand}" IsDefault="True" AutomationProperties.Name="Apply settings" />
+      </StackPanel>
+    </Grid>
+  </Grid>
+</Window>

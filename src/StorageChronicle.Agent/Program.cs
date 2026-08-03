@@ -28,7 +28,7 @@ public static class Program
         var machineSettingsStore = new MachineSettingsStore();
         var initialMachineSettings = machineSettingsStore.Load().Settings;
         var storageDirectory = string.IsNullOrWhiteSpace(initialMachineSettings.LogStoragePath) ? defaultHistoryRoot : Path.GetFullPath(initialMachineSettings.LogStoragePath);
-        var flushSeconds = Math.Clamp(initialMachineSettings.FlushIntervalSeconds, 1, 3600);
+        var flushSeconds = Math.Clamp(initialMachineSettings.FlushIntervalSeconds, 1, 60);
         builder.Services.AddSingleton(new AppendOnlyStorageEngine(new StorageEngineOptions(storageDirectory) { FlushInterval = TimeSpan.FromSeconds(flushSeconds) }));
         builder.Services.AddSingleton<AgentHealthState>();
         builder.Services.AddSingleton<IEventStore>(services => services.GetRequiredService<AppendOnlyStorageEngine>());

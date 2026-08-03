@@ -79,6 +79,13 @@ public sealed class AgentHealthState
         Volatile.Write(ref failureReason, $"{sink.GetType().Name}: {exception.Message}");
     }
 
+    /// <summary>Records a pipeline/storage failure without terminating the Agent supervisor.</summary>
+    public void RecordPipelineFailure(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        Volatile.Write(ref failureReason, $"Pipeline: {exception.Message}");
+    }
+
     /// <summary>Clears a previous isolated failure after a supervised monitoring restart.</summary>
     public void ClearFailure() => Volatile.Write(ref failureReason, null);
 

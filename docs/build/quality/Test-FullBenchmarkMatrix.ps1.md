@@ -1,0 +1,9 @@
+# Test-FullBenchmarkMatrix.ps1
+
+Precondition failures write a `not-executed` manifest under the requested artifact root before returning nonzero, so missing MFT capability is visible evidence rather than an unrecorded skip.
+
+Runs every required BenchmarkDotNet suite as separate, auditable lanes and validates that each expected benchmark method has a successful full-compressed JSON result with statistics. The portable lanes cover one-million-node path reconstruction, large-folder moves, grouped/Event Stack/Period Diff, append and Zstandard work, SQLite rebuild/query, and external-media manifest/segment work. `-IncludeMft` adds the real one-million-entry MFT lane and is mandatory for an acceptance-eligible run; `-PortableOnly` is explicitly diagnostic and writes `AcceptanceEligible=false`.
+
+The script does not replace `build/quality/Test-Performance.ps1`. It fails closed when MFT is not configured, when BenchmarkDotNet exits nonzero, when a report is missing, or when any expected method is absent or has no statistics. Each run writes a manifest and per-suite runner log below `artifacts/benchmarks/full-matrix-*`. MFT remains unexecuted unless a dedicated Windows NTFS capability volume is supplied through `STORAGE_CHRONICLE_MFT_VOLUME`.
+
+Relevant requirements: `Requirements/03_TEST_AND_QUALITY_REQUIREMENTS.md` §5 and §9, and `Requirements/19_AGENT_INTEGRATION_QUALITY.md` §4 and §6. The script's evidence is diagnostic/acceptance evidence only; it does not alter benchmark thresholds or product contracts.

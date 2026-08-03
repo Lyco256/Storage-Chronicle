@@ -5,8 +5,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsTestLikeProject Condition="$([System.String]::Copy('$(MSBuildProjectName)').EndsWith('.Tests'))">true</IsTestLikeProject>
+    <GenerateDocumentationFile Condition="'$(IsTestLikeProject)' != 'true'">true</GenerateDocumentationFile>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <Deterministic>true</Deterministic>
     <DebugType>portable</DebugType>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
   </PropertyGroup>
 </Project>

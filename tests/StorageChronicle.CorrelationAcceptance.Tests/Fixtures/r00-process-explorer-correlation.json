@@ -1,0 +1,250 @@
+{
+  "fixtureId": "r00-process-explorer-correlation-v1",
+  "description": "Metadata-only deterministic fixture for R-00 sections 8 and 9.",
+  "processCases": [
+    { "sourceId": "process-exact", "expectedQuality": "Exact" },
+    { "sourceId": "process-correlated", "expectedQuality": "Correlated" },
+    { "sourceId": "process-unknown", "expectedQuality": "Unknown" }
+  ],
+  "explorerCases": [
+    { "destinationSourceId": "explorer-copy-correlated", "clipboardSourceId": "clipboard-copy-correlated", "expectedCorrelation": "Correlated", "expectedSourceFileId": "source-file-1" },
+    { "destinationSourceId": "explorer-create-without-candidate", "expectedCorrelation": "Uncorrelated", "expectedSourceFileId": null },
+    { "destinationSourceId": "explorer-copy-wrong-generation", "clipboardSourceId": "clipboard-copy-wrong-generation", "expectedCorrelation": "Uncorrelated", "expectedSourceFileId": null },
+    { "destinationSourceId": "external-app-create", "clipboardSourceId": "clipboard-copy-external-app", "expectedCorrelation": "ExcludedNonExplorer", "expectedSourceFileId": null }
+  ],
+  "sourceFacts": [
+    {
+      "sourceId": "process-exact",
+      "eventId": "00000000-0000-0000-0000-000000000001",
+      "origin": "LiveUsn",
+      "volumeId": "volume-process",
+      "fileId": "file-exact",
+      "parentFileId": "parent-exact",
+      "name": "exact.txt",
+      "hint": "DataWrite",
+      "quality": "Exact",
+      "processInstanceId": "process-exact-instance",
+      "processQuality": "Exact",
+      "mountSessionId": "mount-process",
+      "sequence": 1,
+      "properties": {
+        "path": "C:\\StorageChronicleFixture\\exact.txt",
+        "process.name": "editor.exe",
+        "process.executable": "C:\\Program Files\\FixtureEditor\\editor.exe",
+        "process.parentInstanceId": "process-parent-instance"
+      }
+    },
+    {
+      "sourceId": "process-correlated",
+      "eventId": "00000000-0000-0000-0000-000000000002",
+      "origin": "LiveUsn",
+      "volumeId": "volume-process",
+      "fileId": "file-correlated",
+      "parentFileId": "parent-correlated",
+      "name": "correlated.txt",
+      "hint": "DataWrite",
+      "quality": "Correlated",
+      "processInstanceId": "process-correlated-instance",
+      "processQuality": "Correlated",
+      "mountSessionId": "mount-process",
+      "sequence": 2,
+      "properties": {
+        "path": "C:\\StorageChronicleFixture\\correlated.txt",
+        "process.name": "worker.exe",
+        "process.executable": "C:\\Fixture\\worker.exe",
+        "process.parentInstanceId": "process-parent-instance"
+      }
+    },
+    {
+      "sourceId": "process-unknown",
+      "eventId": "00000000-0000-0000-0000-000000000003",
+      "origin": "InitialSnapshot",
+      "volumeId": "volume-process",
+      "fileId": "file-unknown",
+      "parentFileId": "parent-unknown",
+      "name": "unknown.txt",
+      "hint": "Create",
+      "quality": "ExistenceOnly",
+      "processInstanceId": null,
+      "processQuality": "Unknown",
+      "mountSessionId": "mount-process",
+      "sequence": 3,
+      "properties": {
+        "path": "C:\\StorageChronicleFixture\\unknown.txt"
+      }
+    },
+    {
+      "sourceId": "etw-read-transient",
+      "eventId": "00000000-0000-0000-0000-000000000004",
+      "origin": "Etw",
+      "volumeId": "volume-process",
+      "fileId": "file-exact",
+      "parentFileId": "parent-exact",
+      "name": "exact.txt",
+      "hint": null,
+      "quality": "Correlated",
+      "processInstanceId": "process-correlated-instance",
+      "processQuality": "Correlated",
+      "mountSessionId": "mount-process",
+      "sequence": 4,
+      "properties": {
+        "observation": "Read",
+        "path": "C:\\StorageChronicleFixture\\exact.txt",
+        "process.name": "worker.exe"
+      }
+    },
+    {
+      "sourceId": "clipboard-copy-correlated",
+      "eventId": "00000000-0000-0000-0000-000000000011",
+      "origin": "Clipboard",
+      "volumeId": "volume-explorer",
+      "fileId": "source-file-1",
+      "parentFileId": "source-parent-1",
+      "name": "source-one.txt",
+      "hint": null,
+      "quality": "Exact",
+      "processInstanceId": null,
+      "processQuality": "Unknown",
+      "mountSessionId": "mount-explorer",
+      "sequence": 11,
+      "properties": {
+        "clipboardGeneration": "1",
+        "clipboardIntent": "Copy",
+        "clipboardQuality": "ConfirmedIntent",
+        "clipboardPath.0": "C:\\StorageChronicleFixture\\source-one.txt",
+        "clipboardPathCount": "1"
+      }
+    },
+    {
+      "sourceId": "explorer-copy-correlated",
+      "eventId": "00000000-0000-0000-0000-000000000012",
+      "origin": "LiveUsn",
+      "volumeId": "volume-explorer",
+      "fileId": "destination-file-1",
+      "parentFileId": "destination-parent-1",
+      "name": "source-one.txt",
+      "hint": "Create",
+      "quality": "Exact",
+      "processInstanceId": "explorer-instance-1",
+      "processQuality": "Exact",
+      "mountSessionId": "mount-explorer",
+      "sequence": 12,
+      "properties": {
+        "clipboardGeneration": "1",
+        "explorerOperation": "Paste",
+        "path": "D:\\StorageChronicleFixture\\source-one.txt",
+        "process.name": "explorer.exe",
+        "process.executable": "C:\\Windows\\explorer.exe"
+      }
+    },
+    {
+      "sourceId": "explorer-create-without-candidate",
+      "eventId": "00000000-0000-0000-0000-000000000013",
+      "origin": "LiveUsn",
+      "volumeId": "volume-explorer",
+      "fileId": "destination-file-2",
+      "parentFileId": "destination-parent-2",
+      "name": "new-from-explorer.txt",
+      "hint": "Create",
+      "quality": "Exact",
+      "processInstanceId": "explorer-instance-2",
+      "processQuality": "Exact",
+      "mountSessionId": "mount-explorer",
+      "sequence": 13,
+      "properties": {
+        "path": "D:\\StorageChronicleFixture\\new-from-explorer.txt",
+        "process.name": "explorer.exe",
+        "process.executable": "C:\\Windows\\explorer.exe",
+        "explorerOperation": "Create"
+      }
+    },
+    {
+      "sourceId": "clipboard-copy-wrong-generation",
+      "eventId": "00000000-0000-0000-0000-000000000021",
+      "origin": "Clipboard",
+      "volumeId": "volume-explorer",
+      "fileId": "source-file-2",
+      "parentFileId": "source-parent-2",
+      "name": "source-two.txt",
+      "hint": null,
+      "quality": "Exact",
+      "processInstanceId": null,
+      "processQuality": "Unknown",
+      "mountSessionId": "mount-explorer",
+      "sequence": 21,
+      "properties": {
+        "clipboardGeneration": "2",
+        "clipboardIntent": "Copy",
+        "clipboardQuality": "ConfirmedIntent",
+        "clipboardPath.0": "C:\\StorageChronicleFixture\\source-two.txt",
+        "clipboardPathCount": "1"
+      }
+    },
+    {
+      "sourceId": "explorer-copy-wrong-generation",
+      "eventId": "00000000-0000-0000-0000-000000000022",
+      "origin": "LiveUsn",
+      "volumeId": "volume-explorer",
+      "fileId": "destination-file-3",
+      "parentFileId": "destination-parent-3",
+      "name": "source-three.txt",
+      "hint": "Create",
+      "quality": "Exact",
+      "processInstanceId": "explorer-instance-3",
+      "processQuality": "Exact",
+      "mountSessionId": "mount-explorer",
+      "sequence": 22,
+      "properties": {
+        "clipboardGeneration": "999",
+        "explorerOperation": "Paste",
+        "path": "D:\\StorageChronicleFixture\\source-three.txt",
+        "process.name": "explorer.exe",
+        "process.executable": "C:\\Windows\\explorer.exe"
+      }
+    },
+    {
+      "sourceId": "clipboard-copy-external-app",
+      "eventId": "00000000-0000-0000-0000-000000000031",
+      "origin": "Clipboard",
+      "volumeId": "volume-explorer",
+      "fileId": "source-file-3",
+      "parentFileId": "source-parent-3",
+      "name": "source-three.txt",
+      "hint": null,
+      "quality": "Exact",
+      "processInstanceId": null,
+      "processQuality": "Unknown",
+      "mountSessionId": "mount-explorer",
+      "sequence": 31,
+      "properties": {
+        "clipboardGeneration": "3",
+        "clipboardIntent": "Copy",
+        "clipboardQuality": "ConfirmedIntent",
+        "clipboardPath.0": "C:\\StorageChronicleFixture\\source-three.txt",
+        "clipboardPathCount": "1"
+      }
+    },
+    {
+      "sourceId": "external-app-create",
+      "eventId": "00000000-0000-0000-0000-000000000032",
+      "origin": "LiveUsn",
+      "volumeId": "volume-explorer",
+      "fileId": "destination-file-4",
+      "parentFileId": "destination-parent-4",
+      "name": "source-three.txt",
+      "hint": "Create",
+      "quality": "Exact",
+      "processInstanceId": "external-app-instance-4",
+      "processQuality": "Exact",
+      "mountSessionId": "mount-explorer",
+      "sequence": 32,
+      "properties": {
+        "clipboardGeneration": "3",
+        "path": "D:\\StorageChronicleFixture\\source-three.txt",
+        "process.name": "copytool.exe",
+        "process.executable": "C:\\Fixture\\copytool.exe"
+      }
+    }
+  ]
+}
+

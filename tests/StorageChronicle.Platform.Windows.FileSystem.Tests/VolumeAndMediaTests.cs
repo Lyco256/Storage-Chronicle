@@ -56,10 +56,32 @@ public sealed class VolumeAndMediaTests
         await monitor.DisposeAsync();
     }
 
+    [Fact]
+    public async Task BoundedNotificationOverflowProducesAnExplicitContinuityGap()
+    {
+        var native = new FakeDeviceNative();
+        await using var monitor = new WindowsExternalMediaMonitor(native, queueCapacity: 1);
+        native.Raise(ExternalMediaChangeKind.Connected);
+        native.Raise(ExternalMediaChangeKind.Disconnected);
+        await monitor.DisposeAsync();
+
+        var values = await ReadAllAsync(monitor, TestContext.Current.CancellationToken);
+
+        Assert.Contains(values, value => value.Kind == ExternalMediaChangeKind.ContinuityGap);
+        Assert.Contains(values, value => value.GapReason?.Contains("overflow", StringComparison.OrdinalIgnoreCase) == true);
+    }
+
     private static async Task<ExternalMediaChange> ReadOneAsync(WindowsExternalMediaMonitor monitor, CancellationToken cancellationToken)
     {
         await foreach (var change in monitor.ReadChangesAsync(cancellationToken)) return change;
         throw new InvalidOperationException("No device notification was received.");
+    }
+
+    private static async Task<IReadOnlyList<ExternalMediaChange>> ReadAllAsync(WindowsExternalMediaMonitor monitor, CancellationToken cancellationToken)
+    {
+        var values = new List<ExternalMediaChange>();
+        await foreach (var value in monitor.ReadChangesAsync(cancellationToken)) values.Add(value);
+        return values;
     }
 }
 

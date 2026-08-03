@@ -79,6 +79,12 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
         await foreach (var change in changes.ReadChangesAsync(cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (change.Kind == ExternalMediaChangeKind.ContinuityGap)
+            {
+                yield return CreateGap(change.OccurredUtc, change.GapReason ?? "External media notification continuity was lost.");
+                continue;
+            }
+
             if (change.Kind == ExternalMediaChangeKind.Connected)
             {
                 var enumeration = await TryEnumerateAsync(cancellationToken).ConfigureAwait(false);

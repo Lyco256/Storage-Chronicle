@@ -102,7 +102,7 @@ public sealed class AgentMonitoringLifecycle : IMonitoringLifecycle
             var current = machineSettings.Load().Settings;
             exclusionPolicy?.SetUserExcludedRoots(current.ExcludedPaths);
             exclusionPolicy?.SetMonitoredRoots(current.MonitoringPaths);
-            storage?.UpdateFlushInterval(TimeSpan.FromSeconds(Math.Clamp(current.FlushIntervalSeconds, 1, 3600)));
+            storage?.UpdateFlushInterval(TimeSpan.FromSeconds(Math.Clamp(current.FlushIntervalSeconds, 1, 60)));
             if (storage is not null && !string.Equals(storage.StorageDirectory, Path.GetFullPath(current.LogStoragePath), StringComparison.OrdinalIgnoreCase))
             {
                 await storage.RelocateAsync(current.LogStoragePath, cancellationToken).ConfigureAwait(false);

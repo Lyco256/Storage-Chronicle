@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>StorageChronicle.CorrelationAcceptance.Tests</RootNamespace>
+    <AssemblyName>StorageChronicle.CorrelationAcceptance.Tests</AssemblyName>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\StorageChronicle.Domain\StorageChronicle.Domain.csproj" />
+    <ProjectReference Include="..\..\src\StorageChronicle.Contracts\StorageChronicle.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\StorageChronicle.Application\StorageChronicle.Application.csproj" />
+    <ProjectReference Include="..\..\src\StorageChronicle.Normalization\StorageChronicle.Normalization.csproj" />
+    <ProjectReference Include="..\..\src\StorageChronicle.Projection\StorageChronicle.Projection.csproj" />
+    <ProjectReference Include="..\..\src\StorageChronicle.Platform.Windows.Session\StorageChronicle.Platform.Windows.Session.csproj" />
+    <ProjectReference Include="..\..\src\StorageChronicle.SessionAgent\StorageChronicle.SessionAgent.csproj" />
+    <PackageReference Include="xunit.v3.runner.inproc.console" />
+    <PackageReference Include="xunit.v3.mtp-v2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Microsoft.Testing.Platform" />
+    <PackageReference Include="Microsoft.Testing.Platform.MSBuild" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="Fixtures\r00-process-explorer-correlation.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
+

@@ -54,24 +54,24 @@
                     <DataTemplate x:DataType="vm:EventStackChildViewModel">
                       <StackPanel Spacing="2">
                         <StackPanel Orientation="Horizontal" Spacing="6" Margin="12,4,0,0">
-                          <TextBlock Text="↳" />
+                          <Button Content="▸" Command="{Binding ToggleExpansionCommand}" IsVisible="{Binding HasChildren}" AutomationProperties.Name="Expand event child" />
                           <TextBlock Text="{Binding DisplaySummary}" />
                           <TextBlock Text="{Binding QualityDisplay}" Opacity="0.75" />
                         </StackPanel>
-                        <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding HasChildren}" Margin="24,0,0,0">
+                        <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}" Margin="24,0,0,0">
                           <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:EventStackChildViewModel">
                               <StackPanel Spacing="2">
                                 <StackPanel Orientation="Horizontal" Spacing="6" Margin="12,2,0,0">
-                                  <TextBlock Text="•" />
+                                  <Button Content="▸" Command="{Binding ToggleExpansionCommand}" IsVisible="{Binding HasChildren}" AutomationProperties.Name="Expand normalized event" />
                                   <TextBlock Text="{Binding DisplaySummary}" />
                                   <TextBlock Text="{Binding QualityDisplay}" Opacity="0.75" />
                                 </StackPanel>
-                                <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding HasChildren}" Margin="36,0,0,0">
+                                <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}" Margin="36,0,0,0">
                                   <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="vm:EventStackChildViewModel">
                                       <StackPanel Orientation="Horizontal" Spacing="6" Margin="12,2,0,0">
-                                        <TextBlock Text="└" />
+                                        <Button Content="▸" Command="{Binding ToggleExpansionCommand}" IsVisible="{Binding HasChildren}" AutomationProperties.Name="Expand source event" />
                                         <TextBlock Text="{Binding DisplaySummary}" />
                                         <TextBlock Text="{Binding QualityDisplay}" Opacity="0.75" />
                                       </StackPanel>

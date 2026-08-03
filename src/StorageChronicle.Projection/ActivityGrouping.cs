@@ -111,6 +111,9 @@ public sealed class ActivityGrouper
     {
         private readonly List<CanonicalEvent> values = [];
         private readonly List<string?> anchors = [];
+        private bool hasGap;
+        private bool folderPathResolved;
+        private string? descendantFolderPath;
 
         public ActivityBuilder(CanonicalEvent first, string? route)
         {
@@ -121,6 +124,7 @@ public sealed class ActivityGrouper
             Source = first.Origin;
             Volume = first.VolumeId;
             MountSession = first.MountSessionId;
+            hasGap = IsGapEvent(first);
         }
 
         public ProcessInstanceId? ProcessId { get; }
@@ -130,7 +134,7 @@ public sealed class ActivityGrouper
         public MountSessionId? MountSession { get; }
         public bool ClosedByCompetingActivity { get; set; }
         public DateTimeOffset LastTime => values[^1].Time.RecordedUtc;
-        public bool IsGap => values.Any(value => value.Operation == CanonicalOperation.UnverifiedGap || value.Quality == EventQuality.UnverifiedGap);
+        public bool IsGap => hasGap;
 
         public bool MatchesActor(CanonicalEvent value)
         {
@@ -151,11 +155,16 @@ public sealed class ActivityGrouper
         public bool CanAcceptRoute(CanonicalEvent value, string? route, IReadOnlyDictionary<EventId, string?> paths)
         {
             if (string.Equals(EffectiveRoute(), route, StringComparison.OrdinalIgnoreCase)) return true;
-            var newFolderPath = values
-                .Where(item => item.Operation == CanonicalOperation.DirectoryCreate || (item.Operation == CanonicalOperation.Create && item.Metadata?.Kind == FileKind.Directory))
-                .Select(item => paths.TryGetValue(item.EventId, out var path) ? path : null)
-                .FirstOrDefault(path => path is not null);
-            return newFolderPath is not null && ProjectionPathResolver.IsSameOrDescendant(newFolderPath, route);
+            if (!folderPathResolved)
+            {
+                folderPathResolved = true;
+                descendantFolderPath = values
+                    .Where(IsDirectoryCreate)
+                    .Select(item => paths.TryGetValue(item.EventId, out var path) ? path : null)
+                    .FirstOrDefault(path => path is not null);
+            }
+
+            return descendantFolderPath is not null && ProjectionPathResolver.IsSameOrDescendant(descendantFolderPath, route);
         }
 
         public bool IsCompetingRoute(string? route) =>
@@ -166,7 +175,16 @@ public sealed class ActivityGrouper
         {
             values.Add(value);
             anchors.Add(route);
+            hasGap |= IsGapEvent(value);
+            if (IsDirectoryCreate(value)) folderPathResolved = false;
         }
+
+        private static bool IsGapEvent(CanonicalEvent value) =>
+            value.Operation == CanonicalOperation.UnverifiedGap || value.Quality == EventQuality.UnverifiedGap;
+
+        private static bool IsDirectoryCreate(CanonicalEvent value) =>
+            value.Operation == CanonicalOperation.DirectoryCreate ||
+            (value.Operation == CanonicalOperation.Create && value.Metadata?.Kind == FileKind.Directory);
 
         public ActivityGroupProjection Build(ProcessCatalog processCatalog)
         {
@@ -254,9 +272,9 @@ internal sealed class ProcessCatalog
             .GroupBy(value => value.ProcessInstanceId!.Value)
             .ToDictionary(group => group.Key, group => group.First());
         var ids = firstByProcess.Keys.ToArray();
-        var parentMap = events.Where(value => value.ProcessInstanceId is not null && value.Properties.ContainsKey(ProjectionPropertyNames.ParentProcessInstanceId))
+        var parentMap = events.Where(value => value.ProcessInstanceId is not null && TryGetProperty(value.Properties, ProjectionPropertyNames.ParentProcessInstanceId, out _))
             .GroupBy(value => value.ProcessInstanceId!.Value)
-            .ToDictionary(group => group.Key, group => ParseProcessId(group.First().Properties[ProjectionPropertyNames.ParentProcessInstanceId]));
+            .ToDictionary(group => group.Key, group => ParseProcessId(GetProperty(group.First().Properties, ProjectionPropertyNames.ParentProcessInstanceId)));
         var children = ids.ToDictionary(id => id, _ => new List<ProcessInstanceId>());
         foreach (var pair in parentMap)
         {
@@ -269,9 +287,9 @@ internal sealed class ProcessCatalog
             var value = firstByProcess[id];
             var name = value.ProcessQuality == ProcessAttributionQuality.Unknown
                 ? "不明なプロセス"
-                : value.Properties.TryGetValue(ProjectionPropertyNames.ProcessName, out var processName) ? processName : id.Value;
+                : TryGetProperty(value.Properties, ProjectionPropertyNames.ProcessName, out var processName) ? processName : id.Value;
             if (value.ProcessQuality != ProcessAttributionQuality.Unknown && name.EndsWith("explorer.exe", StringComparison.OrdinalIgnoreCase)) name = "Explorer操作";
-            var executable = value.Properties.TryGetValue(ProjectionPropertyNames.ExecutablePath, out var path) ? path : null;
+            var executable = TryGetProperty(value.Properties, ProjectionPropertyNames.ExecutablePath, out var path) ? path : null;
             var ancestors = new List<ProcessInstanceId>();
             var parent = parentMap.GetValueOrDefault(id);
             var seen = new HashSet<ProcessInstanceId>();
@@ -290,6 +308,25 @@ internal sealed class ProcessCatalog
     public ProcessProjection? For(CanonicalEvent value) => value.ProcessInstanceId is { } id && processes.TryGetValue(id, out var process) ? process : null;
 
     public string? PathFor(CanonicalEvent value) => paths.TryGetValue(value.EventId, out var path) ? path : null;
+
+    private static bool TryGetProperty(IReadOnlyDictionary<string, string> properties, string key, out string value)
+    {
+        if (properties.TryGetValue(key, out value!)) return true;
+        foreach (var pair in properties)
+        {
+            if (string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase))
+            {
+                value = pair.Value;
+                return true;
+            }
+        }
+
+        value = string.Empty;
+        return false;
+    }
+
+    private static string GetProperty(IReadOnlyDictionary<string, string> properties, string key) =>
+        TryGetProperty(properties, key, out var value) ? value : string.Empty;
 
     private static ProcessInstanceId? ParseProcessId(string value) => string.IsNullOrWhiteSpace(value) ? null : ProcessInstanceId.Create(value);
 }

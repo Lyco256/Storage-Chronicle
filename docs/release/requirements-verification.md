@@ -8,14 +8,14 @@
 |---|---|---|---|
 | V-01 | architecture and stable contracts | `tests/StorageChronicle.Architecture.Tests`, `StorageChronicle.slnx`, `docs/decisions` | verified |
 | V-02 | source/normalization/state/storage | normalization, state, storage, and integration test projects | verified |
-| V-03 | Windows filesystem/NTFS/session | platform test projects and `build/Test-WindowsPrivileged.ps1` | boundary verified; one existing-journal privileged test passed; VHDX/physical-media and Windows 10 runs pending |
+| V-03 | Windows filesystem/NTFS/session | platform test projects and `build/Test-WindowsPrivileged.ps1` | ReadDirectoryChangesW and Session passed in a partial 2026-08-03 run; full privileged capability matrix pending |
 | V-04 | external media and mount history | `StorageChronicle.ExternalMedia.Tests` and filesystem tests | verified |
 | V-05 | Event Stack and Diff View | projection, Event Stack, Diff View, and headless tests | verified |
 | V-06 | IPC and bounded Agent pipeline | Agent tests, production named-pipe client/server test, and end-to-end smoke test | verified |
 | V-07 | recovery, corruption, cancellation, capacity | Storage, State, Agent, and Normalization failure-path tests | verified |
 | V-08 | documentation synchronization | `build/quality/Test-DocMirror.ps1` and DocMirrorValidator | verified |
-| V-09 | packaging | WiX 6.0.2 project, manifest tests, `build/package/Build-Installer.ps1` | MSI built; physical install/update/rollback matrix remains release-environment verification |
-| V-10 | performance acceptance | BenchmarkDotNet and exact private-working-set resource run | measured on current Windows 11 host |
+| V-09 | packaging | WiX 6.0.2 project, manifest tests, `build/package/Build-Installer.ps1` | MSI build verified; physical install/update/rollback matrix pending |
+| V-10 | performance acceptance | BenchmarkDotNet, `build/quality/Test-FullBenchmarkMatrix.ps1`, and exact private-working-set resource run | current bounded-batch portable matrix passed six non-MFT suites and 12/12 methods; configured MFT and resource acceptance remain pending |
 
 ## Per-row verification of `Requirements/98_REQUIREMENTS_COVERAGE.md`
 
@@ -67,17 +67,19 @@
 | V-144 | Append log, Zstandard, SQLite rebuild | storage tests, golden fixture, and integration tests | verified |
 | V-145 | No history deletion feature | storage API review, architecture tests, installer retention test | verified |
 | V-146 | Capacity stop and USN/reconciliation recovery | capacity, health, and lifecycle tests | verified |
-| V-147 | 50 MiB and 0.5% background gate | exact `Test-ResourceBudget.ps1` run and `docs/release/performance-baseline.md` | measured: 14.53125 MiB private WS, 0.0110659393% CPU |
-| V-148 | xUnit, Headless, ArchUnit, Benchmark | solution test projects, quality scripts, BenchmarkDotNet run | verified |
+| V-147 | 50 MiB and 0.5% background gate | `Test-ResourceBudget.ps1`, supplemental `Test-ResourceBudgetAcceptance.ps1`, and `docs/release/performance-baseline.md` | previous baseline measured; lifecycle/quiet-period-supervised fresh run pending |
+| V-148 | xUnit, Headless, ArchUnit, Benchmark | solution test projects, quality scripts, BenchmarkDotNet harness | frameworks/harness present; current bounded-batch BenchmarkDotNet matrix passed six non-MFT suites and 12/12 methods; configured MFT acceptance remains pending |
 | V-149 | Mirrored source documentation | `Test-DocMirror.ps1` | verified |
-| V-150 | main/devenv/feat and worktree separation | `TOP_CODEX.md`, `AGENTS.md`, `git worktree list`, handoffs | verified |
-| V-151 | Staged top-agent foundation and delegated waves | branch/worktree history and handoff documents | verified |
+| V-150 | main/devenv/feat and worktree separation | `TOP_CODEX.md`, `AGENTS.md`, `git worktree list`, handoffs | policy verified; current integration checkout still requires clean branch integration |
+| V-151 | Staged top-agent foundation and delegated waves | branch/worktree history and handoff documents | delegation evidence exists; final top-agent merge sequence pending |
 | V-152 | Ownership matrix and shared-contract synchronization | `Requirements/06_AGENT_OWNERSHIP_MATRIX.md`, handoffs, architecture tests | verified |
 | V-153 | Normal installer, one product, retained data | WiX manifest test and successful MSI build | MSI build verified; physical install matrix pending |
 | V-154 | Read-only I/O is not durable history | normalization tests, storage guard, architecture/source review | verified |
 
 ## Explicit measured or environment-bound items
 
-The current machine supplies measured evidence for the background resource gate and the 10万-row Event Stack benchmark. Process-correlation rate, Explorer source-correlation rate, 2 TB-scale scan speed, physical Avalonia rendering at scale, Windows 10 22H2 execution, physical-media insertion, and clean install/update/rollback are environment acceptance measurements rather than hidden implementation stubs. The repository contains the required harnesses and records these as pending until the corresponding hardware/OS matrix is run; they must not be reported as Windows 10 or physical-install verified.
+The dedicated deterministic R-00 fixture now supplies fixed metadata-only evidence: process `Exact=1/3`, `Correlated=1/3`, `Unknown=1/3`, and Explorer source-correlation `1/3`. The pending process/Explorer items in the paragraph below refer to live Agent and interactive Session Agent capture, not this fixture result.
+
+The repository contains a previous measured baseline for the background resource gate and the 10万-row Event Stack benchmark. The current portable matrix now supplies diagnostic evidence for all six non-MFT suites and 12/12 methods, but configured MFT capability and the post-integration resource run remain pending. Process-correlation rate, Explorer source-correlation rate, 2 TB-scale scan speed, physical Avalonia rendering at scale, Windows 10 22H2 execution, physical-media insertion, and clean install/update/rollback are environment acceptance measurements rather than hidden implementation stubs. The repository contains the required harnesses and records these as pending until the corresponding hardware/OS matrix is run; they must not be reported as Windows 10 or physical-install verified.
 
 No row grants permission to weaken source quality, retain contents/hashes, delete history, or synthesize descendant events.

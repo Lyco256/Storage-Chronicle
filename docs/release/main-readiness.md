@@ -1,19 +1,22 @@
 # Main readiness
 
-The top Codex promotes only a clean integration branch with no generated artifacts. The required merge sequence is `feat/*` review → `devenv` with `--no-ff` → final gates → `main` with `--no-ff`.
+The repository is not yet ready for `main`. The top-agent merge sequence remains `feat/*` review -> `devenv` with `--no-ff` -> final gates -> `main` with `--no-ff`.
 
-## Acceptance evidence recorded on 2026-08-02
+## Verified on 2026-08-03
 
-- `dotnet build StorageChronicle.slnx --no-restore -v:minimal`: passed, 0 warnings, 0 errors.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1`: passed; full solution fast run reported 174 passed, 0 failed, 0 skipped. Architecture, integration, E2E, headless, UI, documentation, and coverage gates also passed inside the script.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/quality/Test-Privileged.ps1`: passed; the available NTFS privileged test `QueriesExistingJournalWithoutCreatingOrResizing` passed. Physical VHDX, media insertion, SMB, ETW, service, and Windows 10 matrices remain environment-bound and are not claimed as run.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/quality/Test-Performance.ps1 -Filter '*EventStackPage100K*'`: passed; `EventStackPage100K` mean 4.523 ms, 99.9% CI 4.381–4.664 ms, 3.44 MiB managed allocation.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/package/Build-Installer.ps1`: passed; WiX Toolset SDK 6.0.2 produced the x64 MSI with 0 warnings and 0 errors.
-- Resource acceptance run: Agent and Session Agent combined peak Private Working Set 14.53125 MiB and average CPU 0.0110659393%; both thresholds passed. Full data is in `docs/release/performance-baseline.md`.
-- `build/quality/Test-DocMirror.ps1`: passed, including all source mirrors added during integration.
+- `dotnet build StorageChronicle.slnx --no-restore -v:minimal`: 0 warnings, 0 errors.
+- `build/Test-Fast.ps1 -NoRestore`: all 22 non-privileged test projects passed.
+- `dotnet run --project tools/StorageChronicle.DocMirrorValidator --no-restore -- .`: passed.
+- `build/quality/Test-Coverage.ps1`: passed the required 80%/70% thresholds with current measured rates recorded in `docs/handoffs/integration-quality.md`.
+- Settings UI unit and headless tests: 13 passed.
 
-## Environment-bound release checks
+## Blocking release evidence
 
-Windows 10 22H2 x64 and a physical clean install/update/rollback/media matrix are explicitly defined but unavailable on the current host. `docs/release/windows10-compatibility.md` therefore records `boundary verified; acceptance run pending`; it must not be changed to “verified” without the corresponding run. The implementation uses the Windows 10 API boundary and capability detection, and the privileged suite is isolated so these external checks can be executed without weakening the default test gate.
+- A partial `build/Test-Privileged.ps1` run on 2026-08-03 passed ReadDirectoryChangesW and Session on a safe existing directory, but VHDX, USN, MFT, ETW, SMB, service, and removable-media capabilities remained `NOT_EXECUTED`; the overall fail-closed exit code was 2.
+- Windows 10 22H2 compatibility, physical media insertion, ETW, service recovery, and clean installer/update/rollback are not available in this current environment.
+- The current integration checkout is dirty and is not yet a reviewed commit on `devenv`; no `main` merge is authorized.
+- A fresh post-integration 600-second resource-budget run and live Agent/Explorer correlation measurements remain pending; the deterministic correlation fixture is measured at Exact 1/3, Correlated 1/3, Unknown 1/3, Explorer 1/3.
+- The current bounded-batch BenchmarkDotNet matrix completed all six non-MFT suites and 12/12 methods under `artifacts/benchmarks/portable-matrix-current/full-matrix-20260803T122827484Z`; its manifest remains `AcceptanceEligible=false` because no configured MFT capability run was supplied. The MFT suite and the supervised resource gate must still run before performance acceptance can be considered.
+- The R-03/R-19 supplemental gates are available at `build/quality/Test-FullBenchmarkMatrix.ps1` and `build/quality/Test-ResourceBudgetAcceptance.ps1`, but their acceptance modes have not been executed; no new success is implied by their presence.
 
-History is never deleted during install, update, repair, or uninstall. No driver is installed, and no generated `artifacts/`, `bin/`, `obj/`, test result, benchmark, secret, or machine-specific file may be staged.
+No release document may say these items are verified until the corresponding acceptance artifacts exist. History retention, no-driver MVP, no-content/no-hash, and no-synthetic-descendant invariants remain mandatory in every acceptance run.

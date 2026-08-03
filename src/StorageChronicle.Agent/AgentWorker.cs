@@ -89,6 +89,13 @@ public sealed class AgentWorker : BackgroundService
                 catch (OperationCanceledException) when (runCancellation.IsCancellationRequested)
                 {
                 }
+                catch (Exception exception)
+                {
+                    // A durable sink, SQLite lock, capacity transition, or
+                    // normalization failure is a recording-quality failure,
+                    // not a reason to terminate the LocalSystem supervisor.
+                    health.RecordPipelineFailure(exception);
+                }
                 finally
                 {
                     lock (runGate)
@@ -106,6 +113,13 @@ public sealed class AgentWorker : BackgroundService
                 {
                     // A finite collector is allowed to finish, but the service remains
                     // alive and gives the supervisor a chance to restart it on settings change.
+                    if (storage.Status.State is RecordingState.Stopped or RecordingState.CapacityStopped)
+                    {
+                        // TryResumeAsync rechecks capacity and recreates a running
+                        // recording boundary without deleting immutable history.
+                        await storage.TryResumeAsync(stoppingToken).ConfigureAwait(false);
+                    }
+
                     await Task.Delay(TimeSpan.FromMilliseconds(100), stoppingToken).ConfigureAwait(false);
                 }
             }

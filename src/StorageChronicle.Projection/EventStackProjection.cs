@@ -91,13 +91,14 @@ public sealed class EventStackProjector
         return grouper.Group(canonical, timeout).Select(group =>
         {
             var first = group.Events[0];
+            var eventsById = group.Events.ToDictionary(value => value.EventId);
             var primary = ProjectionOperationRules.Primary(group.Events.Select(value => value.Operation));
             var row = new EventStackRow(first.EventId, group.StartedUtc, group.DisplayRoute, primary, GroupSummary(group), first.Quality, first.ProcessInstanceId, group.ProcessQuality, group.Source, group.Events.Select(value => value.EventId).ToArray());
             var fileChildren = group.Files.Select(file =>
             {
-                var fileEvent = group.Events.First(value => file.EventIds.Contains(value.EventId));
+                var fileEvent = eventsById[file.EventIds[0]];
                 var fileRow = new EventStackRow(fileEvent.EventId, fileEvent.Time.RecordedUtc, file.DisplayPath, file.PrimaryOperation, $"{file.DisplayPath} ({file.OperationCount})", fileEvent.Quality, fileEvent.ProcessInstanceId, fileEvent.ProcessQuality, fileEvent.Origin, file.EventIds);
-                var normalizedChildren = file.EventIds.Select(eventId => group.Events.First(value => value.EventId == eventId)).Select(value =>
+                var normalizedChildren = file.EventIds.Select(eventId => eventsById[eventId]).Select(value =>
                 {
                     var normalizedRow = CanonicalRow(value, paths.GetValueOrDefault(value.EventId), value.EventId.ToString(), value.Name ?? value.Operation.ToString());
                     var sourceChildren = sourceByCanonical.TryGetValue(value.EventId, out var sourceValues)

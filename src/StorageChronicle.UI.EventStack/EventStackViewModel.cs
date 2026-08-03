@@ -452,12 +452,16 @@ public sealed class EventStackItemViewModel : ObservableObject
 }
 
 /// <summary>Bindable child row for a grouped operation.</summary>
-public sealed class EventStackChildViewModel
+public sealed class EventStackChildViewModel : ObservableObject
 {
+    private bool isExpanded;
+
     internal EventStackChildViewModel(EventStackItem item)
     {
         Row = item.Row;
         Children = new ObservableCollection<EventStackChildViewModel>((item.NestedChildren ?? Array.Empty<EventStackItem>()).Select(child => new EventStackChildViewModel(child)));
+        isExpanded = item.IsExpanded;
+        ToggleExpansionCommand = new RelayCommand(() => IsExpanded = !IsExpanded, () => HasChildren);
     }
 
     /// <summary>Underlying child row.</summary>
@@ -468,6 +472,20 @@ public sealed class EventStackChildViewModel
 
     /// <summary>Whether this child has another expandable level.</summary>
     public bool HasChildren => Children.Count > 0;
+
+    /// <summary>Whether nested child rows are visible.</summary>
+    public bool IsExpanded
+    {
+        get => isExpanded;
+        private set
+        {
+            if (!SetProperty(ref isExpanded, value)) return;
+            ToggleExpansionCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    /// <summary>Command bound to the child expand/collapse affordance.</summary>
+    public RelayCommand ToggleExpansionCommand { get; }
 
     /// <summary>Child operation summary.</summary>
     public string DisplaySummary => $"{Row.Operation}: {Row.Summary}";

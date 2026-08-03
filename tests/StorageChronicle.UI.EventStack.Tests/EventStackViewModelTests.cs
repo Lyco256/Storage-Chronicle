@@ -49,6 +49,31 @@ public sealed class EventStackViewModelTests
     }
 
     [Fact]
+    public async Task GroupFileNormalizedAndSourceChildrenExpandIndependently()
+    {
+        var source = new FakeProjection { HasChildren = true, HasNestedChildren = true };
+        var view = new EventStackViewModel(source);
+        await view.LoadPageAsync(1, 25);
+
+        var group = view.Rows[0];
+        Assert.True(group.HasChildren);
+        view.ToggleExpansion(group);
+        var file = group.Children[0];
+        Assert.True(file.HasChildren);
+        Assert.False(file.IsExpanded);
+
+        file.ToggleExpansionCommand.Execute(null);
+        var normalized = file.Children[0];
+        Assert.True(file.IsExpanded);
+        Assert.True(normalized.HasChildren);
+        Assert.False(normalized.IsExpanded);
+
+        normalized.ToggleExpansionCommand.Execute(null);
+        Assert.True(normalized.IsExpanded);
+        Assert.Single(normalized.Children);
+    }
+
+    [Fact]
     public async Task PagingOrderingAndPageBoundaryAreObservable()
     {
         var source = new FakeProjection { PageCount = 3 };
@@ -145,6 +170,7 @@ public sealed class EventStackViewModelTests
     {
         public List<EventStackQuery> Queries { get; } = [];
         public bool HasChildren { get; init; }
+        public bool HasNestedChildren { get; init; }
         public int PageCount { get; init; } = 1;
         public int PageItemCount { get; init; } = 1;
         public int TotalCount { get; init; } = 1;
@@ -158,7 +184,18 @@ public sealed class EventStackViewModelTests
             Queries.Add(query);
             var rows = Enumerable.Range(0, PageItemCount).Select(index => CreateRow(index, query.Page)).ToArray();
             LastMaterializedCount = rows.Length;
-            return ValueTask.FromResult(new EventStackPage(rows.Select(row => new EventStackItem(row, HasChildren ? [CreateRow(999, query.Page)] : Array.Empty<EventStackRow>(), row.Summary, ProcessName, query.Mode == EventStackMode.Grouped, query.ExpandedGroups.Contains(row.Id))).ToArray(), query.Page, query.PageSize, TotalCount, query.Page < PageCount));
+            return ValueTask.FromResult(new EventStackPage(rows.Select(row => CreateItem(row, query)).ToArray(), query.Page, query.PageSize, TotalCount, query.Page < PageCount));
+        }
+
+        private EventStackItem CreateItem(EventStackRow row, EventStackQuery query)
+        {
+            if (!HasChildren) return new EventStackItem(row, Array.Empty<EventStackRow>(), row.Summary, ProcessName, query.Mode == EventStackMode.Grouped, query.ExpandedGroups.Contains(row.Id));
+            if (!HasNestedChildren) return new EventStackItem(row, [CreateRow(999, query.Page)], row.Summary, ProcessName, query.Mode == EventStackMode.Grouped, query.ExpandedGroups.Contains(row.Id));
+
+            var source = new EventStackItem(CreateRow(1001, query.Page), Array.Empty<EventStackRow>(), "source", ProcessName, false, false);
+            var normalized = new EventStackItem(CreateRow(1000, query.Page), [source.Row], "normalized", ProcessName, false, false, [source]);
+            var file = new EventStackItem(CreateRow(999, query.Page), [normalized.Row], "file", ProcessName, false, false, [normalized]);
+            return new EventStackItem(row, [file.Row], row.Summary, ProcessName, query.Mode == EventStackMode.Grouped, query.ExpandedGroups.Contains(row.Id), [file]);
         }
 
         public ValueTask<EventStackDetails?> GetDetailsAsync(EventId eventId, CancellationToken cancellationToken = default)

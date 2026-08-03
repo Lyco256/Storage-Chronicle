@@ -1,3 +1,3 @@
 # Test-Ui.ps1
 
-Runs the UI test projects as a separately visible category.
+Builds and runs the UI test projects as a separately visible category through their emitted Microsoft Testing Platform test modules.

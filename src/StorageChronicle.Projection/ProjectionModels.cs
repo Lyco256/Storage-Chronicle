@@ -27,10 +27,28 @@ public static class ProjectionPropertyNames
 }
 
 /// <summary>Sort order used by event-stack and activity projections.</summary>
-public enum ProjectionSortOrder { Descending, Ascending }
+public enum ProjectionSortOrder
+{
+    /// <summary>Newest values first.</summary>
+    Descending,
+    /// <summary>Oldest values first.</summary>
+    Ascending
+}
 
 /// <summary>Projection node level in the expandable Event Stack.</summary>
-public enum EventStackNodeKind { Activity, FileSummary, Normalized, Source, Gap }
+public enum EventStackNodeKind
+{
+    /// <summary>Grouped activity node.</summary>
+    Activity,
+    /// <summary>File-level summary node.</summary>
+    FileSummary,
+    /// <summary>Normalized event node.</summary>
+    Normalized,
+    /// <summary>Source event node.</summary>
+    Source,
+    /// <summary>Continuity-gap node.</summary>
+    Gap
+}
 
 /// <summary>Immutable input for all projections. The lists are copied so projection is repeatable.</summary>
 public sealed class ProjectionDocument
@@ -160,15 +178,73 @@ public sealed record ActivityGroupProjection(
 /// <summary>Semantic primary operation used by a file-system diff row.</summary>
 public enum DiffPrimaryOperation
 {
-    Delete, Recycle, Restore, MoveFrom, MoveTo, Copy, Create, Rename,
-    DataWrite, Resize, Truncate, Share, CloudState, MetadataChange, Unknown
+    /// <summary>Delete operation.</summary>
+    Delete,
+    /// <summary>Recycle operation.</summary>
+    Recycle,
+    /// <summary>Restore operation.</summary>
+    Restore,
+    /// <summary>Move source endpoint.</summary>
+    MoveFrom,
+    /// <summary>Move destination endpoint.</summary>
+    MoveTo,
+    /// <summary>Copy operation.</summary>
+    Copy,
+    /// <summary>Create operation.</summary>
+    Create,
+    /// <summary>Rename operation.</summary>
+    Rename,
+    /// <summary>Data write operation.</summary>
+    DataWrite,
+    /// <summary>Resize operation.</summary>
+    Resize,
+    /// <summary>Truncate operation.</summary>
+    Truncate,
+    /// <summary>Share operation.</summary>
+    Share,
+    /// <summary>Cloud-state operation.</summary>
+    CloudState,
+    /// <summary>Metadata operation.</summary>
+    MetadataChange,
+    /// <summary>Unknown operation.</summary>
+    Unknown
 }
 
 /// <summary>Meaning of the primary and secondary visual markers. It is not a UI color value.</summary>
-public enum DiffSemanticState { Added, Removed, Edited, Moved, Renamed, Shared, Cloud, Metadata, Reconciled, Unknown }
+public enum DiffSemanticState
+{
+    /// <summary>Added state.</summary>
+    Added,
+    /// <summary>Removed state.</summary>
+    Removed,
+    /// <summary>Edited state.</summary>
+    Edited,
+    /// <summary>Moved state.</summary>
+    Moved,
+    /// <summary>Renamed state.</summary>
+    Renamed,
+    /// <summary>Shared state.</summary>
+    Shared,
+    /// <summary>Cloud state.</summary>
+    Cloud,
+    /// <summary>Metadata-only state.</summary>
+    Metadata,
+    /// <summary>Reconciled state.</summary>
+    Reconciled,
+    /// <summary>Unknown state.</summary>
+    Unknown
+}
 
 /// <summary>Replay lifecycle of one pane at one event time.</summary>
-public enum PaneLifecycle { Appeared, Updated, Ended }
+public enum PaneLifecycle
+{
+    /// <summary>The row appeared in the pane.</summary>
+    Appeared,
+    /// <summary>The row was updated.</summary>
+    Updated,
+    /// <summary>The row ended.</summary>
+    Ended
+}
 
 /// <summary>One event-level replay timeline point.</summary>
 public sealed record ReplayTimelinePoint(EventId EventId, DateTimeOffset TimeUtc, PaneLifecycle Lifecycle, DiffPrimaryOperation Operation);
@@ -207,13 +283,52 @@ public sealed record DiffProjection(
 /// <summary>Stable filter fields exposed by the product requirements.</summary>
 public enum FilterField
 {
-    Time, Name, Path, Extension, Operation, Process, Executable, ParentProcess,
-    Source, MonitoringQuality, MetadataQuality, Volume, Deleted, RecycleBin,
-    Shared, FullReconciliationDifference, UnknownProcess, Size
+    /// <summary>Event time.</summary>
+    Time,
+    /// <summary>Display name.</summary>
+    Name,
+    /// <summary>Display path.</summary>
+    Path,
+    /// <summary>File extension.</summary>
+    Extension,
+    /// <summary>Operation.</summary>
+    Operation,
+    /// <summary>Process identity.</summary>
+    Process,
+    /// <summary>Executable identity.</summary>
+    Executable,
+    /// <summary>Parent process identity.</summary>
+    ParentProcess,
+    /// <summary>Source origin.</summary>
+    Source,
+    /// <summary>Monitoring quality.</summary>
+    MonitoringQuality,
+    /// <summary>Metadata quality.</summary>
+    MetadataQuality,
+    /// <summary>Volume.</summary>
+    Volume,
+    /// <summary>Deleted state.</summary>
+    Deleted,
+    /// <summary>Recycle-bin state.</summary>
+    RecycleBin,
+    /// <summary>Shared state.</summary>
+    Shared,
+    /// <summary>Full-reconciliation difference.</summary>
+    FullReconciliationDifference,
+    /// <summary>Unknown process state.</summary>
+    UnknownProcess,
+    /// <summary>Object size.</summary>
+    Size
 }
 
 /// <summary>Filter syntax reserved for the current literal matcher and a future regex matcher.</summary>
-public enum FilterMatchKind { Literal, Regex }
+public enum FilterMatchKind
+{
+    /// <summary>Literal matching.</summary>
+    Literal,
+    /// <summary>Regular-expression matching.</summary>
+    Regex
+}
 
 /// <summary>One literal filter term.</summary>
 public sealed record FilterTerm

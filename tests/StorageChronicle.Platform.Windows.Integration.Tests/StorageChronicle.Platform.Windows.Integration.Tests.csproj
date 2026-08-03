@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>StorageChronicle.Platform.Windows.Integration.Tests</RootNamespace>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\StorageChronicle.Platform.Windows.Ntfs\StorageChronicle.Platform.Windows.Ntfs.csproj" />
+    <ProjectReference Include="..\..\src\StorageChronicle.Platform.Windows.FileSystem\StorageChronicle.Platform.Windows.FileSystem.csproj" />
+    <ProjectReference Include="..\..\src\StorageChronicle.Platform.Windows.Session\StorageChronicle.Platform.Windows.Session.csproj" />
+    <PackageReference Include="xunit.v3.runner.inproc.console" />
+    <PackageReference Include="xunit.v3.mtp-v2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Microsoft.Testing.Platform" />
+    <PackageReference Include="Microsoft.Testing.Platform.MSBuild" />
+  </ItemGroup>
+</Project>
