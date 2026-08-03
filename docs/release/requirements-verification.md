@@ -67,7 +67,7 @@
 | V-144 | Append log, Zstandard, SQLite rebuild | storage tests, golden fixture, and integration tests | verified |
 | V-145 | No history deletion feature | storage API review, architecture tests, installer retention test | verified |
 | V-146 | Capacity stop and USN/reconciliation recovery | capacity, health, and lifecycle tests | verified |
-| V-147 | 50 MiB and 0.5% background gate | `Test-ResourceBudget.ps1`, supplemental `Test-ResourceBudgetAcceptance.ps1`, and `docs/release/performance-baseline.md` | previous baseline measured; lifecycle/quiet-period-supervised fresh run pending |
+| V-147 | 50 MiB and 0.5% background gate | `Test-ResourceBudget.ps1`, supplemental `Test-ResourceBudgetAcceptance.ps1`, and `docs/release/performance-baseline.md` | current Release Agent/Session Agent 600-second diagnostic has complete lifecycle/resource/queue evidence and thresholds within limits; formal acceptance remains pending because the run is diagnostic and lacks independent final-five-minute quiet-period evidence |
 | V-148 | xUnit, Headless, ArchUnit, Benchmark | solution test projects, quality scripts, BenchmarkDotNet harness | frameworks/harness present; current bounded-batch BenchmarkDotNet matrix passed six non-MFT suites and 12/12 methods; configured MFT acceptance remains pending |
 | V-149 | Mirrored source documentation | `Test-DocMirror.ps1` | verified |
 | V-150 | main/devenv/feat and worktree separation | `TOP_CODEX.md`, `AGENTS.md`, `git worktree list`, handoffs | policy verified; feature branch is clean at the latest reviewed commit, while the required `devenv`/`main` integration sequence remains pending |
