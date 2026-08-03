@@ -70,7 +70,7 @@
 | V-147 | 50 MiB and 0.5% background gate | `Test-ResourceBudget.ps1`, supplemental `Test-ResourceBudgetAcceptance.ps1`, and `docs/release/performance-baseline.md` | previous baseline measured; lifecycle/quiet-period-supervised fresh run pending |
 | V-148 | xUnit, Headless, ArchUnit, Benchmark | solution test projects, quality scripts, BenchmarkDotNet harness | frameworks/harness present; current bounded-batch BenchmarkDotNet matrix passed six non-MFT suites and 12/12 methods; configured MFT acceptance remains pending |
 | V-149 | Mirrored source documentation | `Test-DocMirror.ps1` | verified |
-| V-150 | main/devenv/feat and worktree separation | `TOP_CODEX.md`, `AGENTS.md`, `git worktree list`, handoffs | policy verified; current integration checkout still requires clean branch integration |
+| V-150 | main/devenv/feat and worktree separation | `TOP_CODEX.md`, `AGENTS.md`, `git worktree list`, handoffs | policy verified; feature branch is clean at `62e38f6`, while the required `devenv`/`main` integration sequence remains pending |
 | V-151 | Staged top-agent foundation and delegated waves | branch/worktree history and handoff documents | delegation evidence exists; final top-agent merge sequence pending |
 | V-152 | Ownership matrix and shared-contract synchronization | `Requirements/06_AGENT_OWNERSHIP_MATRIX.md`, handoffs, architecture tests | verified |
 | V-153 | Normal installer, one product, retained data | WiX manifest test and successful MSI build | MSI build verified; physical install matrix pending |

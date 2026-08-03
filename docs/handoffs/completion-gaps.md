@@ -32,7 +32,7 @@ The implementation-level gates currently checked in this worktree are green, but
 | Full performance matrix | R-03 section 5, R-19 | Release BenchmarkDotNet reports for 100K Event Stack, 1M state/path reconstruction, append/Zstandard/SQLite/media workloads, large-folder move, and configured MFT capability | Current-code portable matrix passed all six non-MFT suites and 12/12 methods; `AcceptanceEligible=false` until a configured MFT capability run is completed |
 | Installer acceptance | R-20 | Windows 10/11 clean install, repair, update, rollback, uninstall, service/session, non-admin, storage-permission, and history-retention evidence | WiX/MSI build and manifest verified; physical matrix pending |
 | Process and Explorer correlation measurements | R-00 sections 8-9 | Fixed acceptance fixtures with measured Exact/Correlated/Unknown process attribution and Explorer source-correlation rates | Deterministic fixture measured (Exact 1/3, Correlated 1/3, Unknown 1/3; Explorer 1/3); live Agent/Explorer capture remains `NOT_EXECUTED` |
-| Branch/worktree integration | R-02 and TOP_CODEX.md | Clean reviewed feature commit, `--no-ff` merge into `devenv`, final comprehensive gates, then `--no-ff` merge into `main` | Current checkout is dirty and is not integrated |
+| Branch/worktree integration | R-02 and TOP_CODEX.md | Clean reviewed feature commit, `--no-ff` merge into `devenv`, final comprehensive gates, then `--no-ff` merge into `main` | Feature branch is clean at reviewed commit `62e38f6`; `devenv`/`main` integration remains pending |
 
 ## Execution plan and completion gates
 
