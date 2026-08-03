@@ -28,6 +28,8 @@ The current top-agent validation supersedes the historical project-level count b
 - Existing Normalization, Agent, and Projection test projects — passed: 22, 13, and 13 tests respectively in the current integrated workspace.
 - Fixture forbidden-property scan and `git diff --check` — passed; only Git's expected LF/CRLF normalization notices were emitted.
 
+The Release `-FixtureOnly` rerun on 2026-08-03 passed and wrote `artifacts/quality/correlation/correlation-metrics-20260803-225909.json`; live Agent/interactive Session Agent/Explorer capture remains explicitly `NOT_EXECUTED`.
+
 ## Limitations
 
 No live Agent/interactive Session Agent/Explorer capture was run. The script keeps this as `NOT_EXECUTED` and exits nonzero unless the caller explicitly selects `-FixtureOnly`. The deterministic fixture result must not be presented as a live-machine rate.
