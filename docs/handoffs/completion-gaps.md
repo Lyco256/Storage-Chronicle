@@ -10,7 +10,7 @@ The implementation-level gates currently checked in this worktree are green, but
 
 - Full solution build: 0 warnings, 0 errors.
 - Source documentation mirrors: DocMirror Validator passed, including required sections, test paths, project READMEs, and orphan checks.
-- Critical coverage gate: Domain 80.81%, State 94.13%, Projection 89.40%, Storage 84.49%; the gated UI ViewModels are all at least 70%.
+- Critical coverage gate: Domain 80.81%, State 94.13%, Projection 89.15%, Storage 84.51%; the gated UI ViewModels are all at least 70%.
 - Non-privileged orchestration: all 22 test projects pass through `build/Test-Fast.ps1`; the privileged project is not counted as a false-green zero-test run.
 - Settings modal, Agent settings gateway, Event Stack, and Diff View integration compile and have headless/UI tests.
 - Seven ADRs use the required `docs/decisions/ADR-XXXX-<slug>.md` naming.
