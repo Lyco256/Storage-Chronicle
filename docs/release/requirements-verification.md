@@ -8,7 +8,7 @@
 |---|---|---|---|
 | V-01 | architecture and stable contracts | `tests/StorageChronicle.Architecture.Tests`, `StorageChronicle.slnx`, `docs/decisions` | verified |
 | V-02 | source/normalization/state/storage | normalization, state, storage, and integration test projects | verified |
-| V-03 | Windows filesystem/NTFS/session | platform test projects and `build/Test-WindowsPrivileged.ps1` | Notification/session boundaries are tested; initial NTFS metadata wiring and confirmed reconciliation execution remain implementation blockers, and the full privileged capability matrix remains pending |
+| V-03 | Windows filesystem/NTFS/session | platform test projects and `build/Test-WindowsPrivileged.ps1` | Notification/session boundaries and the initial NTFS metadata route are tested; confirmed reconciliation execution remains an implementation blocker, and the full privileged capability matrix remains pending |
 | V-04 | external media and mount history | `StorageChronicle.ExternalMedia.Tests` and filesystem tests | verified |
 | V-05 | Event Stack and Diff View | projection, Event Stack, Diff View, and headless tests | verified |
 | V-06 | IPC and bounded Agent pipeline | Agent tests, production named-pipe client/server test, and end-to-end smoke test | verified |
