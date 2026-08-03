@@ -6,6 +6,7 @@ using StorageChronicle.Normalization;
 using StorageChronicle.Platform.Windows.FileSystem;
 using StorageChronicle.Platform.Windows.FileSystem.Policy;
 using StorageChronicle.Platform.Windows.FileSystem.Volumes;
+using StorageChronicle.Platform.Windows.FileSystem.Snapshot;
 using StorageChronicle.Platform.Windows.Ntfs;
 using StorageChronicle.Projection;
 using StorageChronicle.Settings;
@@ -70,7 +71,8 @@ public static class Program
         builder.Services.AddSingleton<ISourceEventCollector>(services => new WindowsNtfsVolumeCollector(
             services.GetRequiredService<IVolumeEnumerator>(),
             services.GetRequiredService<INtfsApi>(),
-            exclusionPolicy: services.GetRequiredService<WindowsExclusionPolicy>()));
+            exclusionPolicy: services.GetRequiredService<WindowsExclusionPolicy>(),
+            initialSnapshotReader: new WindowsVolumeSnapshotReader(services.GetRequiredService<WindowsExclusionPolicy>())));
         builder.Services.AddSingleton<ISourceEventCollector, WindowsEtwFileIoCollector>();
         builder.Services.AddSingleton<ISourceEventCollector, WindowsShareCollector>();
         builder.Services.AddSingleton<ISourceEventCollector>(services => new WindowsExternalMediaCollector(

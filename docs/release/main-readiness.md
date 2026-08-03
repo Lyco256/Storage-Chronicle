@@ -22,7 +22,7 @@ The repository is not yet ready for `main`. The top-agent merge sequence remains
 ## Additional implementation blockers found in the 2026-08-04 audit
 
 - The UI prompt and decline path for a continuity gap are present, but the confirmed Execute path currently only restarts monitoring. A selected-volume NTFS MFT or non-NTFS directory reconciliation runner is still required.
-- The NTFS startup path currently emits public-MFT identity/name/type facts as `ExistenceOnly`; the tested `DirectoryMetadataBatcher` is not wired to a production standard-metadata provider. Scoped `SeBackupPrivilege` enablement and OS low-priority I/O for reconciliation are also not implemented.
+- The NTFS startup path now captures a pre-scan USN boundary and routes initial standard metadata through the production directory snapshot reader. Candidate-only detailed metadata for reconciliation, scoped `SeBackupPrivilege` enablement, and OS low-priority I/O for reconciliation are still not implemented.
 - The shared build language-version override and release-signing procedure gaps were corrected in the current feature branch; Native AOT configuration is now opt-in and remains non-acceptance diagnostic work.
 
 No release document may say these items are verified until the corresponding acceptance artifacts exist. History retention, no-driver MVP, no-content/no-hash, and no-synthetic-descendant invariants remain mandatory in every acceptance run.

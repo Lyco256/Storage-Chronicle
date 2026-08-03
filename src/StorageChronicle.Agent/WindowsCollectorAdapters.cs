@@ -1,8 +1,10 @@
 using System.Text.Json;
 using StorageChronicle.Contracts;
 using StorageChronicle.Domain.Contracts;
+using StorageChronicle.Platform.Abstractions;
 using StorageChronicle.Platform.Windows.FileSystem.Volumes;
 using StorageChronicle.Platform.Windows.FileSystem.Policy;
+using StorageChronicle.Platform.Windows.FileSystem.Snapshot;
 using StorageChronicle.Platform.Windows.Ntfs;
 using StorageChronicle.Platform.Windows.Session;
 
@@ -15,14 +17,16 @@ public sealed class WindowsNtfsVolumeCollector : ISourceEventCollector
     private readonly INtfsApi api;
     private readonly string cursorRoot;
     private readonly WindowsExclusionPolicy? exclusionPolicy;
+    private readonly IVolumeSnapshotReader? initialSnapshotReader;
 
     /// <summary>Initializes an NTFS collector with a durable per-volume cursor directory.</summary>
-    public WindowsNtfsVolumeCollector(IVolumeEnumerator volumes, INtfsApi api, string? cursorRoot = null, WindowsExclusionPolicy? exclusionPolicy = null)
+    public WindowsNtfsVolumeCollector(IVolumeEnumerator volumes, INtfsApi api, string? cursorRoot = null, WindowsExclusionPolicy? exclusionPolicy = null, IVolumeSnapshotReader? initialSnapshotReader = null)
     {
         this.volumes = volumes ?? throw new ArgumentNullException(nameof(volumes));
         this.api = api ?? throw new ArgumentNullException(nameof(api));
         this.cursorRoot = cursorRoot ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Storage Chronicle", "ntfs-cursors");
         this.exclusionPolicy = exclusionPolicy;
+        this.initialSnapshotReader = initialSnapshotReader;
     }
 
     /// <inheritdoc />
@@ -36,18 +40,50 @@ public sealed class WindowsNtfsVolumeCollector : ISourceEventCollector
             if (exclusionPolicy is not null && !exclusionPolicy.IsWholeVolumeMonitored(volumeRoot)) continue;
             var devicePath = volume.Id.Value.EndsWith('\\') ? volume.Id.Value : volume.Id.Value + "\\";
             var previousState = LoadCursor(volume.Id);
+            var journalBoundary = previousState;
             if (previousState is null)
             {
-                await foreach (var entry in new WindowsMftEnumerator(api, devicePath).EnumerateAsync(cancellationToken).ConfigureAwait(false))
+                // Capture the journal cursor before the initial enumeration. The reader
+                // must subsequently recover records produced while the initial state was
+                // being acquired instead of starting at the post-scan journal tail.
+                journalBoundary = TryReadJournalBoundary(devicePath);
+                if (initialSnapshotReader is null)
                 {
-                    yield return InitialSnapshot(volume.Id, entry);
+                    await foreach (var entry in new WindowsMftEnumerator(api, devicePath).EnumerateAsync(cancellationToken).ConfigureAwait(false))
+                    {
+                        yield return InitialSnapshot(volume.Id, entry);
+                    }
+                }
+                else
+                {
+                    // Public MFT enumeration remains the initial identity boundary;
+                    // standard metadata is emitted by the bounded directory snapshot
+                    // reader so the durable initial state is not an existence-only stub.
+                    await foreach (var _ in new WindowsMftEnumerator(api, devicePath).EnumerateAsync(cancellationToken).ConfigureAwait(false)) { }
+                    await foreach (var source in initialSnapshotReader.ReadInitialSnapshotAsync(volume, cancellationToken).ConfigureAwait(false))
+                    {
+                        yield return source;
+                    }
                 }
             }
 
-            var collector = new WindowsNtfsCollector(volume.Id, devicePath, api, previousState: previousState);
+            var collector = new WindowsNtfsCollector(volume.Id, devicePath, api, previousState: journalBoundary);
             await foreach (var value in collector.CollectAsync(cancellationToken).ConfigureAwait(false)) yield return value;
             if (collector.LastObservedJournalState is { } state) SaveCursor(volume.Id, state);
         }
+    }
+
+    private UsnJournalState? TryReadJournalBoundary(string devicePath)
+    {
+        try
+        {
+            using var handle = api.OpenVolume(devicePath);
+            var result = api.QueryUsnJournal(handle, out var journal);
+            return result.Succeeded && journal is not null ? new UsnJournalState(journal.JournalId, journal.NextUsn) : null;
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+        catch (System.ComponentModel.Win32Exception) { return null; }
     }
 
     private static SourceEvent InitialSnapshot(VolumeId volume, MftEntry entry)

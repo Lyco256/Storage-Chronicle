@@ -26,7 +26,7 @@
 | V-103 | Avalonia; MVVM limited to UI | UI project references and architecture tests | verified |
 | V-104 | UI, Service Agent, Session Agent separation | `src/StorageChronicle.Agent`, `src/StorageChronicle.SessionAgent`, UI projects, architecture tests | verified |
 | V-105 | No MVP driver and future replacement seam | collector contracts, installer manifest test, architecture tests | verified |
-| V-106 | NTFS USN and public-API MFT reconciliation | NTFS collector tests and privileged existing-journal test | USN/public-MFT API boundary verified; production initial standard-metadata wiring, confirmed MFT reconciliation execution, scoped backup privilege, and low-priority I/O remain pending |
+| V-106 | NTFS USN and public-API MFT reconciliation | NTFS collector tests and privileged existing-journal test | USN/public-MFT boundary and initial pre-scan cursor/metadata route are verified; confirmed MFT reconciliation execution, candidate-only metadata, scoped backup privilege, and low-priority I/O remain pending |
 | V-107 | Non-NTFS notification monitoring and directory reconciliation | filesystem collector tests | notification and initial-scan boundary verified; confirmed diff-only Directory Reconciliation execution remains pending |
 | V-108 | Non-NTFS initial-scan boundary and gap handling | `PolicyAndReconciliationTests`, `VolumeAndMediaTests` | verified |
 | V-109 | Deterministic Source-to-Canonical normalization | `EventNormalizerTests`, normalization project | verified |

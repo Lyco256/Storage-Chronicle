@@ -14,6 +14,10 @@ public sealed class WindowsVolumeSnapshotReader : IVolumeSnapshotReader
     private readonly WindowsExclusionPolicy exclusionPolicy;
     private readonly WindowsFileSystemOptions options;
 
+    /// <summary>Initializes a snapshot reader backed by the production Windows metadata boundary.</summary>
+    public WindowsVolumeSnapshotReader(WindowsExclusionPolicy? exclusionPolicy = null, WindowsFileSystemOptions? options = null)
+        : this(new Interop.WindowsNativeApi(), exclusionPolicy, options) { }
+
     /// <summary>Initializes a snapshot reader.</summary>
     public WindowsVolumeSnapshotReader(IWindowsFileMetadataNative native, WindowsExclusionPolicy? exclusionPolicy = null, WindowsFileSystemOptions? options = null)
     {
