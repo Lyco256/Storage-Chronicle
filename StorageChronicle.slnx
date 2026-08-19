@@ -53,6 +53,7 @@
     <Project Path="tools/StorageChronicle.DocMirrorValidator/StorageChronicle.DocMirrorValidator.csproj" />
     <Project Path="tools/StorageChronicle.LogInspector/StorageChronicle.LogInspector.csproj" />
     <Project Path="tools/StorageChronicle.FileMutationWorkload/StorageChronicle.FileMutationWorkload.csproj" />
+    <Project Path="tools/StorageChronicle.RealIoOracleValidator/StorageChronicle.RealIoOracleValidator.csproj" />
     <Project Path="tools/StorageChronicle.TestDataGenerator/StorageChronicle.TestDataGenerator.csproj" />
   </Folder>
 </Solution>

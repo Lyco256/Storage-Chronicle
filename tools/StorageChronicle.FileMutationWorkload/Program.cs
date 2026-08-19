@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text.Json;
 
 namespace StorageChronicle.FileMutationWorkload;
@@ -19,7 +21,7 @@ public static class Program
         if (!TryParse(args, out var options, out var error))
         {
             Console.Error.WriteLine(error);
-            Console.Error.WriteLine("usage: StorageChronicle.FileMutationWorkload --root <marked-data-root> --oracle <path> --scenario basic|full|burst|parallel|rename-move|delete|short-lived|mft --count <n> --run-id <guid>");
+            Console.Error.WriteLine("usage: StorageChronicle.FileMutationWorkload --root <marked-data-root> --oracle <path> --scenario basic|full|burst|parallel|rename-move|delete|short-lived|acl-denied|mft --count <n> --run-id <guid>");
             return 2;
         }
 
@@ -28,6 +30,9 @@ public static class Program
             var root = PrepareRoot(options);
             var records = new List<OracleRecord>();
             var sequence = 0L;
+            // Establish the oracle document before any mutation begins. The
+            // final write below closes the operation list after the real I/O.
+            WriteOracle(options.OraclePath, options, records);
             switch (options.Scenario)
             {
                 case "basic":
@@ -50,6 +55,9 @@ public static class Program
                     break;
                 case "short-lived":
                     RunShortLived(root, Math.Max(1, options.Count), records, ref sequence);
+                    break;
+                case "acl-denied":
+                    RunAclDenied(root, records, ref sequence);
                     break;
                 case "mft":
                     RunMft(root, options.Count, records, ref sequence);
@@ -101,10 +109,12 @@ public static class Program
             "Workload" => (Label: "SC_TEST_VOLUME", FileSystem: "NTFS"),
             "Mft" => (Label: "SC_TEST_MFT_VOLUME", FileSystem: "NTFS"),
             "NonNtfs" => (Label: "SC_TEST_NONNTFS_VOLUME", FileSystem: "exFAT"),
+            "AclDenied" => (Label: "SC_TEST_VOLUME", FileSystem: "NTFS"),
             _ => throw new InvalidDataException($"The TestLab marker role is unsupported: {marker.Role}")
         };
         if (!string.Equals(marker.VolumeLabel, expected.Label, StringComparison.Ordinal) || !string.Equals(marker.FileSystem, expected.FileSystem, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("The TestLab marker label or filesystem is not an approved role value.");
         if (options.Scenario == "mft" && !string.Equals(marker.Role, "Mft", StringComparison.Ordinal)) throw new InvalidDataException("The MFT scenario requires an SC_TEST_MFT_VOLUME marker.");
+        if (options.Scenario == "acl-denied" && !string.Equals(marker.Role, "AclDenied", StringComparison.Ordinal)) throw new InvalidDataException("The acl-denied scenario requires an SC_TEST_VOLUME marker with the AclDenied role.");
         return marker;
     }
 
@@ -116,9 +126,9 @@ public static class Program
             var path = Path.Combine(root, relative);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllBytes(path, [0x53, 0x43, 0x01]);
-            records.Add(new OracleRecord(++sequence, "Create", relative, null));
+            Add(records, ref sequence, "Create", relative, null);
             File.SetLastWriteTimeUtc(path, DateTime.UtcNow);
-            records.Add(new OracleRecord(++sequence, "Write", relative, null));
+            Add(records, ref sequence, "Write", relative, null);
         }
     }
 
@@ -191,9 +201,9 @@ public static class Program
         {
             var path = Path.Combine(directory, $"item-{index:D8}.dat");
             using (File.Create(path)) { }
-            concurrent.Add(new OracleRecord(Interlocked.Increment(ref nextSequence), "Create", Relative(root, path), null));
+            concurrent.Add(CreateRecord(Interlocked.Increment(ref nextSequence), "Create", Relative(root, path), null));
             File.SetLastWriteTimeUtc(path, DateTime.UtcNow);
-            concurrent.Add(new OracleRecord(Interlocked.Increment(ref nextSequence), "MetadataChanged", Relative(root, path), null));
+            concurrent.Add(CreateRecord(Interlocked.Increment(ref nextSequence), "MetadataChanged", Relative(root, path), null));
         });
 
         sequence = nextSequence;
@@ -234,7 +244,13 @@ public static class Program
             {
                 var path = operation.GetProperty("RelativePath").GetString() ?? throw new InvalidDataException("Parallel oracle path is missing.");
                 var oldPath = operation.TryGetProperty("OldRelativePath", out var old) && old.ValueKind != JsonValueKind.Null ? old.GetString() : null;
-                records.Add(new OracleRecord(++sequence, operation.GetProperty("Operation").GetString() ?? "Unknown", path, oldPath));
+                var startedUtc = operation.TryGetProperty("StartedUtc", out var started) && started.TryGetDateTimeOffset(out var parsedStarted)
+                    ? parsedStarted
+                    : DateTimeOffset.UtcNow;
+                var completedUtc = operation.TryGetProperty("CompletedUtc", out var completed) && completed.TryGetDateTimeOffset(out var parsedCompleted)
+                    ? parsedCompleted
+                    : startedUtc;
+                records.Add(new OracleRecord(++sequence, operation.GetProperty("Operation").GetString() ?? "Unknown", path, oldPath, startedUtc, completedUtc));
             }
         }
     }
@@ -252,6 +268,27 @@ public static class Program
         }
     }
 
+    private static void RunAclDenied(string root, ICollection<OracleRecord> records, ref long sequence)
+    {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("The acl-denied workload requires Windows ACL APIs.");
+        var directory = Path.Combine(root, "acl-denied");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "metadata-only-candidate.dat");
+        using (File.Create(path)) { }
+        Add(records, ref sequence, "Create", Relative(root, path), null);
+
+        var identity = WindowsIdentity.GetCurrent().User ?? throw new InvalidOperationException("The current Windows identity has no security identifier.");
+        var fileInfo = new FileInfo(path);
+        var security = fileInfo.GetAccessControl();
+        var deny = new FileSystemAccessRule(
+            identity,
+            FileSystemRights.ReadData | FileSystemRights.ReadAttributes | FileSystemRights.ReadExtendedAttributes | FileSystemRights.ReadPermissions,
+            AccessControlType.Deny);
+        security.AddAccessRule(deny);
+        fileInfo.SetAccessControl(security);
+        Add(records, ref sequence, "AclDeniedMetadata", Relative(root, path), null);
+    }
+
     private static void RunMft(string root, int count, ICollection<OracleRecord> records, ref long sequence)
     {
         for (var index = 0; index < count; index++)
@@ -265,7 +302,13 @@ public static class Program
     }
 
     private static void Add(ICollection<OracleRecord> records, ref long sequence, string operation, string path, string? oldPath) =>
-        records.Add(new OracleRecord(++sequence, operation, path, oldPath));
+        records.Add(CreateRecord(++sequence, operation, path, oldPath));
+
+    private static OracleRecord CreateRecord(long sequence, string operation, string path, string? oldPath)
+    {
+        var timestamp = DateTimeOffset.UtcNow;
+        return new OracleRecord(sequence, operation, path, oldPath, timestamp, timestamp);
+    }
 
     private static string Relative(string root, string path) => Path.GetRelativePath(root, path).Replace(Path.DirectorySeparatorChar, '\\');
 
@@ -279,10 +322,10 @@ public static class Program
             var relative = $"rename-source\\item-{index:D6}.dat";
             var path = Path.Combine(root, relative);
             File.WriteAllBytes(path, [0x53, 0x43, 0x02]);
-            records.Add(new OracleRecord(++sequence, "Create", relative, null));
+            Add(records, ref sequence, "Create", relative, null);
         }
         Directory.Move(source, destination);
-        records.Add(new OracleRecord(++sequence, "DirectoryMove", "rename-destination", "rename-source"));
+        Add(records, ref sequence, "DirectoryMove", "rename-destination", "rename-source");
     }
 
     private static void RunDelete(string root, int count, ICollection<OracleRecord> records, ref long sequence)
@@ -293,10 +336,10 @@ public static class Program
         {
             var relative = $"delete-target\\item-{index:D6}.dat";
             File.WriteAllBytes(Path.Combine(root, relative), [0x53, 0x43, 0x03]);
-            records.Add(new OracleRecord(++sequence, "Create", relative, null));
+            Add(records, ref sequence, "Create", relative, null);
         }
         Directory.Delete(directory, recursive: true);
-        records.Add(new OracleRecord(++sequence, "DirectoryDelete", "delete-target", null));
+        Add(records, ref sequence, "DirectoryDelete", "delete-target", null);
     }
 
     private static void WriteOracle(string path, WorkloadOptions options, IReadOnlyCollection<OracleRecord> records)
@@ -320,7 +363,7 @@ public static class Program
             values[args[index][2..]] = args[++index];
         }
         if (!values.TryGetValue("root", out var root) || !values.TryGetValue("oracle", out var oracle) || !values.TryGetValue("scenario", out var scenario) || !values.TryGetValue("run-id", out var runId) || !values.TryGetValue("count", out var countText) || !int.TryParse(countText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var count) || count is < 1 or > 1_000_000) { options = default!; error = "root, oracle, scenario, run-id, and count (1..1,000,000) are required."; return false; }
-        if (scenario is not ("basic" or "full" or "burst" or "parallel" or "rename-move" or "delete" or "short-lived" or "mft")) { options = default!; error = "scenario must be basic, full, burst, parallel, rename-move, delete, short-lived, or mft."; return false; }
+        if (scenario is not ("basic" or "full" or "burst" or "parallel" or "rename-move" or "delete" or "short-lived" or "acl-denied" or "mft")) { options = default!; error = "scenario must be basic, full, burst, parallel, rename-move, delete, short-lived, acl-denied, or mft."; return false; }
         options = new WorkloadOptions(root, oracle, scenario, runId, count);
         error = string.Empty;
         return true;
@@ -330,5 +373,5 @@ public static class Program
     private sealed record TestLabMarker(string Schema, string TestId, string Role, string VolumeLabel, string FileSystem, DateTimeOffset CreatedUtc);
     private sealed record OracleDocument(string Schema, string RunId, string Scenario, DateTimeOffset CompletedUtc, ProcessEvidence Process, int RecordCount, IReadOnlyCollection<OracleRecord> Operations);
     private sealed record ProcessEvidence(int ProcessId, DateTime StartTimeUtc, string ExecutablePath);
-    private sealed record OracleRecord(long Sequence, string Operation, string RelativePath, string? OldRelativePath);
+    private sealed record OracleRecord(long Sequence, string Operation, string RelativePath, string? OldRelativePath, DateTimeOffset StartedUtc, DateTimeOffset CompletedUtc);
 }

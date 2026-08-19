@@ -3,6 +3,8 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
     [string]$AcceptanceRoot,
+    [string]$NonNtfsRoot,
+    [string]$TestId,
     [string]$TestLabRoot,
     [string]$VhdxPath,
     [string]$VhdxRoot,
@@ -10,6 +12,8 @@ param(
     [string]$RemovableRoot,
     [string]$SmbShareName,
     [string]$ServiceName = 'StorageChronicleAgent',
+    [string]$SessionAgentExecutable,
+    [string]$AgentPipeName = 'StorageChronicle.Agent',
     [switch]$CreateVhdx,
     [switch]$CreateUsnJournal,
     [switch]$WaitForMediaChange,
@@ -32,7 +36,11 @@ $environmentNames = @(
     'STORAGE_CHRONICLE_ACCEPTANCE_REMOVABLE_ROOT',
     'STORAGE_CHRONICLE_ACCEPTANCE_SMB_SHARE',
     'STORAGE_CHRONICLE_ACCEPTANCE_SERVICE',
-    'STORAGE_CHRONICLE_ACCEPTANCE_WAIT_FOR_MEDIA')
+    'STORAGE_CHRONICLE_ACCEPTANCE_WAIT_FOR_MEDIA',
+    'STORAGE_CHRONICLE_RECONCILIATION_EVIDENCE_PATH',
+    'STORAGE_CHRONICLE_AGENT_EXE',
+    'STORAGE_CHRONICLE_SESSION_AGENT_EXE',
+    'STORAGE_CHRONICLE_AGENT_PIPE')
 $oldEnvironment = @{}
 foreach ($name in $environmentNames) { $oldEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 
@@ -52,6 +60,8 @@ $manifest = [ordered]@{
 }
 
 New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
+$evidenceDirectory = Join-Path $artifactRoot "windows-privileged-$runId"
+$reconciliationEvidencePath = Join-Path $evidenceDirectory 'confirmed-reconciliation.json'
 Start-Transcript -Path $runOutputPath -Force | Out-Null
 
 function Set-ProcessEnvironment([string]$Name, [string]$Value) {
@@ -144,6 +154,27 @@ function Is-PathSafeForAcceptance([string]$Path) {
     return $true
 }
 
+function Assert-TestLabMarker([string]$RootPath, [string[]]$AllowedRoles) {
+    $markers = @()
+    foreach ($name in @('.storage-chronicle-testlab-marker.json', 'StorageChronicleTestVolume.json')) {
+        $path = Join-Path $RootPath $name
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Required TestLab marker is missing: $path" }
+        $marker = Get-Content -Raw -Encoding UTF8 -LiteralPath $path | ConvertFrom-Json
+        if ([string]$marker.Schema -ne 'StorageChronicle.TestLabDataMarker.v1') { throw "TestLab marker schema is invalid: $path" }
+        if ($AllowedRoles -notcontains [string]$marker.Role) { throw "TestLab marker role is not allowed for this capability set: $($marker.Role)" }
+        $expected = switch ([string]$marker.Role) {
+            'NonNtfs' { [pscustomobject]@{ Label = 'SC_TEST_NONNTFS_VOLUME'; FileSystem = 'exFAT' } }
+            'Mft' { [pscustomobject]@{ Label = 'SC_TEST_MFT_VOLUME'; FileSystem = 'NTFS' } }
+            default { [pscustomobject]@{ Label = 'SC_TEST_VOLUME'; FileSystem = 'NTFS' } }
+        }
+        if ([string]$marker.VolumeLabel -ne $expected.Label -or [string]$marker.FileSystem -ine $expected.FileSystem) { throw "TestLab marker label/filesystem is invalid: $path" }
+        if (-not [string]::IsNullOrWhiteSpace($TestId) -and [string]$marker.TestId -ne $TestId) { throw "TestLab marker TestId does not match the requested acceptance run: $path" }
+        $markers += $marker
+    }
+    if ([string]$markers[0].Role -ne [string]$markers[1].Role -or [string]$markers[0].TestId -ne [string]$markers[1].TestId) { throw "The two TestLab markers disagree: $RootPath" }
+    return $markers[0]
+}
+
 function Add-Capability([string]$Name, [bool]$Ready, [string]$Reason) {
     $manifest.Capabilities += [ordered]@{ Name = $Name; Ready = $Ready; Reason = $Reason }
     return [pscustomobject]@{ Name = $Name; Ready = $Ready; Reason = $Reason }
@@ -155,7 +186,6 @@ function Write-Manifest([int]$ExitCode, [string]$Status) {
     $manifest.CompletedUtc = [DateTime]::UtcNow.ToString('O')
     $requiredResults = @($manifest.Tests | Where-Object { $manifest.RequiredCapabilities -contains $_.Capability })
     $manifest.AcceptanceEligible = $Status -eq 'PASSED' -and $requiredResults.Count -eq $manifest.RequiredCapabilities.Count -and @($requiredResults | Where-Object Status -ne 'PASSED').Count -eq 0
-    $evidenceDirectory = Join-Path $artifactRoot "windows-privileged-$runId"
     New-Item -ItemType Directory -Force -Path $evidenceDirectory | Out-Null
     $manifest.Artifacts.Directory = $evidenceDirectory
     $manifest.Artifacts.Environment = Join-Path $evidenceDirectory 'environment.json'
@@ -165,9 +195,13 @@ function Write-Manifest([int]$ExitCode, [string]$Status) {
     $manifest.Artifacts.CanonicalSummary = Join-Path $evidenceDirectory 'canonical-summary.json'
     $manifest.Artifacts.FinalStateSummary = Join-Path $evidenceDirectory 'final-state-summary.json'
     $manifest.Artifacts.ReconciliationSummary = Join-Path $evidenceDirectory 'reconciliation-summary.json'
+    $manifest.Artifacts.ConfirmedReconciliation = $reconciliationEvidencePath
     $manifest.Artifacts.ServiceSummary = Join-Path $evidenceDirectory 'service-summary.json'
     $manifest.Artifacts.Errors = Join-Path $evidenceDirectory 'errors.json'
     $manifest.Artifacts.Result = Join-Path $evidenceDirectory 'result.json'
+    if (-not (Test-Path -LiteralPath $manifest.Artifacts.ConfirmedReconciliation -PathType Leaf)) {
+        [ordered]@{ Schema = 'StorageChronicle.ConfirmedReconciliationAcceptance.v1'; AcceptanceEligible = $false; Status = 'NOT_EXECUTED'; Reason = 'The real Agent reconciliation acceptance test did not produce evidence.' } | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $manifest.Artifacts.ConfirmedReconciliation -Encoding UTF8
+    }
     $manifest.Environment | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $manifest.Artifacts.Environment -Encoding UTF8
     [ordered]@{ Schema = 'StorageChronicle.WindowsPrivilegedCapabilities.v1'; Required = $manifest.RequiredCapabilities; Definitions = $manifest.Capabilities; Tests = $manifest.Tests } | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $manifest.Artifacts.Capabilities -Encoding UTF8
     foreach ($name in @('Oracle', 'SourceEventSummary', 'CanonicalSummary', 'FinalStateSummary', 'ReconciliationSummary', 'ServiceSummary')) { [ordered]@{ Schema = "StorageChronicle.WindowsPrivileged.$name.v1"; Status = 'NOT_EXECUTED'; Reason = 'This capability artifact is populated only by the real TestLab product workload; no synthetic summary is accepted.' } | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $manifest.Artifacts[$name] -Encoding UTF8 }
@@ -235,10 +269,19 @@ try {
         if (-not (Test-Path -LiteralPath $AcceptanceRoot -PathType Container)) { throw "Acceptance root is not a directory: $AcceptanceRoot" }
         if (-not (Is-PathSafeForAcceptance $AcceptanceRoot)) { throw "Refusing to use a protected or volume-root path as the mutation root: $AcceptanceRoot" }
     }
+    if (-not [string]::IsNullOrWhiteSpace($NonNtfsRoot)) {
+        $NonNtfsRoot = [IO.Path]::GetFullPath($NonNtfsRoot)
+        if (-not (Test-Path -LiteralPath $NonNtfsRoot -PathType Container)) { throw "Non-NTFS acceptance root is not a directory: $NonNtfsRoot" }
+        if (-not (Is-PathSafeForAcceptance $NonNtfsRoot)) { throw "Refusing to use a protected or volume-root path as the non-NTFS mutation root: $NonNtfsRoot" }
+    }
+    $acceptanceMarker = if ($AcceptanceRoot) { Assert-TestLabMarker $AcceptanceRoot @('Workload', 'Mft', 'AclDenied') } else { $null }
+    $nonNtfsMarker = if ($NonNtfsRoot) { Assert-TestLabMarker $NonNtfsRoot @('NonNtfs') } else { $null }
 
     $admin = Is-Administrator
     $volume = if ($AcceptanceRoot) { Get-VolumeForPath $AcceptanceRoot } else { $null }
     $isNtfs = $null -ne $volume -and $volume.FileSystem -eq 'NTFS'
+    $nonNtfsVolume = if ($NonNtfsRoot) { Get-VolumeForPath $NonNtfsRoot } else { $null }
+    $nonNtfsReady = $null -ne $nonNtfsVolume -and $nonNtfsVolume.FileSystem -ne 'NTFS'
     $device = $DevicePath
     if ([string]::IsNullOrWhiteSpace($device) -and $AcceptanceRoot) {
         $driveRoot = [IO.Path]::GetPathRoot($AcceptanceRoot)
@@ -288,6 +331,7 @@ try {
 
     $sessionReady = [Environment]::UserInteractive -and ((Get-Process -Id $PID).SessionId -gt 0)
     $sessionReason = if ($sessionReady) { 'An interactive user session is available.' } else { 'An interactive user session is unavailable; clipboard tests were not run.' }
+    $sessionAgentReady = $sessionReady -and -not [string]::IsNullOrWhiteSpace($SessionAgentExecutable) -and (Test-Path -LiteralPath $SessionAgentExecutable -PathType Leaf)
 
     $removableReady = $false
     $removableReason = 'A removable-media mount root was not supplied.'
@@ -303,35 +347,43 @@ try {
         OS = [Environment]::OSVersion.VersionString
         IsAdministrator = $admin
         AcceptanceRoot = $AcceptanceRoot
+        NonNtfsRoot = $NonNtfsRoot
+        TestId = $TestId
+        AcceptanceMarkerRole = if ($acceptanceMarker) { $acceptanceMarker.Role } else { $null }
+        NonNtfsMarkerRole = if ($nonNtfsMarker) { $nonNtfsMarker.Role } else { $null }
         DevicePath = $device
         VhdxPath = $VhdxPath
         VhdxRoot = $VhdxRoot
         RemovableRoot = $RemovableRoot
         SmbShareName = $SmbShareName
         ServiceName = $ServiceName
+        SessionAgentExecutable = $SessionAgentExecutable
+        AgentPipeName = $AgentPipeName
         InteractiveSession = $sessionReady
         VolumeFileSystem = if ($volume) { $volume.FileSystem } else { $null }
+        NonNtfsVolumeFileSystem = if ($nonNtfsVolume) { $nonNtfsVolume.FileSystem } else { $null }
         VhdxAttached = $vhdxAttached
+        ReconciliationEvidencePath = $reconciliationEvidencePath
         TestLabRoot = $TestLabRoot
     }
 
     $capabilities = @(
-        Add-Capability 'Vhdx' ($CreateVhdx -and $vhdxAttached -and $rootReady) $(if ($CreateVhdx) { $vhdxReason } else { 'Acceptance requires this runner to create, attach, initialize, format, detach, and destroy the disposable VHDX.' })
+        Add-Capability 'Vhdx' ($CreateVhdx -and $vhdxAttached -and $rootReady -and $isNtfs) $(if ($CreateVhdx) { $vhdxReason } else { 'Acceptance requires this runner to create, attach, initialize, format, detach, and destroy the disposable VHDX.' })
         Add-Capability 'UsnQuery' ($usnReady -and $deviceReady) $usnReason
         Add-Capability 'UsnRead' ($usnReady -and $deviceReady) 'The real USN query/read test must run against the existing journal without changing journal configuration.'
         Add-Capability 'Mft' ($usnReady -and $deviceReady) $usnReason
         Add-Capability 'Reconciliation' ($rootReady -and $isNtfs -and $admin) $(if ($rootReady -and $isNtfs -and $admin) { 'The real Agent reconciliation acceptance test is wired to the selected NTFS volume and requires elevation for the production MFT/metadata path.' } else { 'A real Agent reconciliation run requires an elevated Windows guest with a selected NTFS acceptance volume.' })
-        Add-Capability 'Etw' $false 'The existing smoke test observes file I/O only; full session start/stop and process correlation are not acceptance-complete.'
-        Add-Capability 'ReadDirectoryChangesW' $false 'The existing smoke test does not cover the required create/rename/delete and bounded-gap matrix.'
-        Add-Capability 'BufferGap' $false 'A bounded buffer-overflow test with fail-closed gap evidence is not wired into this acceptance runner.'
-        Add-Capability 'Smb' $false 'The existing share snapshot smoke test does not create/change/remove the configured share.'
-        Add-Capability 'Service' $false 'The existing SCM smoke test only queries a service; install/start/stop/recovery configuration is covered by real installer acceptance.'
-        Add-Capability 'SessionAgent' $false 'Interactive Session Agent IPC and session identity acceptance is not wired into this privileged runner.'
+        Add-Capability 'Etw' ($rootReady -and $admin) $(if ($rootReady -and $admin) { 'The real kernel ETW test covers a file operation, correlated process identity, and bounded session shutdown.' } else { 'The real ETW acceptance requires an elevated acceptance root.' })
+        Add-Capability 'ReadDirectoryChangesW' $rootReady $(if ($rootReady) { 'The real notification test covers create, rename, and delete and fails on a native continuity gap.' } else { 'A disposable acceptance root is required.' })
+        Add-Capability 'BufferGap' $isWindows 'The bounded initial-scan buffer test verifies overflow is reported instead of silently dropping notifications.'
+        Add-Capability 'Smb' ($rootReady -and $admin) $(if ($rootReady -and $admin) { 'The real test creates, changes, and removes a temporary SMB share beneath the disposable acceptance root and compares actual NetShare snapshots.' } else { 'An elevated disposable acceptance root is required for the SMB lifecycle test.' })
+        Add-Capability 'Service' ($rootReady -and $admin) $(if ($rootReady -and $admin) { 'The real test installs, starts, stops, queries recovery actions, and deletes a temporary Agent service.' } else { 'An elevated disposable acceptance root is required for the service lifecycle test.' })
+        Add-Capability 'SessionAgent' $sessionAgentReady $(if ($sessionAgentReady) { 'The real Session Agent process is configured to wait for one actual clipboard notification and send it through the live Agent pipe.' } else { 'An interactive session, a live Agent, and an explicitly supplied Session Agent executable are required.' })
         Add-Capability 'Clipboard' $sessionReady $sessionReason
-        Add-Capability 'VolumeGuid' $false 'A drive-letter-free volume GUID identity test is not wired into this acceptance runner.'
-        Add-Capability 'HotAttachDetach' $false 'A real VHDX hot attach/detach lifecycle test is not wired into this acceptance runner.'
-        Add-Capability 'AclDeniedMetadata' $false 'The ACL-denied metadata plus scoped SeBackupPrivilege acceptance is not wired into this runner.'
-        Add-Capability 'NonNtfs' $false 'The non-NTFS notification plus reconciliation acceptance is not wired into this runner.'
+        Add-Capability 'VolumeGuid' ($rootReady -and $AcceptanceRoot -match '^\\\\\?\\Volume\{[0-9A-Fa-f-]+\}') $(if ($rootReady -and $AcceptanceRoot -match '^\\\\\?\\Volume\{[0-9A-Fa-f-]+\}') { 'The real volume enumerator test uses a drive-letter-free volume GUID root.' } else { 'The acceptance root must be supplied through a drive-letter-free volume GUID path.' })
+        Add-Capability 'HotAttachDetach' ($CreateVhdx -and $vhdxAttached) $(if ($CreateVhdx -and $vhdxAttached) { 'The real test detaches and reattaches the disposable VHDX and verifies its attached state.' } else { 'The runner must create and attach the disposable VHDX before the hot attach/detach check.' })
+        Add-Capability 'AclDeniedMetadata' ($rootReady -and $isNtfs -and $admin) $(if ($rootReady -and $isNtfs -and $admin) { 'The real Agent test applies an ACL deny rule and verifies the production runner reads metadata through its scoped SeBackupPrivilege path.' } else { 'An elevated NTFS acceptance root is required for the ACL-denied metadata test.' })
+        Add-Capability 'NonNtfs' $nonNtfsReady $(if ($nonNtfsReady) { 'The real Agent test executes directory snapshot reconciliation on the separately selected non-NTFS volume.' } else { 'A readable non-NTFS acceptance root must be supplied with -NonNtfsRoot.' })
     )
 
     Set-ProcessEnvironment 'STORAGE_CHRONICLE_ACCEPTANCE_ROOT' $AcceptanceRoot
@@ -341,6 +393,9 @@ try {
     Set-ProcessEnvironment 'STORAGE_CHRONICLE_ACCEPTANCE_SMB_SHARE' $SmbShareName
     Set-ProcessEnvironment 'STORAGE_CHRONICLE_ACCEPTANCE_SERVICE' $ServiceName
     Set-ProcessEnvironment 'STORAGE_CHRONICLE_ACCEPTANCE_WAIT_FOR_MEDIA' $(if ($WaitForMediaChange) { '1' } else { '0' })
+    Set-ProcessEnvironment 'STORAGE_CHRONICLE_RECONCILIATION_EVIDENCE_PATH' $reconciliationEvidencePath
+    Set-ProcessEnvironment 'STORAGE_CHRONICLE_SESSION_AGENT_EXE' $SessionAgentExecutable
+    Set-ProcessEnvironment 'STORAGE_CHRONICLE_AGENT_PIPE' $AgentPipeName
 
     $testAssemblies = @{}
     foreach ($project in $testProjects) {
@@ -353,6 +408,11 @@ try {
         if ($null -eq $testAssembly) { throw "The MTP privileged test executable was not produced: $projectSlug" }
         $testAssemblies[[IO.Path]::GetFullPath($project)] = $testAssembly.FullName
     }
+    $agentExecutable = Get-ChildItem (Join-Path $root "src\StorageChronicle.Agent\bin\$Configuration") -Recurse -File -Filter 'StorageChronicle.Agent.exe' |
+        Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+    if ($null -eq $agentExecutable) { throw 'The Agent executable required by service acceptance was not produced.' }
+    Set-ProcessEnvironment 'STORAGE_CHRONICLE_AGENT_EXE' $agentExecutable.FullName
+    $manifest.Environment.AgentExecutable = $agentExecutable.FullName
     foreach ($capability in $capabilities) {
         if (-not $capability.Ready) {
             Add-NotExecuted $capability.Name $capability.Reason
@@ -360,9 +420,16 @@ try {
         }
 
         Write-Host "RUNNING [$($capability.Name)]" -ForegroundColor Cyan
+        if ($capability.Name -eq 'NonNtfs') {
+            Set-ProcessEnvironment 'STORAGE_CHRONICLE_ACCEPTANCE_ROOT' $NonNtfsRoot
+            Set-ProcessEnvironment 'STORAGE_CHRONICLE_ACCEPTANCE_DEVICE' $null
+        } else {
+            Set-ProcessEnvironment 'STORAGE_CHRONICLE_ACCEPTANCE_ROOT' $AcceptanceRoot
+            Set-ProcessEnvironment 'STORAGE_CHRONICLE_ACCEPTANCE_DEVICE' $device
+        }
         $started = [DateTime]::UtcNow
         $testArgs = @('--progress', 'off', '--minimum-expected-tests', '1', '--filter-trait', "Capability=$($capability.Name)")
-        $projectForCapability = if ($capability.Name -eq 'Reconciliation') { $agentTestProject } else { $platformTestProject }
+        $projectForCapability = if ($capability.Name -in @('Reconciliation', 'AclDeniedMetadata', 'NonNtfs')) { $agentTestProject } else { $platformTestProject }
         $testAssemblyPath = $testAssemblies[[IO.Path]::GetFullPath($projectForCapability)]
         if ([string]::IsNullOrWhiteSpace($testAssemblyPath)) { throw "No test executable is registered for capability $($capability.Name)." }
         $result = Invoke-Captured $testAssemblyPath $testArgs

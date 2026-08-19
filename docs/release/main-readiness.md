@@ -9,7 +9,7 @@ The branch/ref audit for this continuation is recorded in `docs/release/branch-a
 ## Verified on 2026-08-20
 
 - `dotnet build StorageChronicle.slnx --no-restore -v:minimal`: 0 warnings, 0 errors.
-- `build/Test-Fast.ps1 -NoRestore`: all 22 non-privileged test projects passed.
+- `build/Test-Fast.ps1 -NoRestore`: all 22 non-privileged test projects passed; Agent has 26 passes and three expected environment-gated privileged skips.
 - `build/Test-All.ps1` (2026-08-20, default non-privileged lane): build, Fast, quality/coverage, and UI stages passed with exit code 0; privileged Windows acceptance remains intentionally isolated.
 - `dotnet run --project tools/StorageChronicle.DocMirrorValidator --no-restore -- .`: passed.
 - `build/quality/Test-Coverage.ps1`: passed the required 80%/70% thresholds with current measured rates recorded in `docs/handoffs/integration-quality.md`.
@@ -26,18 +26,18 @@ The branch/ref audit for this continuation is recorded in `docs/release/branch-a
 
 ## Additional implementation blockers found in the 2026-08-04 audit
 
-- The confirmed Execute path, selected-volume NTFS/public-MFT route, non-NTFS directory route, candidate-only metadata reads, durable Source/Canonical/State ordering, cancellation/failure gaps, scoped `SeBackupPrivilege`, low-priority I/O telemetry, and a bounded post-commit live-event reconciliation buffer are implemented on the feature branch and covered by 26 non-privileged Agent tests plus one privileged reconciliation acceptance test. They still require the real Windows TestLab capability matrix before acceptance can be marked verified.
+- The confirmed Execute path, selected-volume NTFS/public-MFT route, non-NTFS directory route, candidate-only metadata reads, durable Source/Canonical/State ordering, cancellation/failure gaps, scoped `SeBackupPrivilege`, low-priority I/O telemetry, and a bounded post-commit live-event reconciliation buffer are implemented on the feature branch and covered by 26 non-privileged Agent tests plus environment-gated NTFS, ACL-denied, and non-NTFS acceptance tests. They still require the real Windows TestLab capability matrix before acceptance can be marked verified.
 - The Windows TestLab scripts and real metadata-only file-mutation workload are now present with fail-closed root/VM/VHDX/marker checks. The current host preflight remains blocking: Windows 11 Home, no Hyper-V PowerShell module/VMMS, and no approved local ISO/TestLab root.
 - R-17 IPC role separation is now implemented and tested: `--diagnostic` skips service registration/recovery configuration, both clients send a versioned role/session hello, the Agent verifies the authenticated process/session, limits Session Agent connections to ClipboardCandidate, and rejects an unpublished Session Agent role.
 - The shared build language-version override and release-signing procedure gaps were corrected in the current feature branch; Native AOT configuration is now opt-in and remains non-acceptance diagnostic work.
 
 ## Additional audit findings on 2026-08-20
 
-- A continuity-failure normalization defect was found and fixed: a reconciliation-origin `UnverifiedGap` was previously rewritten as `ReconciliationDiscovered`. The normalizer now preserves explicit gap operation/quality first, and `ConfirmedReconciliationRunnerTests.NonNtfsSnapshotGapIsFailedAndRecordedInsteadOfCompleted` covers the fail-closed path; the fast lane is 26 non-privileged Agent tests with zero failures, while the new privileged acceptance test is environment-gated.
+- A continuity-failure normalization defect was found and fixed: a reconciliation-origin `UnverifiedGap` was previously rewritten as `ReconciliationDiscovered`. The normalizer now preserves explicit gap operation/quality first, and `ConfirmedReconciliationRunnerTests.NonNtfsSnapshotGapIsFailedAndRecordedInsteadOfCompleted` covers the fail-closed path; the fast lane is 26 non-privileged Agent tests with zero failures, while the three privileged acceptance tests are environment-gated.
 - The MFT matrix gate was strengthened. `build/quality/Test-FullBenchmarkMatrix.ps1 -IncludeMft` now requires `StorageChronicle.MftBenchmarkEvidence.v1` with per-run dataset/enumeration/candidate/detail-query/canonical/drop counters and OS/build/VM/VHDX fields. The existing BenchmarkDotNet method reports alone cannot satisfy this gate, so the connected TestLab/product evidence remains blocking.
 - The final aggregator now validates group-specific schemas and required fields, including all required privileged capability rows, all eleven installer cases, connected MFT evidence, live correlation with `FalseExactCount=0`, and branch state. A generic JSON with `AcceptanceEligible=true` cannot bypass the final gate.
 - TestLab VHDX cleanup now revalidates both guest markers for the current TestId/Role before deletion; VHDX creation also rolls back an exact newly-created image if attachment/manifest recording fails. These safety changes do not execute a TestLab run and do not close any environment-bound requirement.
-- The remaining static acceptance gaps are real: `Test-Privileged.ps1` still hard-codes ETW full correlation, ReadDirectoryChangesW gap, SMB mutation, Service lifecycle, Session Agent, Volume GUID, hot attach/detach, ACL/SeBackupPrivilege, and Non-NTFS capabilities as not wired to the product matrix. The Reconciliation capability is now dispatched to a real production Agent acceptance test, but it has not run on an eligible elevated TestLab volume. `Invoke-WindowsTestLab.ps1` still executes only the real mutation workload/oracle, not the Agent/source/canonical/state/reconciliation integration. These must be implemented and run before any acceptance claim.
+- The remaining environment-bound acceptance gaps are real: the privileged runner now has real test paths for ETW process correlation, ReadDirectoryChangesW create/rename/delete, BufferGap, SMB lifecycle, service lifecycle/recovery, Session Agent IPC, Volume GUID, hot attach/detach, ACL/SeBackupPrivilege, non-NTFS reconciliation, and confirmed reconciliation, but none has run to an eligible matrix artifact on the current host. `Invoke-WindowsTestLab.ps1` now accepts a guest Agent executable, runs it against the marked root, retrieves its history, and invokes the real Oracle/Source/Canonical/State validator; without that executable it remains explicitly ineligible. Windows 11 Home/Hyper-V absence, Windows 10 22H2, physical installer, live Explorer, resource, MFT, and branch evidence remain blocking.
 
 No release document may say these items are verified until the corresponding acceptance artifacts exist. History retention, no-driver MVP, no-content/no-hash, and no-synthetic-descendant invariants remain mandatory in every acceptance run.
 
@@ -45,11 +45,11 @@ No release document may say these items are verified until the corresponding acc
 
 The final-acceptance requirements are now represented by executable orchestration and evidence contracts, but none of the environment-bound rows below is claimed as passed without its measured artifact:
 
-- confirmed reconciliation execution: implementation tests passed; real NTFS/non-NTFS TestLab run pending;
+- confirmed reconciliation execution: production Execute path and real Agent/NTFS plus non-NTFS/ACL test paths are wired; real elevated TestLab runs and eligible artifacts remain pending;
 - privileged Windows matrix and Windows 10 22H2: not executed on this host;
 - formal 600-second dual-process resource gate with independent quiet-period evidence: not executed;
 - dedicated `SC_TEST_MFT_VOLUME` 10K/100K/1M matrix: harness expanded, volume/marker run pending;
-- MFT benchmark correctness artifact: the acceptance gate now validates the required per-run dataset/candidate/detail-query/drop/environment oracle, but the current BenchmarkDotNet method harness does not produce the connected product/TestLab artifact; this remains blocking until that workload is connected;
+- MFT benchmark correctness artifact: the acceptance gate now validates the required per-run dataset/candidate/detail-query/drop/environment oracle, and the real `WindowsMftBenchmarks` methods emit it; the dedicated labeled TestLab volume run remains blocking until executed;
 - physical installer and real Agent/Explorer correlation: not executed; the correlation wrapper intentionally reports fixture-only or live `NOT_EXECUTED` and has no synthetic Explorer substitute;
 - physical acceptance bundles are now generated by `build/package/New-ManualAcceptanceBundle.ps1`; the generator refuses missing updated/rollback MSI inputs and generated bundles remain `AcceptanceEligible=false` until real-machine evidence exists;
 - `devenv`/`main` integration: intentionally pending until every blocking gate has an eligible artifact.

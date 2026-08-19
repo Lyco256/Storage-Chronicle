@@ -123,25 +123,31 @@ public sealed class WindowsPrivilegedAcceptanceTests
     [Fact]
     [Trait("Category", "WindowsPrivileged")]
     [Trait("Capability", "ReadDirectoryChangesW")]
-    public async Task ReadDirectoryChangesWReportsARealFileNameChange()
+    public async Task ReadDirectoryChangesWReportsCreateRenameAndDelete()
     {
         var scenario = WindowsAcceptanceEnvironment.CreateScenario("rdcw");
         var marker = $"rdcw-{Guid.NewGuid():N}.entry";
         var markerPath = Path.Combine(scenario, marker);
+        var renamed = marker + ".renamed";
+        var renamedPath = Path.Combine(scenario, renamed);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var monitor = new WindowsDirectoryChangeMonitorFactory().Create(VolumeId.Create("windows-acceptance"), scenario, 64 * 1024);
-        var found = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var found = new TaskCompletionSource<HashSet<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var operations = new HashSet<string>(StringComparer.Ordinal);
         try
         {
             var consumer = Task.Run(async () =>
             {
                 await foreach (var read in monitor.ReadChangesAsync(cancellation.Token))
                 {
-                    if (read.Notifications.Any(value => value.RelativePath.EndsWith(marker, StringComparison.OrdinalIgnoreCase)))
+                    foreach (var notification in read.Notifications)
                     {
-                        found.TrySetResult(true);
-                        return;
+                        if (notification.Kind == DirectoryChangeKind.Added && notification.RelativePath.EndsWith(marker, StringComparison.OrdinalIgnoreCase)) operations.Add("create");
+                        if (notification.Kind == DirectoryChangeKind.RenamedNewName && notification.RelativePath.EndsWith(renamed, StringComparison.OrdinalIgnoreCase)) operations.Add("rename");
+                        if (notification.Kind == DirectoryChangeKind.Removed && notification.RelativePath.EndsWith(renamed, StringComparison.OrdinalIgnoreCase)) operations.Add("delete");
                     }
+
+                    if (operations.Count == 3) { found.TrySetResult(new HashSet<string>(operations, StringComparer.Ordinal)); return; }
 
                     if (read.MonitorLost)
                     {
@@ -153,8 +159,10 @@ public sealed class WindowsPrivilegedAcceptanceTests
 
             await Task.Delay(TimeSpan.FromMilliseconds(500), TestContext.Current.CancellationToken);
             using (File.Create(markerPath)) { }
-            Assert.True(await WindowsAcceptanceEnvironment.WaitForAsync(found.Task, TimeSpan.FromSeconds(20)), "ReadDirectoryChangesW did not report the test file before the timeout.");
-            await found.Task;
+            File.Move(markerPath, renamedPath);
+            File.Delete(renamedPath);
+            Assert.True(await WindowsAcceptanceEnvironment.WaitForAsync(found.Task, TimeSpan.FromSeconds(20)), "ReadDirectoryChangesW did not report create, rename, and delete before the timeout.");
+            Assert.Equal(["create", "delete", "rename"], (await found.Task).OrderBy(value => value, StringComparer.Ordinal));
             cancellation.Cancel();
             await IgnoreCancellationAsync(consumer);
         }
@@ -175,7 +183,7 @@ public sealed class WindowsPrivilegedAcceptanceTests
         var markerPath = Path.Combine(scenario, marker);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         await using var collector = new WindowsEtwFileIoCollector($"StorageChronicle.Acceptance.{Environment.ProcessId}.{Guid.NewGuid():N}");
-        var found = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var found = new TaskCompletionSource<SourceEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
             var consumer = Task.Run(async () =>
@@ -184,7 +192,7 @@ public sealed class WindowsPrivilegedAcceptanceTests
                 {
                     if (value.Properties.TryGetValue("path", out var path) && path.EndsWith(marker, StringComparison.OrdinalIgnoreCase))
                     {
-                        found.TrySetResult(true);
+                        found.TrySetResult(value);
                         return;
                     }
                 }
@@ -193,7 +201,11 @@ public sealed class WindowsPrivilegedAcceptanceTests
             await Task.Delay(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
             using (File.Create(markerPath)) { }
             Assert.True(await WindowsAcceptanceEnvironment.WaitForAsync(found.Task, TimeSpan.FromSeconds(30)), "Kernel ETW did not report the test file operation before the timeout.");
-            await found.Task;
+            var observed = await found.Task;
+            Assert.Equal(ProcessAttributionQuality.Correlated, observed.ProcessQuality);
+            Assert.NotNull(observed.ProcessInstanceId);
+            Assert.True(observed.Properties.ContainsKey("process.name"), "ETW did not retain the correlated process name.");
+            Assert.True(observed.Properties.ContainsKey("process.executable"), "ETW did not retain the correlated process executable.");
             cancellation.Cancel();
             await IgnoreCancellationAsync(consumer);
         }
@@ -206,7 +218,7 @@ public sealed class WindowsPrivilegedAcceptanceTests
 
     [Fact]
     [Trait("Category", "WindowsPrivileged")]
-    [Trait("Capability", "Smb")]
+    [Trait("Capability", "SmbQuery")]
     public async Task LocalSmbSnapshotContainsTheConfiguredShare()
     {
         var reader = new NetShareSnapshotReader();
@@ -218,7 +230,43 @@ public sealed class WindowsPrivilegedAcceptanceTests
 
     [Fact]
     [Trait("Category", "WindowsPrivileged")]
-    [Trait("Capability", "Service")]
+    [Trait("Capability", "Smb")]
+    public async Task DisposableSmbShareCreateChangeAndRemoveAreObservedBySnapshots()
+    {
+        var scenario = WindowsAcceptanceEnvironment.CreateScenario("smb");
+        var shareName = "SCAcc" + Guid.NewGuid().ToString("N");
+        var before = await new NetShareSnapshotReader().ReadAsync(TestContext.Current.CancellationToken);
+        try
+        {
+            await WindowsAcceptanceEnvironment.RunPowerShellAsync(
+                "param($name, $path) New-SmbShare -Name $name -Path $path -FullAccess $env:USERNAME -ErrorAction Stop | Out-Null",
+                shareName,
+                scenario);
+            var afterCreate = await new NetShareSnapshotReader().ReadAsync(TestContext.Current.CancellationToken);
+            Assert.Contains(new ShareSnapshotDiffer().Diff(before, afterCreate), value => string.Equals(value.Share.Name, shareName, StringComparison.OrdinalIgnoreCase) && value.ChangeKind == "Created");
+
+            await WindowsAcceptanceEnvironment.RunPowerShellAsync(
+                "param($name) Set-SmbShare -Name $name -Description 'Storage Chronicle acceptance changed' -Force -ErrorAction Stop | Out-Null",
+                shareName);
+            var afterChange = await new NetShareSnapshotReader().ReadAsync(TestContext.Current.CancellationToken);
+            Assert.Contains(new ShareSnapshotDiffer().Diff(afterCreate, afterChange), value => string.Equals(value.Share.Name, shareName, StringComparison.OrdinalIgnoreCase) && value.ChangeKind == "Changed");
+
+            await WindowsAcceptanceEnvironment.RunPowerShellAsync(
+                "param($name) Remove-SmbShare -Name $name -Force -ErrorAction Stop",
+                shareName);
+            var afterRemove = await new NetShareSnapshotReader().ReadAsync(TestContext.Current.CancellationToken);
+            Assert.Contains(new ShareSnapshotDiffer().Diff(afterChange, afterRemove), value => string.Equals(value.Share.Name, shareName, StringComparison.OrdinalIgnoreCase) && value.ChangeKind == "Deleted");
+        }
+        finally
+        {
+            try { await WindowsAcceptanceEnvironment.RunPowerShellAsync("param($name) Remove-SmbShare -Name $name -Force -ErrorAction SilentlyContinue", shareName); } catch (InvalidOperationException) { }
+            WindowsAcceptanceEnvironment.DeleteScenario(scenario);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "WindowsPrivileged")]
+    [Trait("Capability", "ServiceQuery")]
     public void ConfiguredWindowsServiceIsVisibleThroughTheServiceControlManager()
     {
         var serviceName = WindowsAcceptanceEnvironment.ServiceName;
@@ -230,6 +278,114 @@ public sealed class WindowsPrivilegedAcceptanceTests
         Assert.Equal(0, configuration.ExitCode);
         Assert.Contains("SERVICE_NAME", configuration.Output, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("BINARY_PATH_NAME", configuration.Output, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    [Trait("Category", "WindowsPrivileged")]
+    [Trait("Capability", "Service")]
+    public async Task DisposableAgentServiceCanBeInstalledStartedStoppedAndConfiguredForRecovery()
+    {
+        var executable = WindowsAcceptanceEnvironment.AgentExecutable;
+        Assert.True(File.Exists(executable), $"The Agent executable does not exist: {executable}");
+        var serviceName = $"SCAccAgent{Guid.NewGuid():N}"[..Math.Min(40, 11 + Guid.NewGuid().ToString("N").Length)];
+        var binPath = $"\"{executable}\"";
+        try
+        {
+            Assert.Equal(0, RunSc("create", serviceName, "binPath=", binPath, "start=", "demand").ExitCode);
+            Assert.Equal(0, RunSc("failure", serviceName, "reset=", "60", "actions=", "restart/5000/restart/15000/" ).ExitCode);
+            Assert.Equal(0, RunSc("start", serviceName).ExitCode);
+            await WaitForServiceStateAsync(serviceName, "RUNNING");
+            var failure = RunSc("qfailure", serviceName);
+            Assert.Equal(0, failure.ExitCode);
+            Assert.Contains("FAILURE_ACTIONS", failure.Output, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, RunSc("stop", serviceName).ExitCode);
+            await WaitForServiceStateAsync(serviceName, "STOPPED");
+        }
+        finally
+        {
+            _ = RunSc("stop", serviceName);
+            _ = RunSc("delete", serviceName);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "WindowsPrivileged")]
+    [Trait("Capability", "BufferGap")]
+    public void InitialScanBufferReportsOverflowWithoutDroppingSilently()
+    {
+        var buffer = new InitialScanNotificationBuffer(1);
+        buffer.Begin(100);
+        Assert.True(buffer.TryAdd(new DirectoryChangeNotification(101, DirectoryChangeKind.Added, "one.entry", null, DateTimeOffset.UtcNow)));
+        Assert.False(buffer.TryAdd(new DirectoryChangeNotification(102, DirectoryChangeKind.Modified, "two.entry", null, DateTimeOffset.UtcNow)));
+        Assert.True(buffer.IsOverflowed);
+        Assert.Single(buffer.Complete());
+    }
+
+    [Fact]
+    [Trait("Category", "WindowsPrivileged")]
+    [Trait("Capability", "VolumeGuid")]
+    public async Task DriveLetterFreeAcceptanceRootResolvesToAStableVolumeGuid()
+    {
+        var root = WindowsAcceptanceEnvironment.RootPath;
+        Assert.True(root.StartsWith("\\\\?\\Volume{", StringComparison.OrdinalIgnoreCase), $"A drive-letter-free volume GUID root is required; got {root}");
+        var volumes = await new WindowsVolumeEnumerator().EnumerateAsync(TestContext.Current.CancellationToken);
+        var volume = Assert.Single(volumes, value => value.MountPoints.Any(mount => IsSameOrUnder(root, mount)) || string.Equals(value.Id.Value, root.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase));
+        Assert.True(volume.Id.Value.StartsWith("\\\\?\\VOLUME{", StringComparison.OrdinalIgnoreCase), $"The volume identifier was not a GUID path: {volume.Id.Value}");
+        Assert.NotEmpty(volume.MountPoints);
+    }
+
+    [Fact]
+    [Trait("Category", "WindowsPrivileged")]
+    [Trait("Capability", "HotAttachDetach")]
+    public async Task DisposableVhdxCanBeDetachedAndReattached()
+    {
+        var imagePath = WindowsAcceptanceEnvironment.VhdxPath;
+        Assert.True(File.Exists(imagePath), $"The disposable VHDX does not exist: {imagePath}");
+        var result = await WindowsAcceptanceEnvironment.RunPowerShellAsync(
+            "param($path) $image = Get-DiskImage -ImagePath $path -ErrorAction Stop; if (-not $image.Attached) { throw 'The disposable VHDX was not attached before the hot attach check.' }; Dismount-VHD -Path $path -ErrorAction Stop; Mount-VHD -Path $path -ErrorAction Stop; $image = Get-DiskImage -ImagePath $path -ErrorAction Stop; if (-not $image.Attached) { throw 'The disposable VHDX was not attached after the hot attach check.' }; [Console]::WriteLine($image.Attached)",
+            imagePath);
+        Assert.Equal("True", result, ignoreCase: true);
+    }
+
+    [Fact]
+    [Trait("Category", "WindowsPrivileged")]
+    [Trait("Capability", "SessionAgent")]
+    public async Task RealSessionAgentSendsOneClipboardCandidateThroughTheLiveAgentPipe()
+    {
+        Assert.True(Environment.UserInteractive, "An interactive user session is required for Session Agent acceptance.");
+        Assert.True(Process.GetCurrentProcess().SessionId > 0, "Session Agent acceptance cannot run in session 0.");
+        var executable = WindowsAcceptanceEnvironment.SessionAgentExecutable;
+        Assert.True(File.Exists(executable), $"The Session Agent executable does not exist: {executable}");
+        var scenario = WindowsAcceptanceEnvironment.CreateScenario("session-agent");
+        var clipboardPath = Path.Combine(scenario, "clipboard-candidate.entry");
+        using (File.Create(clipboardPath)) { }
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo(executable)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            }
+        };
+        process.StartInfo.ArgumentList.Add("--pipe-name");
+        process.StartInfo.ArgumentList.Add(WindowsAcceptanceEnvironment.AgentPipeName);
+        process.StartInfo.ArgumentList.Add("--once");
+        try
+        {
+            Assert.True(process.Start(), "The Session Agent process could not be started.");
+            await Task.Delay(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
+            await WindowsAcceptanceEnvironment.RunPowerShellAsync("param($path) Set-Clipboard -Path $path -ErrorAction Stop", clipboardPath);
+            await process.WaitForExitAsync(TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            Assert.Equal(0, process.ExitCode);
+        }
+        finally
+        {
+            if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); }
+            try { await WindowsAcceptanceEnvironment.RunPowerShellAsync("Set-Clipboard -Value '' -ErrorAction SilentlyContinue"); } catch (InvalidOperationException) { }
+            WindowsAcceptanceEnvironment.DeleteScenario(scenario);
+        }
     }
 
     [Fact]
@@ -322,6 +478,19 @@ public sealed class WindowsPrivilegedAcceptanceTests
         output.Append(process.StandardError.ReadToEnd());
         process.WaitForExit();
         return (process.ExitCode, output.ToString());
+    }
+
+    private static async Task WaitForServiceStateAsync(string serviceName, string expected)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        while (!timeout.IsCancellationRequested)
+        {
+            var query = RunSc("query", serviceName);
+            if (query.Output.Contains(expected, StringComparison.OrdinalIgnoreCase)) return;
+            await Task.Delay(TimeSpan.FromMilliseconds(250), timeout.Token);
+        }
+
+        throw new TimeoutException($"The disposable service did not reach state {expected}.");
     }
 
     private static bool IsSameOrUnder(string candidate, string root)

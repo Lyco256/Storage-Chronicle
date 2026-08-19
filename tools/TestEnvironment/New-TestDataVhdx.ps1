@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][ValidateSet('SC-Test-W11', 'SC-Test-W10')][string]$VmName,
-    [ValidateSet('Workload', 'Mft', 'NonNtfs')][string]$Role = 'Workload',
+    [ValidateSet('Workload', 'Mft', 'NonNtfs', 'AclDenied')][string]$Role = 'Workload',
     [string]$TestId = ([guid]::NewGuid().ToString('N')),
     [int]$SizeGiB,
     [string]$ConfigPath,

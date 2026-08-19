@@ -12,6 +12,9 @@ internal static class WindowsAcceptanceEnvironment
     private const string RemovableVariable = "STORAGE_CHRONICLE_ACCEPTANCE_REMOVABLE_ROOT";
     private const string ShareVariable = "STORAGE_CHRONICLE_ACCEPTANCE_SMB_SHARE";
     private const string ServiceVariable = "STORAGE_CHRONICLE_ACCEPTANCE_SERVICE";
+    private const string AgentExecutableVariable = "STORAGE_CHRONICLE_AGENT_EXE";
+    private const string SessionAgentExecutableVariable = "STORAGE_CHRONICLE_SESSION_AGENT_EXE";
+    private const string AgentPipeVariable = "STORAGE_CHRONICLE_AGENT_PIPE";
     private const string WaitForMediaVariable = "STORAGE_CHRONICLE_ACCEPTANCE_WAIT_FOR_MEDIA";
 
     public static string RootPath => Required(RootVariable);
@@ -40,6 +43,9 @@ internal static class WindowsAcceptanceEnvironment
     public static string RemovableRoot => Required(RemovableVariable);
     public static string ShareName => Required(ShareVariable);
     public static string ServiceName => Required(ServiceVariable);
+    public static string AgentExecutable => Required(AgentExecutableVariable);
+    public static string SessionAgentExecutable => Required(SessionAgentExecutableVariable);
+    public static string AgentPipeName => Environment.GetEnvironmentVariable(AgentPipeVariable) is { Length: > 0 } value ? value : "StorageChronicle.Agent";
 
     public static bool WaitForMediaChange => string.Equals(Environment.GetEnvironmentVariable(WaitForMediaVariable), "1", StringComparison.Ordinal);
 

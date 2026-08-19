@@ -12,17 +12,18 @@ public static class Program
     {
         using var shutdown = new CancellationTokenSource();
         Console.CancelKeyPress += (_, eventArgs) => { eventArgs.Cancel = true; shutdown.Cancel(); };
-        try { await RunClientLoopAsync(GetPipeName(args), shutdown.Token).ConfigureAwait(false); }
+        try { await RunClientLoopAsync(GetPipeName(args), HasFlag(args, "--once"), shutdown.Token).ConfigureAwait(false); }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }
     }
 
-    private static async Task RunClientLoopAsync(string pipeName, CancellationToken cancellationToken)
+    private static async Task RunClientLoopAsync(string pipeName, bool sendOneCandidate, CancellationToken cancellationToken)
     {
         await using var notifications = new WindowsClipboardNotificationSource();
         await using var clipboardSource = new ClipboardEventSource(notifications, new WindowsClipboardReader());
         await foreach (var source in clipboardSource.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
             await SendAsync(pipeName, ClipboardCandidateMessage.FromSourceEvent(source).ToAgentRequest(), cancellationToken).ConfigureAwait(false);
+            if (sendOneCandidate) return;
         }
     }
 
@@ -91,4 +92,6 @@ public static class Program
         var index = Array.FindIndex(args.ToArray(), value => string.Equals(value, "--pipe-name", StringComparison.OrdinalIgnoreCase));
         return index >= 0 && index + 1 < args.Count && !string.IsNullOrWhiteSpace(args[index + 1]) ? args[index + 1] : "StorageChronicle.Agent";
     }
+
+    private static bool HasFlag(IReadOnlyList<string> args, string flag) => args.Any(value => string.Equals(value, flag, StringComparison.OrdinalIgnoreCase));
 }

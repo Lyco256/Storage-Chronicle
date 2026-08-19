@@ -4,8 +4,9 @@ param(
     [string]$RunId = ([guid]::NewGuid().ToString('N')),
     [ValidateSet('Windows11', 'Windows10', 'Both')][string]$Target = 'Both',
     [Parameter(Mandatory = $true)][string]$GuestWorkloadExecutable,
+    [string]$GuestAgentExecutable,
     [string]$GuestDataRoot = 'D:\StorageChronicleTestData',
-    [ValidateSet('Workload', 'Mft', 'NonNtfs')][string]$DataRole = 'Workload',
+    [ValidateSet('Workload', 'Mft', 'NonNtfs', 'AclDenied')][string]$DataRole = 'Workload',
     [ValidateRange(1, 1000000)][int]$WorkloadCount = 10000,
     [string]$ExplorerEvidencePath,
     [pscredential]$Credential,
@@ -56,6 +57,7 @@ function Get-GuestDataDefinition {
     switch ($DataRole) {
         'Mft' { return [ordered]@{ Label = 'SC_TEST_MFT_VOLUME'; FileSystem = 'NTFS'; Scenario = 'mft' } }
         'NonNtfs' { return [ordered]@{ Label = 'SC_TEST_NONNTFS_VOLUME'; FileSystem = 'exFAT'; Scenario = 'full' } }
+        'AclDenied' { return [ordered]@{ Label = 'SC_TEST_VOLUME'; FileSystem = 'NTFS'; Scenario = 'acl-denied' } }
         default { return [ordered]@{ Label = 'SC_TEST_VOLUME'; FileSystem = 'NTFS'; Scenario = 'full' } }
     }
 }
@@ -127,6 +129,11 @@ try {
     }
     $workloadSource = [IO.Path]::GetFullPath($GuestWorkloadExecutable)
     if (-not (Test-Path -LiteralPath $workloadSource -PathType Leaf)) { throw "Guest workload executable does not exist: $GuestWorkloadExecutable" }
+    $agentSource = $null
+    if (-not [string]::IsNullOrWhiteSpace($GuestAgentExecutable)) {
+        $agentSource = [IO.Path]::GetFullPath($GuestAgentExecutable)
+        if (-not (Test-Path -LiteralPath $agentSource -PathType Leaf)) { throw "Guest Agent executable does not exist: $GuestAgentExecutable" }
+    }
 
     if (-not $Apply) {
         Add-Stage 'preflight' 'READY_FOR_USER_APPLY' 'Configuration, local ISO paths, and workload artifact are valid; no VM or guest operation was run.'
@@ -141,6 +148,9 @@ try {
     Assert-HyperVMutationPrerequisites
     Add-Stage 'preflight' 'PASSED' 'Hyper-V and VMMS were available on the elevated host.'
     $guestWorkloadDestination = 'C:\StorageChronicleTest\StorageChronicle.FileMutationWorkload.exe'
+    $guestAgentDestination = 'C:\StorageChronicleTest\StorageChronicle.Agent.exe'
+    $validatorProject = Join-Path $repositoryRoot 'tools/StorageChronicle.RealIoOracleValidator/StorageChronicle.RealIoOracleValidator.csproj'
+    if ($null -ne $agentSource -and -not (Test-Path -LiteralPath $validatorProject -PathType Leaf)) { throw "Real-I/O oracle validator project is missing: $validatorProject" }
     $definitionData = Get-GuestDataDefinition
     $manifest.Scenario = $definitionData.Scenario
 
@@ -155,6 +165,36 @@ try {
         $oracleGuestPath = Join-Path $GuestDataRoot "$RunId-oracle.json"
         $oracleHostPath = Join-Path $guestArtifactDirectory 'workload-oracle.json'
         $guestCommand = "& $(Quote-GuestLiteral $guestWorkloadDestination) --root $(Quote-GuestLiteral $GuestDataRoot) --oracle $(Quote-GuestLiteral $oracleGuestPath) --scenario $(Quote-GuestLiteral $definitionData.Scenario) --count $WorkloadCount --run-id $(Quote-GuestLiteral $RunId)"
+        $historyGuestRoot = "C:\StorageChronicleAcceptance\$safeRunId\history"
+        $historyGuestZip = "C:\StorageChronicleAcceptance\$safeRunId\agent-history.zip"
+        $historyHostZip = Join-Path $guestArtifactDirectory 'agent-history.zip'
+        $historyHostRoot = Join-Path $guestArtifactDirectory 'agent-history'
+        $realIoEvidencePath = Join-Path $guestArtifactDirectory 'real-io-evidence.json'
+        $agentGuestCommand = @"
+`$ErrorActionPreference = 'Stop'
+`$agent = $null
+`$historyRoot = $(Quote-GuestLiteral $historyGuestRoot)
+`$historyZip = $(Quote-GuestLiteral $historyGuestZip)
+`$settingsPath = Join-Path `$env:ProgramData 'Storage Chronicle\config\machine-settings.json'
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent `$settingsPath), `$historyRoot | Out-Null
+`$settings = [ordered]@{ schemaVersion = 1; settings = [ordered]@{ monitoringPaths = @($(Quote-GuestLiteral $GuestDataRoot)); excludedPaths = @(); noiseFilter = 0; logStoragePath = `$historyRoot; mediaMirrors = @{}; flushIntervalSeconds = 1 } }
+`$settings | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath `$settingsPath -Encoding UTF8
+`$agent = Start-Process -FilePath $(Quote-GuestLiteral $guestAgentDestination) -ArgumentList '--diagnostic' -PassThru -RedirectStandardOutput (Join-Path `$historyRoot 'agent.stdout.log') -RedirectStandardError (Join-Path `$historyRoot 'agent.stderr.log')
+try {
+    Start-Sleep -Seconds 5
+    if (`$agent.HasExited) { throw "The Agent exited before the workload started with code `$(`$agent.ExitCode)." }
+    $( $guestCommand )
+    Start-Sleep -Seconds 10
+    if (`$agent.HasExited) { throw "The Agent exited during the workload with code `$(`$agent.ExitCode)." }
+}
+finally {
+    if (`$null -ne `$agent -and -not `$agent.HasExited) { Stop-Process -Id `$agent.Id -Force -ErrorAction SilentlyContinue; `$agent.WaitForExit(10000) | Out-Null }
+}
+if (-not (Test-Path -LiteralPath $(Quote-GuestLiteral $oracleGuestPath) -PathType Leaf)) { throw 'The workload oracle was not produced.' }
+if (-not (Test-Path -LiteralPath `$historyRoot -PathType Container)) { throw 'The Agent history directory was not produced.' }
+if (Test-Path -LiteralPath `$historyZip) { Remove-Item -LiteralPath `$historyZip -Force }
+Compress-Archive -Path (Join-Path `$historyRoot '*') -DestinationPath `$historyZip -CompressionLevel Optimal
+"@
         $markerVerified = $false
         try {
             & (Join-Path $PSScriptRoot 'Reset-TestVm.ps1') -Name $definition.Name -CheckpointName 'SC-CLEAN-BASELINE' -ConfigPath $ConfigPath -Apply | Out-File -LiteralPath (Join-Path $guestArtifactDirectory 'reset.log') -Encoding UTF8
@@ -168,12 +208,32 @@ try {
             Invoke-GuestCommand -VmName $definition.Name -Command "New-Item -ItemType Directory -Force -Path $(Quote-GuestLiteral ([IO.Path]::GetDirectoryName($guestWorkloadDestination))) | Out-Null" | Out-Null
             & (Join-Path $PSScriptRoot 'Copy-TestArtifactsToVm.ps1') -VmName $definition.Name -SourcePath $workloadSource -DestinationPath $guestWorkloadDestination -Credential $Credential -ConfigPath $ConfigPath | Out-File -LiteralPath (Join-Path $guestArtifactDirectory 'copy-workload.log') -Encoding UTF8
             if ($LASTEXITCODE -ne 0) { throw "Workload transfer failed for $($definition.Name)." }
+            if ($null -ne $agentSource) {
+                Invoke-GuestCommand -VmName $definition.Name -Command "New-Item -ItemType Directory -Force -Path $(Quote-GuestLiteral ([IO.Path]::GetDirectoryName($guestAgentDestination))) | Out-Null" | Out-Null
+                & (Join-Path $PSScriptRoot 'Copy-TestArtifactsToVm.ps1') -VmName $definition.Name -SourcePath $agentSource -DestinationPath $guestAgentDestination -Credential $Credential -ConfigPath $ConfigPath | Out-File -LiteralPath (Join-Path $guestArtifactDirectory 'copy-agent.log') -Encoding UTF8
+                if ($LASTEXITCODE -ne 0) { throw "Agent transfer failed for $($definition.Name)." }
+            }
             Initialize-GuestDataVolume -VmName $definition.Name -Root $GuestDataRoot
-            Invoke-GuestCommand -VmName $definition.Name -Command $guestCommand | Out-File -LiteralPath (Join-Path $guestArtifactDirectory 'workload.log') -Encoding UTF8
+            $executionCommand = if ($null -ne $agentSource) { $agentGuestCommand } else { $guestCommand }
+            if ($null -ne $agentSource) { Invoke-GuestCommand -VmName $definition.Name -Command $executionCommand | Out-File -LiteralPath (Join-Path $guestArtifactDirectory 'agent-and-workload.log') -Encoding UTF8 }
+            else { Invoke-GuestCommand -VmName $definition.Name -Command $executionCommand | Out-File -LiteralPath (Join-Path $guestArtifactDirectory 'workload.log') -Encoding UTF8 }
             Assert-GuestDataMarker -VmName $definition.Name -Root $GuestDataRoot
             $markerVerified = $true
             & (Join-Path $PSScriptRoot 'Copy-TestResultsFromVm.ps1') -VmName $definition.Name -SourcePath $oracleGuestPath -DestinationPath $oracleHostPath -Credential $Credential -ConfigPath $ConfigPath | Out-File -LiteralPath (Join-Path $guestArtifactDirectory 'copy-oracle.log') -Encoding UTF8
             if ($LASTEXITCODE -ne 0) { throw "Oracle retrieval failed for $($definition.Name)." }
+            if ($null -ne $agentSource) {
+                & (Join-Path $PSScriptRoot 'Copy-TestResultsFromVm.ps1') -VmName $definition.Name -SourcePath $historyGuestZip -DestinationPath $historyHostZip -Credential $Credential -ConfigPath $ConfigPath | Out-File -LiteralPath (Join-Path $guestArtifactDirectory 'copy-agent-history.log') -Encoding UTF8
+                if ($LASTEXITCODE -ne 0) { throw "Agent history retrieval failed for $($definition.Name)." }
+                if (Test-Path -LiteralPath $historyHostRoot) { Remove-Item -LiteralPath $historyHostRoot -Recurse -Force }
+                Expand-Archive -LiteralPath $historyHostZip -DestinationPath $historyHostRoot -Force
+                & dotnet run --project $validatorProject --no-restore -- --oracle $oracleHostPath --history $historyHostRoot --output $realIoEvidencePath 2>&1 | Tee-Object -FilePath (Join-Path $guestArtifactDirectory 'real-io-validator.log')
+                if ($LASTEXITCODE -ne 0) { throw "Real-I/O oracle comparison failed for $($definition.Name) with exit code ${LASTEXITCODE}." }
+                $realIo = Get-Content -Raw -Encoding UTF8 -LiteralPath $realIoEvidencePath | ConvertFrom-Json
+                if (-not [bool]$realIo.AcceptanceEligible -or [string]$realIo.Status -ne 'PASSED') { throw "Real-I/O evidence was not eligible for $($definition.Name)." }
+                Add-Stage "AgentIntegration-$($definition.Name)" 'PASSED' 'The guest Agent ran against the marked data volume; its durable history was retrieved and compared with the real workload oracle.' $realIoEvidencePath
+            } else {
+                Add-Stage "AgentIntegration-$($definition.Name)" 'NOT_EXECUTED' 'GuestAgentExecutable was not supplied; workload-only execution cannot satisfy product real-I/O acceptance.'
+            }
             Add-Stage $definition.Name 'PASSED' 'Real guest volume formatting, dual marker creation, workload execution, and oracle retrieval completed.' $oracleHostPath
         }
         catch {
@@ -200,7 +260,14 @@ try {
     if ($ExplorerEvidencePath -and (Test-Path -LiteralPath $ExplorerEvidencePath -PathType Leaf)) { Add-Stage 'explorer-correlation' 'REQUIRES_REVIEW' 'An evidence file was supplied; correlation must be checked for false Exact=0 and Unknown/Create correctness.' ([IO.Path]::GetFullPath($ExplorerEvidencePath)) }
     else { Add-Stage 'explorer-correlation' 'NOT_EXECUTED' 'No independent human-assisted Explorer evidence was supplied.' }
     if ($cleanupFailures.Count -gt 0) { throw ('Cleanup failed: ' + ($cleanupFailures -join '; ')) }
-    $manifest.Status = if (@($manifest.Stages | Where-Object Status -in @('NOT_EXECUTED', 'FAILED', 'REQUIRES_REVIEW')).Count -eq 0) { 'COMPLETED_NEEDS_PRODUCT_ASSERTION' } else { 'PARTIAL' }
+    $incompleteStages = @($manifest.Stages | Where-Object { $_.Name -ne 'explorer-correlation' -and $_.Status -in @('NOT_EXECUTED', 'FAILED', 'REQUIRES_REVIEW') })
+    $agentStages = @($manifest.Stages | Where-Object Name -like 'AgentIntegration-*')
+    $realIoPassed = $null -ne $agentSource -and $agentStages.Count -eq $guests.Count -and @($agentStages | Where-Object Status -ne 'PASSED').Count -eq 0
+    $manifest.AgentExecutable = $agentSource
+    $manifest.AgentIntegrationExecuted = $null -ne $agentSource
+    $manifest.RealIoAcceptance = $realIoPassed
+    $manifest.AcceptanceEligible = $realIoPassed -and $incompleteStages.Count -eq 0 -and $cleanupFailures.Count -eq 0
+    $manifest.Status = if ($manifest.AcceptanceEligible) { 'COMPLETED_REAL_IO_ACCEPTANCE' } else { 'PARTIAL' }
     $manifest.CompletedUtc = [DateTimeOffset]::UtcNow
     $manifest.CleanupFailures = @($cleanupFailures)
     Write-TestLabJson -Path $manifestPath -Value $manifest

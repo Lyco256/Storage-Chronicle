@@ -38,6 +38,9 @@ function Assert-MftEvidence {
     if ([string]$evidence.Schema -ne 'StorageChronicle.MftBenchmarkEvidence.v1') {
         throw "The MFT evidence schema is not supported: $Path"
     }
+    if ([string]$evidence.Status -ne 'PASSED') {
+        throw "The MFT evidence status is not PASSED: $($evidence.Status)"
+    }
     if (-not [bool]$evidence.AcceptanceEligible) {
         throw "The MFT evidence is present but not acceptance-eligible: $Path"
     }
@@ -129,8 +132,15 @@ if ($IncludeMft) {
     if ([string]::IsNullOrWhiteSpace($mftMarker) -or -not (Test-Path -LiteralPath $mftMarker -PathType Leaf)) {
         Write-NotExecuted 'The full matrix requires an existing STORAGE_CHRONICLE_MFT_MARKER_PATH from the dedicated TestLab data volume.'
     }
+    $markerValue = Get-Content -Raw -Encoding UTF8 -LiteralPath $mftMarker | ConvertFrom-Json
+    if ([string]$markerValue.Schema -ne 'StorageChronicle.TestLabDataMarker.v1' -or [string]$markerValue.Role -ne 'Mft' -or [string]$markerValue.VolumeLabel -ne 'SC_TEST_MFT_VOLUME' -or [string]$markerValue.FileSystem -ine 'NTFS') {
+        Write-NotExecuted 'The MFT marker must prove the Mft role, SC_TEST_MFT_VOLUME label, and NTFS filesystem.'
+    }
     if ($mftVolume -match '(?i)(^|[\\:])C:') {
         Write-NotExecuted 'The full matrix refuses C: and host/system MFT device paths.'
+    }
+    foreach ($name in @('STORAGE_CHRONICLE_MFT_VM_CPU_COUNT', 'STORAGE_CHRONICLE_MFT_VM_MEMORY_MIB', 'STORAGE_CHRONICLE_MFT_VHDX_TYPE', 'STORAGE_CHRONICLE_MFT_VHDX_SIZE_GIB')) {
+        if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { Write-NotExecuted "The full matrix requires $name from the measured TestLab environment." }
     }
 
     $oldMftEvidencePath = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_EVIDENCE_PATH', 'Process')

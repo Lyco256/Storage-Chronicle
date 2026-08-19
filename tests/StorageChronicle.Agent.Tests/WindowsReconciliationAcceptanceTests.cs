@@ -1,3 +1,4 @@
+using System.Text.Json;
 using StorageChronicle.Agent;
 using StorageChronicle.Contracts.Runtime;
 using StorageChronicle.Domain.Contracts;
@@ -14,6 +15,8 @@ namespace StorageChronicle.Agent.Tests;
 
 public sealed class WindowsReconciliationAcceptanceTests
 {
+    private static readonly JsonSerializerOptions EvidenceJsonOptions = new() { WriteIndented = true };
+
     [Fact(Skip = "Requires an elevated non-system NTFS acceptance root.", SkipUnless = nameof(IsAcceptanceEnvironmentReady))]
     [Trait("Category", "WindowsPrivileged")]
     [Trait("Capability", "Reconciliation")]
@@ -21,6 +24,7 @@ public sealed class WindowsReconciliationAcceptanceTests
     {
         Assert.True(OperatingSystem.IsWindows(), "The Windows reconciliation acceptance test requires Windows.");
         var root = Required("STORAGE_CHRONICLE_ACCEPTANCE_ROOT");
+        var evidencePath = Environment.GetEnvironmentVariable("STORAGE_CHRONICLE_RECONCILIATION_EVIDENCE_PATH");
         var volumeEnumerator = new WindowsVolumeEnumerator();
         var volumes = await volumeEnumerator.EnumerateAsync(TestContext.Current.CancellationToken);
         var volume = Assert.Single(volumes, value => value.MountPoints.Any(mount => IsSameOrUnder(root, mount)));
@@ -37,6 +41,8 @@ public sealed class WindowsReconciliationAcceptanceTests
         var normalizer = new EventNormalizer();
         var seedPath = Path.Combine(scenario, "seed-entry.dat");
         var changedPath = Path.Combine(scenario, "changed-entry.dat");
+        var sourceEventCount = 0;
+        ReconciliationExecutionSummary? summary = null;
 
         try
         {
@@ -50,12 +56,13 @@ public sealed class WindowsReconciliationAcceptanceTests
                     await storage.AppendSourceAsync(source, TestContext.Current.CancellationToken);
                     await storage.AppendCanonicalAsync(canonical, TestContext.Current.CancellationToken);
                     await storage.ApplyAsync(canonical, TestContext.Current.CancellationToken);
+                    sourceEventCount++;
                 }
 
                 await storage.FlushAsync(TestContext.Current.CancellationToken);
                 using (File.Create(changedPath)) { }
                 var runner = new ConfirmedReconciliationRunner(volumeEnumerator, new WindowsNtfsApi(), snapshot, new WindowsFileMetadataReader(), storage, normalizer, new AgentHealthState());
-                var summary = await runner.ExecuteAsync(new PendingReconciliationRequest("acceptance-reconciliation", volume.Id, "real acceptance gap", storage.Status.LastSourceSequence, DateTimeOffset.UtcNow.AddSeconds(-1)), TestContext.Current.CancellationToken);
+                summary = await runner.ExecuteAsync(new PendingReconciliationRequest("acceptance-reconciliation", volume.Id, "real acceptance gap", storage.Status.LastSourceSequence, DateTimeOffset.UtcNow.AddSeconds(-1)), TestContext.Current.CancellationToken);
 
                 Assert.True(summary.Completed, summary.FailureReason ?? summary.Status);
                 Assert.True(summary.DurableEventCount > 0, "The production reconciliation runner appended no real differences.");
@@ -64,7 +71,50 @@ public sealed class WindowsReconciliationAcceptanceTests
                     string.Equals(value.Name, Path.GetFileName(changedPath), StringComparison.OrdinalIgnoreCase) &&
                     (value.Origin is EventOrigin.MftReconciliation or EventOrigin.DirectoryReconciliation) &&
                     value.ProcessQuality == ProcessAttributionQuality.Unknown);
+                var finalState = await storage.GetSnapshotAsync(DateTimeOffset.UtcNow, TestContext.Current.CancellationToken);
+                WriteEvidence(evidencePath, new
+                {
+                    Schema = "StorageChronicle.ConfirmedReconciliationAcceptance.v1",
+                    AcceptanceEligible = true,
+                    Status = "PASSED",
+                    RunId = summary.RunId,
+                    VolumeId = summary.VolumeId.Value,
+                    FileSystem = summary.FileSystem,
+                    SourceEventCount = sourceEventCount,
+                    CanonicalEventCount = canonicalEvents.Count,
+                    FinalStateCount = finalState.Entries.Count,
+                    DurableEventCount = summary.DurableEventCount,
+                    CandidateCount = summary.CandidateCount,
+                    DetailedMetadataQueryCount = summary.DetailedMetadataQueryCount,
+                    PrivilegeEnableSuccessCount = summary.PrivilegeEnableSuccessCount,
+                    PrivilegeFallbackCount = summary.PrivilegeFallbackCount,
+                    StartedUtc = summary.StartedUtc,
+                    FinishedUtc = summary.FinishedUtc,
+                    FailureReason = summary.FailureReason
+                });
             }
+        }
+        catch (Exception exception)
+        {
+            WriteEvidence(evidencePath, new
+            {
+                Schema = "StorageChronicle.ConfirmedReconciliationAcceptance.v1",
+                AcceptanceEligible = false,
+                Status = "FAILED",
+                RunId = summary?.RunId,
+                VolumeId = volume.Id.Value,
+                FileSystem = volume.FileSystem,
+                SourceEventCount = sourceEventCount,
+                CanonicalEventCount = 0,
+                FinalStateCount = 0,
+                DurableEventCount = summary?.DurableEventCount ?? 0,
+                CandidateCount = summary?.CandidateCount ?? 0,
+                DetailedMetadataQueryCount = summary?.DetailedMetadataQueryCount ?? 0,
+                PrivilegeEnableSuccessCount = summary?.PrivilegeEnableSuccessCount ?? 0,
+                PrivilegeFallbackCount = summary?.PrivilegeFallbackCount ?? 0,
+                FailureReason = exception.ToString()
+            });
+            throw;
         }
         finally
         {
@@ -80,6 +130,15 @@ public sealed class WindowsReconciliationAcceptanceTests
         var value = Environment.GetEnvironmentVariable(name);
         if (string.IsNullOrWhiteSpace(value)) throw new InvalidOperationException($"{name} is required for a privileged acceptance run.");
         return Path.GetFullPath(value);
+    }
+
+    private static void WriteEvidence(string? path, object value)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        var fullPath = Path.GetFullPath(path);
+        var parent = Path.GetDirectoryName(fullPath) ?? throw new InvalidOperationException("The reconciliation evidence path has no parent directory.");
+        Directory.CreateDirectory(parent);
+        File.WriteAllText(fullPath, JsonSerializer.Serialize(value, EvidenceJsonOptions));
     }
 
     private static string CreateScenario(string root, string name)

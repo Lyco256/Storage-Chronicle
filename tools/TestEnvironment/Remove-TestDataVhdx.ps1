@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true)][ValidateSet('SC-Test-W11', 'SC-Test-W10')][string]$VmName,
     [Parameter(Mandatory = $true)][string]$VhdxPath,
     [Parameter(Mandatory = $true)][string]$TestId,
-    [Parameter(Mandatory = $true)][ValidateSet('Workload', 'Mft', 'NonNtfs')][string]$Role,
+    [Parameter(Mandatory = $true)][ValidateSet('Workload', 'Mft', 'NonNtfs', 'AclDenied')][string]$Role,
     [string]$ConfigPath,
     [switch]$Apply
 )

@@ -27,6 +27,16 @@ function Assert-GroupEvidence {
         'TestLabAndRealIo' {
             if ($schema -ne 'StorageChronicle.WindowsTestLabExecution.v2') { throw 'TestLab evidence has an unexpected schema.' }
             if (@($Value.Stages).Count -eq 0) { throw 'TestLab evidence has no execution stages.' }
+            if (-not [bool]$Value.AgentIntegrationExecuted -or -not [bool]$Value.RealIoAcceptance) { throw 'TestLab evidence does not prove the real Agent and Oracle comparison path.' }
+            $agentStages = @($Value.Stages | Where-Object { [string]$_.Name -like 'AgentIntegration-*' })
+            if ($agentStages.Count -eq 0) { throw 'TestLab evidence has no Agent integration stages.' }
+            foreach ($stage in $agentStages) {
+                if ([string]$stage.Status -ne 'PASSED') { throw "Agent integration stage is not PASSED: $($stage.Name)" }
+                $evidencePath = [string]$stage.Evidence
+                if ([string]::IsNullOrWhiteSpace($evidencePath) -or -not (Test-Path -LiteralPath $evidencePath -PathType Leaf)) { throw "Agent integration evidence is missing: $($stage.Name)" }
+                $realIo = Get-Content -Raw -Encoding UTF8 -LiteralPath $evidencePath | ConvertFrom-Json
+                if ([string]$realIo.Schema -ne 'StorageChronicle.WindowsTestLabRealIoEvidence.v1' -or [string]$realIo.Status -ne 'PASSED' -or -not [bool]$realIo.AcceptanceEligible) { throw "Real-I/O evidence is not eligible: $evidencePath" }
+            }
         }
         'ConfirmedReconciliation' {
             if ($schema -ne 'StorageChronicle.ConfirmedReconciliationAcceptance.v1') { throw 'Confirmed reconciliation evidence has an unexpected schema.' }
@@ -68,9 +78,15 @@ function Assert-GroupEvidence {
         }
         'BranchIntegration' {
             if ($schema -ne 'StorageChronicle.BranchIntegrationEvidence.v1') { throw 'Branch integration evidence has an unexpected schema.' }
-            foreach ($field in @('RemoteDevenv', 'RemoteMain', 'WorktreeClean', 'MainSha')) {
+            foreach ($field in @('CurrentBranch', 'HeadSha', 'ExpectedAcceptedSha', 'ExpectedAcceptedShaMatch', 'RemoteDevenv', 'RemoteMain', 'WorktreeClean', 'DevenvSha', 'MainSha', 'MainContainsDevenv')) {
                 if ($null -eq $Value.PSObject.Properties[$field]) { throw "Branch integration evidence is missing $field." }
             }
+            if ([string]$Value.CurrentBranch -ne 'main') { throw 'Branch integration evidence was not captured on main.' }
+            if (-not [bool]$Value.RemoteDevenv -or -not [bool]$Value.RemoteMain) { throw 'Both remote devenv and main branches are required.' }
+            if (-not [bool]$Value.WorktreeClean) { throw 'The final integration worktree is not clean.' }
+            if (-not [bool]$Value.ExpectedAcceptedShaMatch) { throw 'HEAD does not match the accepted integration SHA.' }
+            if (-not [bool]$Value.MainContainsDevenv) { throw 'main does not contain devenv.' }
+            if ([string]$Value.HeadSha -ne [string]$Value.MainSha) { throw 'The recorded HEAD and origin/main SHA differ.' }
         }
         default { throw "Unknown final acceptance group: $Name" }
     }

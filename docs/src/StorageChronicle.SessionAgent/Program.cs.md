@@ -2,7 +2,7 @@
 
 ## Role
 
-Starts the logged-on Session Agent, creates the hidden event-driven clipboard listener, and forwards only bounded clipboard metadata to the Agent's versioned named pipe. Each connection identifies itself as the Session Agent role before sending its ClipboardCandidate request; the Agent verifies the session and published executable role.
+Starts the logged-on Session Agent, creates the hidden event-driven clipboard listener, and forwards only bounded clipboard metadata to the Agent's versioned named pipe. Each connection identifies itself as the Session Agent role before sending its ClipboardCandidate request; the Agent verifies the session and published executable role. The explicit `--once` acceptance mode exits after one real clipboard notification has been forwarded, which lets the privileged matrix prove a live IPC round trip without fabricating a candidate.
 
 ## Boundary and failure behavior
 

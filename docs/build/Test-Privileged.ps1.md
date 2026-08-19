@@ -2,17 +2,17 @@
 
 ## Role
 
-Provides the fail-closed Windows acceptance harness for VHDX/USN/MFT, real Agent reconciliation, directory notifications, ETW, SMB, service, interactive-session, and removable-media capabilities. The v2 manifest also carries the complete required-capability list and writes a per-run evidence directory under `artifacts/acceptance/windows-privileged/<run-id>/`.
+Provides the fail-closed Windows acceptance harness for VHDX/USN/MFT, real Agent reconciliation, directory notifications, ETW, SMB, service, Session Agent, interactive-session, and removable-media capabilities. The v2 manifest also carries the complete required-capability list and writes a per-run evidence directory under `artifacts/acceptance/windows-privileged/<run-id>/`.
 
 Volume discovery first uses `Get-Volume -Path` and falls back to the existing drive root when provider-backed paths such as OneDrive do not support path lookup. The fallback is read-only and does not broaden the validated acceptance directory.
 
 ## Public types and responsibilities
 
-The script validates safe disposable targets, prepares only explicitly requested VHDX resources, refuses journal creation or resizing, emits a capability manifest, builds the platform integration and Agent test projects, dispatches the `Reconciliation` capability to the production Agent acceptance test, and dispatches the remaining wired capabilities to the platform integration test project. It returns a non-zero status when required capabilities were not executed. Product oracle summaries remain explicitly `NOT_EXECUTED` until a real Agent/TestLab workload populates them.
+The script validates safe disposable targets and both TestLab marker files before any capability runs, prepares only explicitly requested VHDX resources, refuses journal creation or resizing, emits a capability manifest, builds the platform integration and Agent test projects, dispatches `Reconciliation`, `AclDeniedMetadata`, and `NonNtfs` to production Agent acceptance tests, and dispatches the remaining wired capabilities to the platform integration test project. `-NonNtfsRoot` supplies a separately marked non-NTFS disposable volume; the capability loop switches the test root only for that test. `-TestId` can require an exact current TestLab marker run ID. It returns a non-zero status when required capabilities were not executed. Product oracle summaries remain explicitly `NOT_EXECUTED` until a real Agent/TestLab workload populates them.
 
 ## Inputs and outputs
 
-Inputs are explicit acceptance paths, an approved `TestLabRoot` (or process `SC_TESTLAB_ROOT`), capability environment variables, and switches. Outputs include the manifest, log, environment, capability, oracle, source-event, canonical, final-state, reconciliation, service, errors, and result JSON artifacts under `artifacts/acceptance/windows-privileged/<run-id>/`.
+Inputs are explicit acceptance paths, an optional `NonNtfsRoot`, an approved `TestLabRoot` (or process `SC_TESTLAB_ROOT`), an explicit Session Agent executable/live Agent pipe for IPC acceptance, capability environment variables, and switches. Outputs include the manifest, log, environment, capability, oracle, source-event, canonical, final-state, reconciliation, confirmed-reconciliation, service, errors, and result JSON artifacts under `artifacts/acceptance/windows-privileged/<run-id>/`. The production Agent reconciliation test writes `confirmed-reconciliation.json` itself through `STORAGE_CHRONICLE_RECONCILIATION_EVIDENCE_PATH`; when it does not run, the harness writes an explicit `NOT_EXECUTED` artifact and never upgrades it.
 
 ## Dependencies
 
