@@ -1,6 +1,6 @@
 # Test-FullBenchmarkMatrix.ps1
 
-Precondition failures write a `not-executed` manifest under the requested artifact root before returning nonzero, so missing MFT capability is visible evidence rather than an unrecorded skip.
+Precondition failures write a `not-executed` manifest under the requested artifact root before returning exit code `2`, so missing MFT capability is visible evidence rather than an unrecorded skip.
 
 Runs every required BenchmarkDotNet suite as separate, auditable lanes and validates that each expected benchmark method has a successful full-compressed JSON result with statistics. The portable lanes cover one-million-node path reconstruction, large-folder moves, grouped/Event Stack/Period Diff, append and Zstandard work, SQLite rebuild/query, and external-media manifest/segment work. `-IncludeMft` adds the real one-million-entry MFT lane and is mandatory for an acceptance-eligible run; it also requires `StorageChronicle.MftBenchmarkEvidence.v1` from the connected TestLab/product runner, including dataset/enumeration/candidate/detail-query/canonical/drop counters and environment/VHDX facts. `-PortableOnly` is explicitly diagnostic and writes `AcceptanceEligible=false`.
 

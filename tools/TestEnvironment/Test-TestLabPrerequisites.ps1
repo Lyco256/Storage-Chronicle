@@ -65,9 +65,10 @@ $processor = Get-CimInstance Win32_Processor | Select-Object -First 1
 $memoryGiB = [math]::Round($computer.TotalPhysicalMemory / 1GB, 2)
 $hyperVModule = [bool](Get-Module -ListAvailable -Name Hyper-V)
 $vmms = Get-Service vmms -ErrorAction SilentlyContinue
+$is64BitHost = [Environment]::Is64BitOperatingSystem
 
 $checks.Add((New-Check 'Windows edition' $(if ($os.Caption -match 'Professional|Enterprise|Education') { 'PASS' } else { 'FAIL' }) $os.Caption 'Windows 10/11 Professional or Enterprise is required for Hyper-V TestLab.'))
-$checks.Add((New-Check 'x64 host' $(if ($os.OSArchitecture -eq '64-bit') { 'PASS' } else { 'FAIL' }) $os.OSArchitecture 'Use an x64 Windows host.'))
+$checks.Add((New-Check 'x64 host' $(if ($is64BitHost) { 'PASS' } else { 'FAIL' }) ("Is64BitOperatingSystem={0}; WMI={1}" -f $is64BitHost, $os.OSArchitecture) 'Use an x64 Windows host.'))
 $checks.Add((New-Check 'Virtualization firmware' $(if ($processor.VirtualizationFirmwareEnabled) { 'PASS' } else { 'FAIL' }) ([string]$processor.VirtualizationFirmwareEnabled) 'Enable hardware virtualization in BIOS/UEFI manually; Codex must not change firmware settings.'))
 $checks.Add((New-Check 'SLAT' $(if ($processor.SecondLevelAddressTranslationExtensions) { 'PASS' } else { 'FAIL' }) ([string]$processor.SecondLevelAddressTranslationExtensions) 'Use a host with SLAT support.'))
 $checks.Add((New-Check 'Physical memory' $(if ($memoryGiB -ge $MinimumMemoryGiB) { 'PASS' } else { 'FAIL' }) ("{0} GiB available" -f $memoryGiB) ("At least {0} GiB is required for the configured TestLab." -f $MinimumMemoryGiB)))

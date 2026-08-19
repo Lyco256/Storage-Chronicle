@@ -6,7 +6,7 @@ Runs the R-20 physical installer acceptance matrix for one explicitly declared W
 
 ## Public types and responsibilities
 
-The PowerShell script has no shared product contract or substitute domain type. Its public command-line parameters select the MSI artifacts, target (`Windows10-22H2` or `Windows11`), target kind (`PhysicalMachine` or `HyperVVm`), execution mode (`Local` or `VM`), isolated-environment driver, guest paths, and non-secret credential references. The fixed manifest contains these eleven cases:
+The PowerShell script has no shared product contract or substitute domain type. Its public command-line parameters select the MSI artifacts, target (`Windows10-22H2` or `Windows11`), target kind (`PhysicalMachine` or `HyperVVm`), execution mode (`Local` or `VM`), isolated-environment driver, guest paths, and non-secret credential references. Target kind is validated after environment-variable fallback so an omitted input produces a real `NOT_EXECUTED` manifest rather than a parameter-binding error. The fixed manifest contains these eleven cases:
 
 1. clean install
 2. repair

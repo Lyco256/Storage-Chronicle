@@ -100,8 +100,8 @@ function Write-NotExecuted([string]$Reason) {
     }
     $manifestPath = Join-Path $runRoot 'full-matrix-manifest.json'
     $manifest | ConvertTo-Json -Depth 12 | Set-Content -Encoding UTF8 -LiteralPath $manifestPath
-    Write-Error "Full benchmark matrix was not executed: $Reason. Evidence: $manifestPath"
-    exit 1
+    Write-Host "Full benchmark matrix was not executed: $Reason. Evidence: $manifestPath" -ForegroundColor Yellow
+    exit 2
 }
 
 if (-not (Test-Path -LiteralPath $project -PathType Leaf)) {

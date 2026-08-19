@@ -4,7 +4,7 @@ param(
     [string]$UpdatedMsiPath,
     [string]$RollbackMsiPath,
     [string]$TargetOs,
-    [ValidateSet('PhysicalMachine', 'HyperVVm')][string]$TargetKind,
+    [string]$TargetKind,
     [string]$ExecutionMode,
     [string]$DriverScript,
     [string]$VmName,
@@ -598,7 +598,7 @@ try {
     New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
     New-Item -ItemType Directory -Force -Path $caseDirectory | Out-Null
 
-    $isWindows = Test-IsWindows
+    $hostIsWindows = Test-IsWindows
     $isAdministrator = Test-IsAdministrator
     $currentTarget = Get-CurrentWindowsTarget
     $validTarget = $TargetOs -in @('Windows10-22H2', 'Windows11')
@@ -607,7 +607,7 @@ try {
     $driverReady = Test-DriverLauncher $DriverScript
     $hyperVReady = $false
     $vmReady = $false
-    if ($validMode -and $ExecutionMode -eq 'VM' -and $isWindows) {
+    if ($validMode -and $ExecutionMode -eq 'VM' -and $hostIsWindows) {
         $getVm = Get-Command Get-VM -ErrorAction SilentlyContinue
         $hyperVReady = $null -ne $getVm
         if ($hyperVReady -and -not [string]::IsNullOrWhiteSpace($VmName)) {
@@ -620,7 +620,7 @@ try {
         }
     }
 
-    Add-Precondition 'WindowsHost' $isWindows 'The installer acceptance harness requires a Windows host because MSI, service, session, and ACL checks are Windows-only.'
+    Add-Precondition 'WindowsHost' $hostIsWindows 'The installer acceptance harness requires a Windows host because MSI, service, session, and ACL checks are Windows-only.'
     Add-Precondition 'ExecutionArmed' ([bool]$Execute) 'The run is armed only when -Execute is supplied; planning or omitted execution never passes.'
     Add-Precondition 'TargetOs' ($validTarget) 'TargetOs must be Windows10-22H2 or Windows11 and must be supplied explicitly.'
     Add-Precondition 'TargetKind' $validTargetKind 'TargetKind must be PhysicalMachine or HyperVVm and must be supplied explicitly.'
@@ -644,7 +644,7 @@ try {
 
     if ($validMode -and $ExecutionMode -eq 'Local') {
         Add-Precondition 'Isolation' ([bool]$AllowLocalIsolatedExecution) 'Local execution requires explicit -AllowLocalIsolatedExecution and must be performed only on a disposable machine.'
-        Add-Precondition 'LocalTargetOs' ($isWindows -and $currentTarget -eq $TargetOs) "The live host target '$currentTarget' does not match the requested '$TargetOs'."
+        Add-Precondition 'LocalTargetOs' ($hostIsWindows -and $currentTarget -eq $TargetOs) "The live host target '$currentTarget' does not match the requested '$TargetOs'."
     } elseif ($validMode -and $ExecutionMode -eq 'VM') {
         Add-Precondition 'Isolation' ($hyperVReady -and $vmReady) 'VM execution requires Hyper-V and a running named VM; the driver must reset an isolated snapshot per case.'
         Add-Precondition 'VmName' (-not [string]::IsNullOrWhiteSpace($VmName)) 'A named VM is required for VM execution.'

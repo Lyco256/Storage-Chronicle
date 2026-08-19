@@ -214,8 +214,8 @@ $createdVhdx = $false
 $mountedVhdx = $false
 $exitCode = 0
 try {
-    $isWindows = [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)
-    if (-not $isWindows) {
+    $hostIsWindows = [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)
+    if (-not $hostIsWindows) {
         $manifest.Environment = [ordered]@{ OS = 'non-Windows'; Prerequisite = 'Windows is required' }
         Add-NotExecuted 'all' 'This acceptance suite requires a Windows host.'
         $exitCode = 2
@@ -224,7 +224,13 @@ try {
     }
 
     $TestLabRoot = if ([string]::IsNullOrWhiteSpace($TestLabRoot)) { [Environment]::GetEnvironmentVariable('SC_TESTLAB_ROOT', 'Process') } else { $TestLabRoot }
-    if ([string]::IsNullOrWhiteSpace($TestLabRoot)) { throw 'A user-approved TestLabRoot is required; privileged acceptance never targets an unbounded host path.' }
+    if ([string]::IsNullOrWhiteSpace($TestLabRoot)) {
+        $manifest.Environment = [ordered]@{ Prerequisite = 'A user-approved TestLabRoot is required; privileged acceptance never targets an unbounded host path.' }
+        Add-NotExecuted 'all' 'A user-approved TestLabRoot was not supplied.'
+        $exitCode = 2
+        Write-Manifest $exitCode 'NOT_EXECUTED'
+        exit $exitCode
+    }
     $TestLabRoot = [IO.Path]::GetFullPath($TestLabRoot).TrimEnd('\')
     if (-not (Test-Path -LiteralPath $TestLabRoot -PathType Container)) { throw "The approved TestLab root does not exist: $TestLabRoot" }
     if ($CreateUsnJournal) { throw 'Refusing -CreateUsnJournal: the acceptance suite must query/read an existing journal and must not create or resize a journal.' }
@@ -375,7 +381,7 @@ try {
         Add-Capability 'Reconciliation' ($rootReady -and $isNtfs -and $admin) $(if ($rootReady -and $isNtfs -and $admin) { 'The real Agent reconciliation acceptance test is wired to the selected NTFS volume and requires elevation for the production MFT/metadata path.' } else { 'A real Agent reconciliation run requires an elevated Windows guest with a selected NTFS acceptance volume.' })
         Add-Capability 'Etw' ($rootReady -and $admin) $(if ($rootReady -and $admin) { 'The real kernel ETW test covers a file operation, correlated process identity, and bounded session shutdown.' } else { 'The real ETW acceptance requires an elevated acceptance root.' })
         Add-Capability 'ReadDirectoryChangesW' $rootReady $(if ($rootReady) { 'The real notification test covers create, rename, and delete and fails on a native continuity gap.' } else { 'A disposable acceptance root is required.' })
-        Add-Capability 'BufferGap' $isWindows 'The bounded initial-scan buffer test verifies overflow is reported instead of silently dropping notifications.'
+        Add-Capability 'BufferGap' $hostIsWindows 'The bounded initial-scan buffer test verifies overflow is reported instead of silently dropping notifications.'
         Add-Capability 'Smb' ($rootReady -and $admin) $(if ($rootReady -and $admin) { 'The real test creates, changes, and removes a temporary SMB share beneath the disposable acceptance root and compares actual NetShare snapshots.' } else { 'An elevated disposable acceptance root is required for the SMB lifecycle test.' })
         Add-Capability 'Service' ($rootReady -and $admin) $(if ($rootReady -and $admin) { 'The real test installs, starts, stops, queries recovery actions, and deletes a temporary Agent service.' } else { 'An elevated disposable acceptance root is required for the service lifecycle test.' })
         Add-Capability 'SessionAgent' $sessionAgentReady $(if ($sessionAgentReady) { 'The real Session Agent process is configured to wait for one actual clipboard notification and send it through the live Agent pipe.' } else { 'An interactive session, a live Agent, and an explicitly supplied Session Agent executable are required.' })

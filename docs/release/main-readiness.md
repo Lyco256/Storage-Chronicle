@@ -4,12 +4,12 @@ The repository is not yet ready for `main`. The top-agent merge sequence remains
 
 The branch/ref audit for this continuation is recorded in `docs/release/branch-audit-2026-08-19.md`; local `devenv` and `main` exist, while the remote currently exposes only `origin/feat/benchmark-performance`.
 
-`build/quality/Test-FinalAcceptance.ps1` is the final evidence aggregator. It requires nine real, eligible artifacts and exits with `2` when any artifact is missing, diagnostic, partial, failed, or `AcceptanceEligible=false`; the no-argument verification on 2026-08-19 correctly remained blocked.
+`build/quality/Test-FinalAcceptance.ps1` is the final evidence aggregator. It requires nine real, eligible artifacts and exits with `2` when any artifact is missing, diagnostic, partial, failed, or `AcceptanceEligible=false`; the no-argument verification on 2026-08-20 correctly remained blocked.
 
 ## Verified on 2026-08-20
 
 - `dotnet build StorageChronicle.slnx --no-restore -v:minimal`: 0 warnings, 0 errors.
-- `build/Test-Fast.ps1 -NoRestore`: all 22 non-privileged test projects passed; Agent has 26 passes and three expected environment-gated privileged skips.
+- `build/Test-Fast.ps1 -NoRestore`: all 22 non-privileged test projects passed; Agent has 30 passes and three expected environment-gated privileged skips.
 - `build/Test-All.ps1` (2026-08-20, default non-privileged lane): build, Fast, quality/coverage, and UI stages passed with exit code 0; privileged Windows acceptance remains intentionally isolated.
 - `dotnet run --project tools/StorageChronicle.DocMirrorValidator --no-restore -- .`: passed.
 - `build/quality/Test-Coverage.ps1`: passed the required 80%/70% thresholds with current measured rates recorded in `docs/handoffs/integration-quality.md`.
@@ -41,6 +41,7 @@ The branch/ref audit for this continuation is recorded in `docs/release/branch-a
 - The 2026-08-20 code audit also closed implementation gaps without claiming acceptance: reconciliation failures now record a failed gap when the selected volume disappears, the UI uses the fixed explicit `実行する`/`実行しない` confirmation dialog, the independent quiet-witness producer is connected to a strict schema gate, and Hyper-V installer driver/orchestration is present. These are code-side prerequisites; real privileged, interactive, physical, and release-hardware evidence is still required.
 - The follow-up audit found that requirement 24's reconciliation artifact did not explicitly retain the query/candidate ratio, ACL fallback count, privilege failure alias, low-priority/I/O-hint results, or elapsed time. The Agent summary, real acceptance artifact, and final gate now require and validate those fields. This closes an evidence-contract gap only; it does not create the still-pending elevated run.
 - A subsequent code audit also closed two pre-scan/terminal failure escapes: volume enumeration failures and missing post-scan NTFS journal boundaries now append `UnverifiedGap` and return `Failed` without deleting prior durable facts; Win32 metadata-open failures downgrade metadata quality and continue. The targeted Agent suite is 30 passed with three environment-gated skips. This does not create TestLab evidence.
+- The follow-up harness audit corrected environment-gate reporting without manufacturing acceptance: localized WMI x64 text is no longer misclassified, and the privileged, MFT, and installer no-input paths now write `NOT_EXECUTED` manifests and return exit code 2. These are fail-closed tooling fixes; the underlying TestLab, MFT, and real-machine evidence remains absent.
 
 No release document may say these items are verified until the corresponding acceptance artifacts exist. History retention, no-driver MVP, no-content/no-hash, and no-synthetic-descendant invariants remain mandatory in every acceptance run.
 

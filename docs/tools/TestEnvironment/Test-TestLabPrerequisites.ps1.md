@@ -1,6 +1,6 @@
 # Test-TestLabPrerequisites.ps1
 
-Performs the read-only host preflight required before Hyper-V TestLab construction. It records Windows edition/build/architecture, virtualization and SLAT capability, Hyper-V module and service availability, administrator state, memory and candidate-volume space, and user-supplied ISO/root paths. It never enables Windows features, changes firmware/BCD, restarts the host, downloads media, formats disks, or creates a VM. Missing user approval, unsupported editions, absent Hyper-V, and omitted ISO/root values remain explicit blocking statuses and produce exit code 2.
+Performs the read-only host preflight required before Hyper-V TestLab construction. It records Windows edition/build/architecture, determines x64 from the operating system bitness API rather than localized WMI text, and records virtualization and SLAT capability, Hyper-V module and service availability, administrator state, memory and candidate-volume space, and user-supplied ISO/root paths. It never enables Windows features, changes firmware/BCD, restarts the host, downloads media, formats disks, or creates a VM. Missing user approval, unsupported editions, absent Hyper-V, and omitted ISO/root values remain explicit blocking statuses and produce exit code 2.
 
 ## Role
 
