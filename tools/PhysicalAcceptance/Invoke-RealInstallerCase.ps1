@@ -181,6 +181,11 @@ function Invoke-NonAdminProcess {
 
 function Assert-SessionAgent {
     $path = Join-Path $InstallPath 'StorageChronicle.SessionAgent.exe'
+    $runKeyPath = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run'
+    $runProperties = Get-ItemProperty -LiteralPath $runKeyPath -Name 'StorageChronicleSessionAgent' -ErrorAction SilentlyContinue
+    $registeredPath = if ($null -eq $runProperties) { $null } else { [string]$runProperties.StorageChronicleSessionAgent }
+    $registrationEvidence = Write-Evidence -Name 'session-agent-logon-registration' -Value ([ordered]@{ RegistryPath = $runKeyPath; ValueName = 'StorageChronicleSessionAgent'; RegisteredPath = $registeredPath; ExpectedPath = $path })
+    Add-Assertion -Name 'Session Agent is registered for user logon' -Passed ([string]::Equals($registeredPath, $path, [StringComparison]::OrdinalIgnoreCase)) -Details "RegisteredPath=$registeredPath; ExpectedPath=$path." -EvidencePath $registrationEvidence
     $process = Start-Process -FilePath $path -ArgumentList @('--pipe-name', 'StorageChronicle.Agent') -PassThru
     try {
         Start-Sleep -Seconds 3
@@ -238,12 +243,28 @@ try {
             Assert-InstalledService
         }
         'update' {
+            if ((Get-InstalledProduct).Count -eq 0) { Invoke-Msi -Action Install -PackagePath $MsiPath -EvidenceName ($CaseId + '-install') | Out-Null }
+            $stopResult = Invoke-Captured -FilePath (Join-Path $env:WINDIR 'System32\sc.exe') -Arguments @('stop', $ServiceName)
+            $stoppedService = $null
+            for ($attempt = 0; $attempt -lt 30; $attempt++) {
+                $stoppedService = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
+                if ($null -ne $stoppedService -and [string]$stoppedService.State -eq 'Stopped') { break }
+                Start-Sleep -Seconds 1
+            }
+            $stopEvidence = Write-Evidence -Name 'update-safe-stop' -Value ([ordered]@{ StopExitCode = $stopResult.ExitCode; StopOutput = $stopResult.Output; StopError = $stopResult.Error; StateAfterStopRequest = if ($null -eq $stoppedService) { $null } else { [string]$stoppedService.State } })
+            Add-Assertion -Name 'Agent is safely stopped before update replacement' -Passed ($null -ne $stoppedService -and [string]$stoppedService.State -eq 'Stopped' -and $stopResult.ExitCode -in @(0, 1062)) -Details "StopExitCode=$($stopResult.ExitCode); StateAfterStopRequest=$($stoppedService.State)." -EvidencePath $stopEvidence
             Invoke-Msi -Action Install -PackagePath $UpdatedMsiPath -EvidenceName $CaseId | Out-Null
             Assert-InstalledFiles
             Assert-InstalledService
             Assert-ProductEntry
         }
         'rollback' {
+            if ((Get-InstalledProduct).Count -eq 0) { Invoke-Msi -Action Install -PackagePath $MsiPath -EvidenceName ($CaseId + '-install') | Out-Null }
+            $intentionallyMissingUpdate = Join-Path $evidenceDirectory 'intentionally-failed-update.msi'
+            $failedUpdate = Invoke-Captured -FilePath (Join-Path $env:WINDIR 'System32\msiexec.exe') -Arguments @('/i', $intentionallyMissingUpdate, '/qn', '/norestart', '/L*v', (Join-Path $evidenceDirectory "$CaseId-failed-update-msiexec.log"))
+            $remainingProductCount = (Get-InstalledProduct).Count
+            $failedUpdateEvidence = Write-Evidence -Name 'rollback-failed-update' -Value ([ordered]@{ AttemptedPackagePath = $intentionallyMissingUpdate; ExitCode = $failedUpdate.ExitCode; TimedOut = $failedUpdate.TimedOut; Output = $failedUpdate.Output; Error = $failedUpdate.Error; ProductCountAfterFailure = $remainingProductCount })
+            Add-Assertion -Name 'Intentionally failed update is rejected without losing the installed product' -Passed ($failedUpdate.ExitCode -ne 0 -and -not $failedUpdate.TimedOut -and $remainingProductCount -eq 1) -Details "FailedUpdateExitCode=$($failedUpdate.ExitCode); ProductCountAfterFailure=$remainingProductCount." -EvidencePath $failedUpdateEvidence
             Invoke-Msi -Action Install -PackagePath $RollbackMsiPath -EvidenceName $CaseId | Out-Null
             Assert-InstalledFiles
             Assert-InstalledService

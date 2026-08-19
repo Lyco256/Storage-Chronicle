@@ -7,7 +7,7 @@ Updated 2026-08-20. This handoff records the top-agent changes on `feat/benchmar
 - Added `build/package/New-ManualAcceptanceBundle.ps1` to create the Requirement 26 Windows 10 and Requirement 29 installer preparation bundles under ignored `artifacts/manual/`.
 - Added real physical-target preflight, installer-case, result-collection, and explicit cleanup scripts under `tools/PhysicalAcceptance/`.
 - The physical runner verifies the target ProductName/DisplayVersion/build, x64, administrator token, a dedicated TestLab data root containing `.storage-chronicle-testlab-marker.json`, free space, payload hashes, and an exact `YES` confirmation before invoking `msiexec`.
-- Installer assertions inspect the actual MSI registration, default install/data paths, LocalSystem automatic service, exact 5,000/15,000/60,000 ms recovery delays, Session Agent startup, non-admin launch/ACL denial, update/rollback, uninstall, and history retention. No history deletion behavior was added.
+- Installer assertions inspect the actual MSI registration, default install/data paths, LocalSystem automatic service, exact 5,000/15,000/60,000 ms recovery delays, Session Agent logon registration/startup, non-admin launch/ACL denial, safe service stop before update, intentional failed-update rejection followed by a real rollback MSI, uninstall, and history retention. The runner refuses a dirty Program Files/ProgramData/product/service target. No history deletion behavior was added.
 - Cleanup requires elevation, `-ConfirmCleanup`, and `ShouldProcess`; only explicitly marked VHDX files are dismounted/removed, and ProgramData history is never removed.
 - Added mirrored documentation for every new source script and synchronized the release readiness/requirements verification records.
 

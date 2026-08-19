@@ -50,10 +50,18 @@ if ($markerFiles.Count -ne 1) { throw 'The approved test root must contain exact
 $logicalDisk = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='$($testDataRootFull.Substring(0, 2))'" -ErrorAction SilentlyContinue
 $freeSpaceGiB = if ($null -eq $logicalDisk) { 0 } else { [math]::Round([double]$logicalDisk.FreeSpace / 1GB, 2) }
 if ($freeSpaceGiB -lt 10) { throw "Insufficient free space on the test volume: ${freeSpaceGiB} GiB; at least 10 GiB is required." }
+$installPath = Join-Path $env:ProgramFiles 'Storage Chronicle'
+$programDataRoot = Join-Path $env:ProgramData 'Storage Chronicle'
+$historyPath = Join-Path $programDataRoot 'history'
+$registeredProducts = @(Get-ItemProperty -Path @('HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*') -ErrorAction SilentlyContinue | Where-Object { [string]$_.DisplayName -eq 'Storage Chronicle' })
+$existingService = Get-CimInstance -ClassName Win32_Service -Filter "Name='StorageChronicleAgent'" -ErrorAction SilentlyContinue
+$programDataEntries = if (Test-Path -LiteralPath $programDataRoot -PathType Container) { @(Get-ChildItem -LiteralPath $programDataRoot -Force -ErrorAction Stop) } else { @() }
+$targetIsClean = $registeredProducts.Count -eq 0 -and $null -eq $existingService -and -not (Test-Path -LiteralPath $installPath -PathType Container) -and $programDataEntries.Count -eq 0
+if (-not $targetIsClean) { throw "The physical acceptance target is not clean: ProductCount=$($registeredProducts.Count); ServicePresent=$($null -ne $existingService); InstallPathPresent=$(Test-Path -LiteralPath $installPath -PathType Container); ProgramDataEntryCount=$($programDataEntries.Count). Use a disposable target or clean it with explicit user-approved steps before running." }
 
 $resultsRoot = Join-Path $BundleRoot 'results'
 New-Item -ItemType Directory -Force -Path $resultsRoot | Out-Null
-$preflight = [ordered]@{ Schema = 'StorageChronicle.RealMachineInstallerPreflight.v1'; GeneratedUtc = [DateTimeOffset]::UtcNow; TargetOs = $target; ProductName = $os.Caption; DisplayVersion = $osDisplayVersion; Build = $osBuild; IsAdministrator = $isAdmin; IsX64 = $isX64; TestDataRoot = $testDataRootFull; TestDataMarker = $markerFiles[0].FullName; FreeSpaceGiB = $freeSpaceGiB; AcceptanceEligible = $false }
+$preflight = [ordered]@{ Schema = 'StorageChronicle.RealMachineInstallerPreflight.v1'; GeneratedUtc = [DateTimeOffset]::UtcNow; TargetOs = $target; ProductName = $os.Caption; DisplayVersion = $osDisplayVersion; Build = $osBuild; IsAdministrator = $isAdmin; IsX64 = $isX64; TestDataRoot = $testDataRootFull; TestDataMarker = $markerFiles[0].FullName; FreeSpaceGiB = $freeSpaceGiB; InstallPath = $installPath; ProgramDataRoot = $programDataRoot; HistoryPath = $historyPath; ExistingProductCount = $registeredProducts.Count; ExistingService = $null -ne $existingService; ExistingProgramDataEntryCount = $programDataEntries.Count; AcceptanceEligible = $false }
 $preflightPath = Join-Path $resultsRoot 'real-machine-preflight.json'
 $preflight | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $preflightPath -Encoding UTF8
 if (-not $SkipConfirmation) {
