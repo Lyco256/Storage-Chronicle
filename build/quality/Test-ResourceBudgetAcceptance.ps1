@@ -36,6 +36,37 @@ if (-not $Diagnostic -and ($MaxPrivateMiB -ne 50 -or $MaxCpuPercent -ne 0.5)) {
     throw 'Acceptance mode fixes the R-03 thresholds at 50 MiB private working set and 0.5% average CPU; relaxed thresholds are not permitted.'
 }
 
+$resourceEnvironment = [ordered]@{}
+try {
+    $operatingSystem = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+    $computerSystem = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+    $model = [string]$computerSystem.Model
+    $manufacturer = [string]$computerSystem.Manufacturer
+    $knownVirtualMachine = ($model + ' ' + $manufacturer) -match '(?i)(virtual|vmware|virtualbox|kvm|qemu|xen|hyper-v|parallels|bhyve|amazon ec2|google compute|azure)'
+    $resourceEnvironment = [ordered]@{
+        ProductName = [string]$operatingSystem.Caption
+        DisplayVersion = if ($null -ne $operatingSystem.PSObject.Properties['DisplayVersion']) { [string]$operatingSystem.DisplayVersion } else { '' }
+        Build = [string]$operatingSystem.BuildNumber
+        Architecture = if ([Environment]::Is64BitOperatingSystem) { 'x64' } else { 'x86' }
+        Manufacturer = $manufacturer
+        Model = $model
+        HypervisorPresent = if ($null -ne $computerSystem.PSObject.Properties['HypervisorPresent']) { [bool]$computerSystem.HypervisorPresent } else { $null }
+        IsPhysicalMachine = -not $knownVirtualMachine
+        Diagnostic = [bool]$Diagnostic
+    }
+}
+catch {
+    if (-not $Diagnostic) { throw "Could not establish the resource acceptance environment: $($_.Exception.Message)" }
+    $resourceEnvironment = [ordered]@{ Diagnostic = $true; EnvironmentProbeError = $_.Exception.Message; IsPhysicalMachine = $false }
+}
+
+if (-not $Diagnostic -and (
+        [string]$resourceEnvironment.ProductName -notmatch 'Windows 11' -or
+        [string]$resourceEnvironment.Architecture -ne 'x64' -or
+        -not [bool]$resourceEnvironment.IsPhysicalMachine)) {
+    throw 'Formal resource acceptance requires a Windows 11 x64 physical release machine; VM or other host evidence is not eligible.'
+}
+
 $processIds = @($ProcessId -split '[,;]' | ForEach-Object {
     $parsed = 0
     if (-not [int]::TryParse($_.Trim(), [Globalization.NumberStyles]::Integer, [Globalization.CultureInfo]::InvariantCulture, [ref]$parsed) -or $parsed -le 0) {
@@ -293,6 +324,7 @@ try {
         ExistingScriptExitCode = $runnerExitCode
         ResultPath = $resultPath
         QuietPeriodEvidencePath = $QuietPeriodEvidencePath
+        Environment = $resourceEnvironment
         InitialProcesses = $initialIdentities
         LifecycleHealthy = $lifecycleHealthy
         LifecycleErrors = @($lifecycleErrors)
@@ -315,6 +347,7 @@ catch {
         AcceptanceEligible = $false
         ExistingScript = $existingScript
         ExistingScriptExitCode = $runnerExitCode
+        Environment = $resourceEnvironment
         InitialProcesses = $initialIdentities
         LifecycleHealthy = $lifecycleHealthy
         LifecycleErrors = @($lifecycleErrors)

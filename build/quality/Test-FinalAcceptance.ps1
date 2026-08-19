@@ -7,6 +7,7 @@ param(
     [string]$ResourceEvidence,
     [string]$BenchmarkManifest,
     [string]$InstallerManifest,
+    [string]$Windows11HyperVInstallerManifest,
     [string]$CorrelationManifest,
     [string]$BranchManifest,
     [string]$OutputPath
@@ -21,12 +22,8 @@ if ([string]::IsNullOrWhiteSpace($OutputPath)) { $OutputPath = Join-Path $root (
 $artifactDirectory = Split-Path -Parent $OutputPath
 New-Item -ItemType Directory -Force -Path $artifactDirectory | Out-Null
 
-$requiredWindows10StageAChecks = @(
-    'Application', 'AvaloniaUI', 'Agent', 'SessionAgent', 'Usn', 'Mft', 'Etw',
-    'ReadDirectoryChangesW', 'Clipboard', 'Smb', 'CloudFilesCapability',
-    'Reconciliation', 'Installer', 'HistoryRetention', 'NoDriver'
-)
-$requiredInstallerCaseIds = @('clean-install', 'repair', 'update', 'rollback', 'uninstall', 'failed-install-rollback', 'history-retention', 'service', 'session', 'non-admin', 'storage-permission')
+$requiredWindows10StageAChecks = @(Get-RequiredWindows10StageAChecks)
+$requiredInstallerCaseIds = @(Get-RequiredInstallerCaseIds)
 
 function Read-ReferencedJson {
     param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$Label)
@@ -36,6 +33,48 @@ function Read-ReferencedJson {
     catch { throw "$Label is not valid JSON: $Path. $($_.Exception.Message)" }
 }
 
+function Assert-InstallerCaseRows {
+    param([Parameter(Mandatory = $true)]$Value, [Parameter(Mandatory = $true)][string]$Label)
+
+    if ($null -eq $Value.PSObject.Properties['Summary'] -or
+        [int]$Value.Summary.Total -ne $requiredInstallerCaseIds.Count -or
+        [int]$Value.Summary.Passed -ne $requiredInstallerCaseIds.Count -or
+        [int]$Value.Summary.Failed -ne 0 -or
+        [int]$Value.Summary.NotExecuted -ne 0 -or
+        @($Value.Tests).Count -ne $requiredInstallerCaseIds.Count -or
+        @($Value.Tests | Where-Object { [string]$_.Status -ne 'PASSED' }).Count -ne 0) {
+        throw "$Label does not prove all required installer cases passed."
+    }
+    $caseIds = @($Value.Tests | ForEach-Object { [string]$_.CaseId })
+    if (@($caseIds | Sort-Object -Unique).Count -ne $requiredInstallerCaseIds.Count -or
+        @($requiredInstallerCaseIds | Where-Object { $caseIds -notcontains $_ }).Count -ne 0) {
+        throw "$Label does not contain the defined installer case IDs."
+    }
+}
+
+function Assert-Windows11HyperVInstallerPrerequisite {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $wrapper = Read-ReferencedJson -Path $Path -Label 'Windows 11 Hyper-V installer acceptance manifest'
+    if ([string]$wrapper.Schema -ne 'StorageChronicle.HyperVInstallerAcceptance.v1' -or
+        [string]$wrapper.Target -ne 'Windows11' -or
+        [string]$wrapper.TargetOs -ne 'Windows11' -or
+        [string]$wrapper.Status -ne 'PASSED' -or
+        -not [bool]$wrapper.AcceptanceEligible) {
+        throw 'Windows 11 Hyper-V installer acceptance is not an eligible passed artifact.'
+    }
+    $generic = Read-ReferencedJson -Path ([string]$wrapper.InstallerManifestPath) -Label 'Windows 11 Hyper-V generic installer manifest'
+    if ([string]$generic.Schema -ne 'storage-chronicle.installer-acceptance.v1' -or
+        [string]$generic.TargetOs -ne 'Windows11' -or
+        [string]$generic.TargetKind -ne 'HyperVVm' -or
+        [string]$generic.ExecutionMode -ne 'VM' -or
+        [string]$generic.Status -ne 'PASSED' -or
+        -not [bool]$generic.AcceptanceEligible) {
+        throw 'Windows 11 Hyper-V generic installer evidence is not eligible.'
+    }
+    Assert-InstallerCaseRows -Value $generic -Label 'Windows 11 Hyper-V generic installer evidence'
+}
+
 function Assert-GroupEvidence {
     param([Parameter(Mandatory = $true)][string]$Name, [Parameter(Mandatory = $true)]$Value)
 
@@ -43,10 +82,13 @@ function Assert-GroupEvidence {
     switch ($Name) {
         'TestLabAndRealIo' {
             if ($schema -ne 'StorageChronicle.WindowsTestLabExecution.v2') { throw 'TestLab evidence has an unexpected schema.' }
+            if ([string]$Value.Target -notin @('Windows11', 'Both')) { throw 'TestLab evidence does not include the required Windows 11 target.' }
             if (@($Value.Stages).Count -eq 0) { throw 'TestLab evidence has no execution stages.' }
             if (-not [bool]$Value.AgentIntegrationExecuted -or -not [bool]$Value.RealIoAcceptance) { throw 'TestLab evidence does not prove the real Agent and Oracle comparison path.' }
             $agentStages = @($Value.Stages | Where-Object { [string]$_.Name -like 'AgentIntegration-*' })
             if ($agentStages.Count -eq 0) { throw 'TestLab evidence has no Agent integration stages.' }
+            $windows11AgentStages = @($agentStages | Where-Object { [string]$_.Name -eq 'AgentIntegration-Windows11' })
+            if ($windows11AgentStages.Count -ne 1) { throw 'TestLab evidence does not contain exactly one Windows 11 Agent integration stage.' }
             foreach ($stage in $agentStages) {
                 if ([string]$stage.Status -ne 'PASSED') { throw "Agent integration stage is not PASSED: $($stage.Name)" }
                 $evidencePath = [string]$stage.Evidence
@@ -118,12 +160,16 @@ function Assert-GroupEvidence {
             if ([string]$preflight.Environment.ProductName -notmatch 'Windows 10' -or ([string]$preflight.Environment.DisplayVersion -ne '22H2' -and [string]$preflight.Environment.Build -ne '19045') -or [string]$preflight.Environment.Architecture -ne 'x64') { throw 'Windows 10 physical preflight does not prove Windows 10 22H2 x64.' }
             $installer = Read-ReferencedJson -Path ([string]$Value.StageB.InstallerManifestPath) -Label 'Windows 10 physical installer manifest'
             if ([string]$installer.Schema -ne 'storage-chronicle.installer-acceptance.v1' -or [string]$installer.Status -ne 'PASSED' -or -not [bool]$installer.AcceptanceEligible -or [string]$installer.TargetOs -ne 'Windows10-22H2' -or [string]$installer.TargetKind -ne 'PhysicalMachine' -or [string]$installer.ExecutionMode -ne 'Local') { throw 'Windows 10 physical installer artifact is not eligible.' }
-            if ($null -eq $installer.Summary -or [int]$installer.Summary.Total -ne 11 -or [int]$installer.Summary.Passed -ne 11 -or [int]$installer.Summary.Failed -ne 0 -or [int]$installer.Summary.NotExecuted -ne 0) { throw 'Windows 10 physical installer artifact does not prove all eleven cases passed.' }
-            $caseIds = @($installer.Tests | ForEach-Object { [string]$_.CaseId })
-            if (@($caseIds | Sort-Object -Unique).Count -ne $requiredInstallerCaseIds.Count -or @($requiredInstallerCaseIds | Where-Object { $caseIds -notcontains $_ }).Count -ne 0) { throw 'Windows 10 physical installer artifact does not contain the defined eleven case IDs.' }
+            Assert-InstallerCaseRows -Value $installer -Label 'Windows 10 physical installer artifact'
         }
         'IdleResource' {
             if ($schema -ne 'StorageChronicle.ResourceBudgetAcceptanceEvidence.v1') { throw 'Resource evidence has an unexpected schema.' }
+            if ([string]$Value.ExecutionStatus -ne 'passed' -or
+                $null -eq $Value.PSObject.Properties['Environment'] -or
+                [string]$Value.Environment.ProductName -notmatch 'Windows 11' -or
+                [string]$Value.Environment.Architecture -ne 'x64' -or
+                -not [bool]$Value.Environment.IsPhysicalMachine -or
+                [bool]$Value.Environment.Diagnostic) { throw 'Resource evidence does not prove a non-diagnostic Windows 11 x64 physical-machine run.' }
             if ($null -eq $Value.PSObject.Properties['EvidenceChecks']) { throw 'Resource evidence has no supervised gate checks.' }
             foreach ($checkName in @('ResultFilePresent', 'ResultProcessIdsMatch', 'ResourceSampleCountMatches', 'ResourceSamplingComplete', 'ResourceSampleSpanComplete', 'DiskWriteCounterPresent', 'PrivateMemoryLimitNotExceeded', 'CpuLimitNotExceeded', 'QueueSamplingComplete', 'QueueSampleCountMatches', 'QueueHasNoMissedSamples', 'QueueLimitNotExceeded', 'TargetLifecycleStable', 'ExistingScriptExitCodeZero', 'AcceptanceEligible', 'BoundaryDurationIs600', 'BoundaryIsNonDiagnostic', 'BoundarySpanComplete', 'QuietPeriodEvidencePresent', 'QuietPeriodValid')) {
                 if ($null -eq $Value.EvidenceChecks.PSObject.Properties[$checkName] -or -not [bool]$Value.EvidenceChecks.$checkName) { throw "Resource acceptance check is not true: $checkName" }
@@ -133,6 +179,29 @@ function Assert-GroupEvidence {
             if ($schema -ne 'StorageChronicle.FullBenchmarkMatrixEvidence.v1') { throw 'MFT performance evidence has an unexpected schema.' }
             if (-not [bool]$Value.IncludeMft -or $null -eq $Value.MftEvidence) { throw 'MFT performance evidence is missing the connected MFT correctness artifact.' }
             if ([string]$Value.ExecutionStatus -ne 'completed' -or [string]$Value.MftEvidence.Schema -ne 'StorageChronicle.MftBenchmarkEvidence.v1' -or [string]$Value.MftEvidence.Status -ne 'PASSED' -or -not [bool]$Value.MftEvidence.AcceptanceEligible) { throw 'MFT performance evidence is not a completed eligible real matrix.' }
+            if ([string]$Value.Host.MftVolumeLabel -ne 'SC_TEST_MFT_VOLUME' -or
+                [string]::IsNullOrWhiteSpace([string]$Value.Host.MftMarkerPath) -or
+                -not (Test-Path -LiteralPath ([string]$Value.Host.MftMarkerPath) -PathType Leaf) -or
+                [string]$Value.Host.WindowsProductName -notmatch 'Windows 11' -or
+                [string]::IsNullOrWhiteSpace([string]$Value.MftEvidencePath) -or
+                -not (Test-Path -LiteralPath ([string]$Value.MftEvidencePath) -PathType Leaf)) { throw 'MFT performance evidence does not prove the dedicated Windows 11 TestLab volume and connected evidence path.' }
+            $requiredSuites = [ordered]@{
+                CoreProjectionState = @('ReconstructSinglePointPath1M', 'GroupedGeneration100K', 'EventStackPage100K', 'PeriodDiff100K')
+                LargeFolderMove = @('RecordLargeFolderMove')
+                AppendAndCompression = @('SegmentAppendAndSqliteIndex100K', 'FlushAndCloseCompressedSegment100K')
+                SqliteRecoveryAndQuery = @('SqliteIndexRebuild100K', 'SqliteIndexedCount100K')
+                MediaManifest = @('MediaManifestImport100K', 'MediaManifestReadAndValidate100K')
+                MediaSegment = @('MediaSegmentAppend100K')
+                WindowsMft = @('MftEnumerationImport10K', 'MftEnumerationImport100K', 'MftEnumerationImport1M', 'MftCandidateMetadataQueriesZero1M', 'MftCandidateMetadataQueriesSmall1M')
+            }
+            $suiteNames = @($Value.Suites | ForEach-Object { [string]$_.Name })
+            if (@($Value.Suites).Count -ne $requiredSuites.Count -or @($suiteNames | Sort-Object -Unique).Count -ne $requiredSuites.Count) { throw 'MFT performance evidence does not contain exactly one result for each required suite.' }
+            foreach ($suiteName in $requiredSuites.Keys) {
+                $suiteMatches = @($Value.Suites | Where-Object { [string]$_.Name -eq $suiteName })
+                if ($suiteMatches.Count -ne 1 -or [string]$suiteMatches[0].Status -ne 'passed') { throw "MFT performance suite is not exactly passed: $suiteName" }
+                $actualMethods = @($suiteMatches[0].ActualMethods | ForEach-Object { [string]$_ })
+                foreach ($method in $requiredSuites[$suiteName]) { if ($actualMethods -notcontains $method) { throw "MFT performance suite is missing method ${method}: $suiteName" } }
+            }
             foreach ($method in @('MftEnumerationImport10K', 'MftEnumerationImport100K', 'MftEnumerationImport1M', 'MftCandidateMetadataQueriesZero1M', 'MftCandidateMetadataQueriesSmall1M')) {
                 $matches = @($Value.MftEvidence.Runs | Where-Object { [string]$_.Method -eq $method })
                 if ($matches.Count -ne 1) { throw "MFT evidence does not contain exactly one run for $method." }
@@ -142,11 +211,10 @@ function Assert-GroupEvidence {
         }
         'PhysicalInstaller' {
             if ($schema -ne 'storage-chronicle.installer-acceptance.v1') { throw 'Installer evidence has an unexpected schema.' }
-            if ([string]$Value.Status -ne 'PASSED' -or $null -eq $Value.PSObject.Properties['Summary'] -or [int]$Value.Summary.Total -ne 11 -or [int]$Value.Summary.Passed -ne 11 -or [int]$Value.Summary.Failed -ne 0 -or [int]$Value.Summary.NotExecuted -ne 0) { throw 'Installer evidence does not contain all eleven passed cases.' }
-            if ([string]$Value.TargetKind -ne 'PhysicalMachine' -or [string]$Value.ExecutionMode -ne 'Local') { throw 'Installer evidence is not from the required physical-machine acceptance path.' }
-            if (@($Value.Tests | Where-Object Status -ne 'PASSED').Count -ne 0 -or @($Value.Tests).Count -ne 11) { throw 'Installer evidence contains a non-passed or missing case.' }
-            $caseIds = @($Value.Tests | ForEach-Object { [string]$_.CaseId })
-            if (@($caseIds | Sort-Object -Unique).Count -ne $requiredInstallerCaseIds.Count -or @($requiredInstallerCaseIds | Where-Object { $caseIds -notcontains $_ }).Count -ne 0) { throw 'Installer evidence does not contain the defined eleven case IDs.' }
+            if ([string]$Value.Status -ne 'PASSED') { throw 'Installer evidence status is not PASSED.' }
+            if ([string]$Value.TargetOs -ne 'Windows11' -or [string]$Value.TargetKind -ne 'PhysicalMachine' -or [string]$Value.ExecutionMode -ne 'Local') { throw 'Installer evidence is not from the required Windows 11 physical-machine acceptance path.' }
+            Assert-InstallerCaseRows -Value $Value -Label 'Windows 11 physical installer evidence'
+            Assert-Windows11HyperVInstallerPrerequisite -Path $Windows11HyperVInstallerManifest
         }
         'AgentExplorerCorrelation' {
             if ($schema -ne 'StorageChronicle.AgentExplorerCorrelationEvidence.v1') { throw 'Agent/Explorer correlation evidence has an unexpected schema.' }

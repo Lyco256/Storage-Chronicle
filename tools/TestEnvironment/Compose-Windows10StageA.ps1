@@ -155,7 +155,7 @@ function Assert-Installer {
         @($genericValue.Tests | Where-Object { [string]$_.Status -ne 'PASSED' }).Count -ne 0) {
         throw 'Windows 10 Hyper-V installer manifest does not prove all eleven cases passed.'
     }
-    $requiredCaseIds = @('clean-install', 'repair', 'update', 'rollback', 'uninstall', 'failed-install-rollback', 'history-retention', 'service', 'session', 'non-admin', 'storage-permission')
+    $requiredCaseIds = @(Get-RequiredInstallerCaseIds)
     $caseIds = @($genericValue.Tests | ForEach-Object { [string]$_.CaseId })
     if (@($caseIds | Sort-Object -Unique).Count -ne $requiredCaseIds.Count -or @($requiredCaseIds | Where-Object { $caseIds -notcontains $_ }).Count -ne 0) { throw 'Windows 10 Hyper-V installer manifest does not contain the defined eleven case IDs.' }
     return $generic.Path

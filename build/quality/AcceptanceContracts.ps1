@@ -23,3 +23,45 @@ function Get-RequiredWindowsPrivilegedCapabilities {
         'NonNtfs'
     )
 }
+
+function Get-RequiredInstallerCaseIds {
+    [OutputType([string[]])]
+    param()
+
+    return @(
+        'clean-install',
+        'repair',
+        'update',
+        'rollback',
+        'uninstall',
+        'failed-install-rollback',
+        'history-retention',
+        'service',
+        'session',
+        'non-admin',
+        'storage-permission'
+    )
+}
+
+function Get-RequiredWindows10StageAChecks {
+    [OutputType([string[]])]
+    param()
+
+    return @(
+        'Application',
+        'AvaloniaUI',
+        'Agent',
+        'SessionAgent',
+        'Usn',
+        'Mft',
+        'Etw',
+        'ReadDirectoryChangesW',
+        'Clipboard',
+        'Smb',
+        'CloudFilesCapability',
+        'Reconciliation',
+        'Installer',
+        'HistoryRetention',
+        'NoDriver'
+    )
+}

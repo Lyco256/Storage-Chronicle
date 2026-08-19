@@ -101,6 +101,26 @@ public sealed class InstallerManifestTests
         Assert.Contains("IsAdministrator", finalGate, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void FinalAcceptanceRequiresPhysicalAndHyperVPrerequisites()
+    {
+        var root = FindRoot();
+        var finalGate = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-FinalAcceptance.ps1"));
+        var resource = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-ResourceBudgetAcceptance.ps1"));
+        var mft = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-FullBenchmarkMatrix.ps1"));
+        var windows10Finalizer = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Finalize-Windows10PhysicalAcceptance.ps1"));
+
+        Assert.Contains("Windows11HyperVInstallerManifest", finalGate, StringComparison.Ordinal);
+        Assert.Contains("Assert-Windows11HyperVInstallerPrerequisite", finalGate, StringComparison.Ordinal);
+        Assert.Contains("AgentIntegration-Windows11", finalGate, StringComparison.Ordinal);
+        Assert.Contains("IsPhysicalMachine", finalGate, StringComparison.Ordinal);
+        Assert.Contains("SC_TEST_MFT_VOLUME", finalGate, StringComparison.Ordinal);
+        Assert.Contains("Windows 11 x64 physical release machine", resource, StringComparison.Ordinal);
+        Assert.Contains("STORAGE_CHRONICLE_MFT_VOLUME_LABEL", mft, StringComparison.Ordinal);
+        Assert.Contains("Get-RequiredInstallerCaseIds", windows10Finalizer, StringComparison.Ordinal);
+        Assert.Contains("Status -ne 'PASSED'", windows10Finalizer, StringComparison.Ordinal);
+    }
+
     private static string FindRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

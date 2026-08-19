@@ -10,6 +10,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+. (Join-Path $repositoryRoot 'build/quality/AcceptanceContracts.ps1')
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = Join-Path $repositoryRoot ('artifacts/acceptance/windows10/windows10-physical-acceptance-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.json')
 }
@@ -17,23 +18,7 @@ $OutputPath = [IO.Path]::GetFullPath($OutputPath)
 $outputDirectory = Split-Path -Parent $OutputPath
 New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
 
-$requiredStageAChecks = @(
-    'Application',
-    'AvaloniaUI',
-    'Agent',
-    'SessionAgent',
-    'Usn',
-    'Mft',
-    'Etw',
-    'ReadDirectoryChangesW',
-    'Clipboard',
-    'Smb',
-    'CloudFilesCapability',
-    'Reconciliation',
-    'Installer',
-    'HistoryRetention',
-    'NoDriver'
-)
+$requiredStageAChecks = @(Get-RequiredWindows10StageAChecks)
 
 $manifest = [ordered]@{
     Schema = 'StorageChronicle.Windows10PhysicalAcceptance.v1'
@@ -101,11 +86,11 @@ function Assert-PhysicalInstaller {
     param([Parameter(Mandatory = $true)]$Artifact)
 
     $value = $Artifact.Value
+    $requiredCaseIds = @(Get-RequiredInstallerCaseIds)
     if ([string]$value.Schema -ne 'storage-chronicle.installer-acceptance.v1') { throw "Physical installer artifact has an unexpected schema: $($Artifact.Path)" }
     if ([string]$value.Status -ne 'PASSED' -or -not [bool]$value.AcceptanceEligible) { throw "Physical installer artifact is not eligible: $($Artifact.Path)" }
     if ([string]$value.TargetOs -ne 'Windows10-22H2' -or [string]$value.TargetKind -ne 'PhysicalMachine' -or [string]$value.ExecutionMode -ne 'Local') { throw "Physical installer artifact has the wrong target: $($Artifact.Path)" }
-    if ($null -eq $value.PSObject.Properties['Summary'] -or [int]$value.Summary.Total -ne 11 -or [int]$value.Summary.Passed -ne 11 -or [int]$value.Summary.Failed -ne 0 -or [int]$value.Summary.NotExecuted -ne 0) { throw "Physical installer artifact does not prove all eleven cases passed: $($Artifact.Path)" }
-    $requiredCaseIds = @('clean-install', 'repair', 'update', 'rollback', 'uninstall', 'failed-install-rollback', 'history-retention', 'service', 'session', 'non-admin', 'storage-permission')
+    if ($null -eq $value.PSObject.Properties['Summary'] -or [int]$value.Summary.Total -ne $requiredCaseIds.Count -or [int]$value.Summary.Passed -ne $requiredCaseIds.Count -or [int]$value.Summary.Failed -ne 0 -or [int]$value.Summary.NotExecuted -ne 0 -or @($value.Tests).Count -ne $requiredCaseIds.Count -or @($value.Tests | Where-Object { [string]$_.Status -ne 'PASSED' }).Count -ne 0) { throw "Physical installer artifact does not prove all required cases passed: $($Artifact.Path)" }
     $caseIds = @($value.Tests | ForEach-Object { [string]$_.CaseId })
     if (@($caseIds | Sort-Object -Unique).Count -ne $requiredCaseIds.Count -or @($requiredCaseIds | Where-Object { $caseIds -notcontains $_ }).Count -ne 0) { throw "Physical installer artifact does not contain the defined eleven case IDs: $($Artifact.Path)" }
 }

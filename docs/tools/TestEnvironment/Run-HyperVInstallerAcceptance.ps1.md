@@ -1,6 +1,6 @@
 # Run-HyperVInstallerAcceptance.ps1
 
-Restores one approved TestLab VM to `SC-CLEAN-BASELINE`, starts it, invokes the generic eleven-case installer harness with the real `Invoke-HyperVInstallerCase.ps1` guest driver, validates that exactly one new eligible generic installer manifest with the defined eleven case IDs was produced for the selected Hyper-V target, records that evidence path in the matrix manifest, and stops the VM in `finally`. Without `-Apply` it performs only preflight and writes a non-eligible plan. It requires user-provided MSI versions, a DPAPI-protected guest credential, guest non-admin credential reference, approved ISO/TestLab configuration, and does not enable Hyper-V or create a VM automatically.
+Restores one approved TestLab VM to `SC-CLEAN-BASELINE`, starts it, invokes the generic eleven-case installer harness with the real `Invoke-HyperVInstallerCase.ps1` guest driver, validates that exactly one new eligible generic installer manifest with the defined eleven case IDs was produced for the selected Hyper-V target, records that evidence path in the matrix manifest, and stops the VM in `finally`. The final acceptance gate consumes the Windows 11 manifest as a required prerequisite for the Windows 11 physical matrix. Without `-Apply` it performs only preflight and writes a non-eligible plan. It requires user-provided MSI versions, a DPAPI-protected guest credential, guest non-admin credential reference, approved ISO/TestLab configuration, and does not enable Hyper-V or create a VM automatically.
 
 ## Role
 

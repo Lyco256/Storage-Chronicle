@@ -19,6 +19,7 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'TestLab.Common.ps1')
 
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+. (Join-Path $repositoryRoot 'build/quality/AcceptanceContracts.ps1')
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = Join-Path $repositoryRoot 'artifacts/acceptance/installer-vm' }
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
@@ -100,7 +101,7 @@ try {
         @($installerManifest.Tests | Where-Object { [string]$_.Status -ne 'PASSED' }).Count -ne 0) {
         throw "The generic installer manifest is not an eligible eleven-case Hyper-V result: $installerManifestPath"
     }
-    $requiredCaseIds = @('clean-install', 'repair', 'update', 'rollback', 'uninstall', 'failed-install-rollback', 'history-retention', 'service', 'session', 'non-admin', 'storage-permission')
+    $requiredCaseIds = @(Get-RequiredInstallerCaseIds)
     $caseIds = @($installerManifest.Tests | ForEach-Object { [string]$_.CaseId })
     if (@($caseIds | Sort-Object -Unique).Count -ne $requiredCaseIds.Count -or @($requiredCaseIds | Where-Object { $caseIds -notcontains $_ }).Count -ne 0) { throw "The generic installer manifest does not contain the defined eleven case IDs: $installerManifestPath" }
     $manifest.InstallerManifestPath = $installerManifestPath

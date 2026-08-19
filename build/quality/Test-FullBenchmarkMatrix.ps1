@@ -21,6 +21,11 @@ $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ', [Globalization.Cultu
 $runStartedUtc = [DateTimeOffset]::UtcNow
 $runRoot = Join-Path $ArtifactRoot ("full-matrix-" + $stamp)
 New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
+$windowsProductName = ''
+if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+    $operatingSystem = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue
+    if ($null -ne $operatingSystem) { $windowsProductName = [string]$operatingSystem.Caption }
+}
 
 if ([string]::IsNullOrWhiteSpace($MftEvidencePath)) {
     $MftEvidencePath = Join-Path (Join-Path $runRoot 'WindowsMft') 'mft-evidence.json'
@@ -119,6 +124,9 @@ if (-not $IncludeMft -and -not $PortableOnly) {
 if ($IncludeMft) {
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
         Write-NotExecuted 'The full matrix includes WindowsMftBenchmarks and therefore requires Windows.'
+    }
+    if ($windowsProductName -notmatch 'Windows 11') {
+        Write-NotExecuted "The MFT acceptance matrix requires a Windows 11 TestLab guest; detected product '$windowsProductName'."
     }
 
     $mftVolume = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_VOLUME')
@@ -279,6 +287,7 @@ finally {
         CompletedUtc = [DateTimeOffset]::UtcNow
         Host = [ordered]@{
             OperatingSystem = [Environment]::OSVersion.VersionString
+            WindowsProductName = $windowsProductName
             DotnetVersion = (& dotnet --version 2>$null)
             MftVolumeConfigured = -not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_VOLUME'))
             MftVolumeLabel = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_VOLUME_LABEL')
