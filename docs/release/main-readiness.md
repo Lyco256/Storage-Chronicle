@@ -10,6 +10,7 @@ The branch/ref audit for this continuation is recorded in `docs/release/branch-a
 
 - `dotnet build StorageChronicle.slnx --no-restore -v:minimal`: 0 warnings, 0 errors.
 - `build/Test-Fast.ps1 -NoRestore`: all 22 non-privileged test projects passed.
+- `build/Test-All.ps1` (2026-08-20, default non-privileged lane): build, Fast, quality/coverage, and UI stages passed with exit code 0; privileged Windows acceptance remains intentionally isolated.
 - `dotnet run --project tools/StorageChronicle.DocMirrorValidator --no-restore -- .`: passed.
 - `build/quality/Test-Coverage.ps1`: passed the required 80%/70% thresholds with current measured rates recorded in `docs/handoffs/integration-quality.md`.
 - Settings UI unit and headless tests: 13 passed.
