@@ -7,6 +7,7 @@ namespace StorageChronicle.FileMutationWorkload;
 public static class Program
 {
     private const string MarkerName = ".storage-chronicle-testlab-marker.json";
+    private const string VolumeMarkerName = "StorageChronicleTestVolume.json";
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
     /// <summary>Runs the requested workload and writes an operation oracle without reading file contents.</summary>
@@ -62,16 +63,28 @@ public static class Program
         if (root.Contains("Windows", StringComparison.OrdinalIgnoreCase) || root.Contains("Program Files", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The workload root is protected.");
         Directory.CreateDirectory(root);
         var markerPath = Path.Combine(root, MarkerName);
+        TestLabMarker marker;
         if (File.Exists(markerPath))
         {
             using var markerStream = File.OpenRead(markerPath);
-            var marker = JsonSerializer.Deserialize<TestLabMarker>(markerStream) ?? throw new InvalidDataException("The data marker is invalid.");
+            marker = JsonSerializer.Deserialize<TestLabMarker>(markerStream) ?? throw new InvalidDataException("The data marker is invalid.");
             if (!string.Equals(marker.Schema, "StorageChronicle.TestLabDataMarker.v1", StringComparison.Ordinal) || !string.Equals(marker.TestId, options.RunId, StringComparison.Ordinal)) throw new InvalidDataException("The data marker does not match this run.");
         }
         else
         {
-            var marker = new TestLabMarker("StorageChronicle.TestLabDataMarker.v1", options.RunId, options.Scenario, DateTimeOffset.UtcNow);
+            marker = new TestLabMarker("StorageChronicle.TestLabDataMarker.v1", options.RunId, options.Scenario, DateTimeOffset.UtcNow);
             File.WriteAllText(markerPath, JsonSerializer.Serialize(marker, JsonOptions));
+        }
+        var volumeMarkerPath = Path.Combine(root, VolumeMarkerName);
+        if (File.Exists(volumeMarkerPath))
+        {
+            using var volumeMarkerStream = File.OpenRead(volumeMarkerPath);
+            var volumeMarker = JsonSerializer.Deserialize<TestLabMarker>(volumeMarkerStream) ?? throw new InvalidDataException("The volume marker is invalid.");
+            if (!string.Equals(volumeMarker.Schema, "StorageChronicle.TestLabDataMarker.v1", StringComparison.Ordinal) || !string.Equals(volumeMarker.TestId, options.RunId, StringComparison.Ordinal)) throw new InvalidDataException("The volume marker does not match this run.");
+        }
+        else
+        {
+            File.WriteAllText(volumeMarkerPath, JsonSerializer.Serialize(marker, JsonOptions));
         }
         return root;
     }

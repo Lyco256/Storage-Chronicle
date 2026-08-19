@@ -132,6 +132,7 @@ function Test-Administrator {
 }
 
 function Assert-InstalledService {
+    param([switch]$RequireRunning)
     $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
     $evidence = Write-Evidence -Name 'service-state' -Value $service
     Add-Assertion -Name 'Agent service is installed as automatic LocalSystem service' -Passed ($null -ne $service -and [string]$service.StartMode -eq 'Auto' -and [string]$service.StartName -eq 'LocalSystem') -Details (if ($null -eq $service) { 'Service was not found.' } else { "StartMode=$($service.StartMode); StartName=$($service.StartName); State=$($service.State)" }) -EvidencePath $evidence
@@ -142,6 +143,10 @@ function Assert-InstalledService {
     $hasSixtySecondDelay = $recovery.Output -match '(?<!\d)60000(?!\d)'
     $recoveryPassed = $recovery.ExitCode -eq 0 -and $recovery.Output -match 'FAILURE_ACTIONS' -and $hasFiveSecondDelay -and $hasFifteenSecondDelay -and $hasSixtySecondDelay
     Add-Assertion -Name 'Service recovery policy is exactly 5s/15s/60s' -Passed $recoveryPassed -Details ("sc.exe qfailure: 5000ms={0}; 15000ms={1}; 60000ms={2}." -f $hasFiveSecondDelay, $hasFifteenSecondDelay, $hasSixtySecondDelay) -EvidencePath $recoveryEvidence
+    if ($RequireRunning) {
+        $runningEvidence = Write-Evidence -Name 'service-running-after-update' -Value ([ordered]@{ State = if ($null -eq $service) { $null } else { [string]$service.State } })
+        Add-Assertion -Name 'Agent service restarts after update replacement' -Passed ($null -ne $service -and [string]$service.State -eq 'Running') -Details (if ($null -eq $service) { 'Service was not found after update.' } else { "State=$($service.State)" }) -EvidencePath $runningEvidence
+    }
 }
 
 function Assert-InstalledFiles {
@@ -159,6 +164,27 @@ function Assert-ProductEntry {
     $products = Get-InstalledProduct
     $evidence = Write-Evidence -Name 'product-registration' -Value $products
     Add-Assertion -Name 'Exactly one product registration exists' -Passed ($products.Count -eq 1) -Details "Found $($products.Count) Storage Chronicle product registrations." -EvidencePath $evidence
+}
+
+function Assert-DataDirectory {
+    $historyRoot = [IO.Path]::GetFullPath($HistoryPath)
+    $dataRoot = [IO.Path]::GetFullPath((Split-Path -Parent $historyRoot))
+    $states = @($dataRoot, $historyRoot) | ForEach-Object {
+        $exists = Test-Path -LiteralPath $_ -PathType Container
+        $acl = if ($exists) { Get-Acl -LiteralPath $_ } else { $null }
+        $identities = if ($null -eq $acl) { @() } else { @($acl.Access | ForEach-Object { [string]$_.IdentityReference }) }
+        [ordered]@{ Path = $_; Exists = $exists; HasSystem = $identities -contains 'NT AUTHORITY\SYSTEM'; HasAdministrators = @($identities | Where-Object { $_ -match 'BUILTIN\\Administrators$' }).Count -gt 0 }
+    }
+    $evidence = Write-Evidence -Name 'data-directory-acl' -Value $states
+    Add-Assertion -Name 'ProgramData history and ACL roots are created' -Passed (@($states | Where-Object { -not $_.Exists -or -not $_.HasSystem -or -not $_.HasAdministrators }).Count -eq 0) -Details 'The default ProgramData data/history roots exist and expose SYSTEM and Administrators ACL entries.' -EvidencePath $evidence
+}
+
+function Assert-NoHistoryDeletionOption {
+    $products = Get-InstalledProduct
+    $uninstallStrings = @($products | ForEach-Object { [string]$_.UninstallString })
+    $hasDeletionOption = @($uninstallStrings | Where-Object { $_ -match '(?i)(REMOVE|DELETE|PURGE).*HISTORY|HISTORY.*(REMOVE|DELETE|PURGE)' }).Count -gt 0
+    $evidence = Write-Evidence -Name 'history-deletion-option' -Value ([ordered]@{ UninstallStrings = $uninstallStrings; HasHistoryDeletionOption = $hasDeletionOption })
+    Add-Assertion -Name 'Uninstall exposes no history deletion option' -Passed (-not $hasDeletionOption) -Details 'The registered uninstall command does not provide a history purge/delete option.' -EvidencePath $evidence
 }
 
 function Load-Credential {
@@ -227,6 +253,11 @@ try {
     if ($acceptanceRoot -match '^[A-Za-z]:$' -or $acceptanceRoot -in $blockedRoots) { throw "The driver refused a system or volume acceptance root: $acceptanceRoot" }
     $marker = Join-Path $acceptanceRoot '.storage-chronicle-testlab-marker.json'
     if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { throw "The acceptance root lacks the required marker: $marker" }
+    $volumeMarker = Join-Path $acceptanceRoot 'StorageChronicleTestVolume.json'
+    if (-not (Test-Path -LiteralPath $volumeMarker -PathType Leaf)) { throw "The acceptance root lacks the required volume marker: $volumeMarker" }
+    $markerValue = Get-Content -Raw -Encoding UTF8 -LiteralPath $marker | ConvertFrom-Json
+    $volumeMarkerValue = Get-Content -Raw -Encoding UTF8 -LiteralPath $volumeMarker | ConvertFrom-Json
+    if ([string]$markerValue.Schema -ne 'StorageChronicle.TestLabDataMarker.v1' -or [string]::IsNullOrWhiteSpace([string]$markerValue.TestId) -or [string]$volumeMarkerValue.Schema -ne 'StorageChronicle.TestLabDataMarker.v1' -or [string]$volumeMarkerValue.TestId -ne [string]$markerValue.TestId) { throw 'The acceptance root markers are invalid or do not identify the same TestRun.' }
     $result.Target.Isolated = $true
     $result.Target.TestDataRoot = $acceptanceRoot
     if (-not (Test-Path -LiteralPath $MsiPath -PathType Leaf)) { throw "Base MSI is missing: $MsiPath" }
@@ -236,6 +267,7 @@ try {
             Assert-InstalledFiles
             Assert-InstalledService
             Assert-ProductEntry
+            Assert-DataDirectory
         }
         'repair' {
             Invoke-Msi -Action Repair -PackagePath $MsiPath -EvidenceName $CaseId | Out-Null
@@ -244,6 +276,9 @@ try {
         }
         'update' {
             if ((Get-InstalledProduct).Count -eq 0) { Invoke-Msi -Action Install -PackagePath $MsiPath -EvidenceName ($CaseId + '-install') | Out-Null }
+            $beforeProduct = @(Get-InstalledProduct | Select-Object -First 1)
+            if ($beforeProduct.Count -ne 1) { throw "Expected one product registration before update, found $($beforeProduct.Count)." }
+            $beforeVersion = [version][string]$beforeProduct[0].DisplayVersion
             $stopResult = Invoke-Captured -FilePath (Join-Path $env:WINDIR 'System32\sc.exe') -Arguments @('stop', $ServiceName)
             $stoppedService = $null
             for ($attempt = 0; $attempt -lt 30; $attempt++) {
@@ -255,7 +290,11 @@ try {
             Add-Assertion -Name 'Agent is safely stopped before update replacement' -Passed ($null -ne $stoppedService -and [string]$stoppedService.State -eq 'Stopped' -and $stopResult.ExitCode -in @(0, 1062)) -Details "StopExitCode=$($stopResult.ExitCode); StateAfterStopRequest=$($stoppedService.State)." -EvidencePath $stopEvidence
             Invoke-Msi -Action Install -PackagePath $UpdatedMsiPath -EvidenceName $CaseId | Out-Null
             Assert-InstalledFiles
-            Assert-InstalledService
+            $afterProduct = @(Get-InstalledProduct | Select-Object -First 1)
+            $afterVersion = if ($afterProduct.Count -eq 1) { [version][string]$afterProduct[0].DisplayVersion } else { $null }
+            $versionEvidence = Write-Evidence -Name 'same-major-update' -Value ([ordered]@{ Before = [string]$beforeVersion; After = if ($null -eq $afterVersion) { $null } else { [string]$afterVersion } })
+            Add-Assertion -Name 'Update remains within the same major product version' -Passed ($null -ne $afterVersion -and $afterVersion.Major -eq $beforeVersion.Major) -Details "Before=$beforeVersion; After=$afterVersion." -EvidencePath $versionEvidence
+            Assert-InstalledService -RequireRunning
             Assert-ProductEntry
         }
         'rollback' {
@@ -273,10 +312,20 @@ try {
         'uninstall' {
             if ((Get-InstalledProduct).Count -eq 0) { Invoke-Msi -Action Install -PackagePath $MsiPath -EvidenceName ($CaseId + '-reinstall') | Out-Null }
             New-Item -ItemType Directory -Force -Path $HistoryPath | Out-Null
+            Assert-NoHistoryDeletionOption
             Invoke-Msi -Action Uninstall -PackagePath $MsiPath -EvidenceName $CaseId | Out-Null
             $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
             $evidence = Write-Evidence -Name 'uninstall-state' -Value ([ordered]@{ ServicePresent = $null -ne $service; HistoryPresent = Test-Path -LiteralPath $HistoryPath -PathType Container; ProductCount = (Get-InstalledProduct).Count })
             Add-Assertion -Name 'Uninstall removes product registration and service but retains history directory' -Passed ($null -eq $service -and (Get-InstalledProduct).Count -eq 0 -and (Test-Path -LiteralPath $HistoryPath -PathType Container)) -Details 'The service/product were removed while the permanent history directory remained.' -EvidencePath $evidence
+        }
+        'failed-install-rollback' {
+            $missingInstall = Join-Path $evidenceDirectory 'intentionally-failed-install.msi'
+            $failedInstall = Invoke-Captured -FilePath (Join-Path $env:WINDIR 'System32\msiexec.exe') -Arguments @('/i', $missingInstall, '/qn', '/norestart', '/L*v', (Join-Path $evidenceDirectory "$CaseId-msiexec.log"))
+            $products = @(Get-InstalledProduct)
+            $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
+            $installPresent = Test-Path -LiteralPath $InstallPath -PathType Container
+            $evidence = Write-Evidence -Name 'failed-install-rollback' -Value ([ordered]@{ AttemptedPackagePath = $missingInstall; ExitCode = $failedInstall.ExitCode; TimedOut = $failedInstall.TimedOut; ProductCount = $products.Count; ServicePresent = $null -ne $service; InstallPathPresent = $installPresent; Output = $failedInstall.Output; Error = $failedInstall.Error })
+            Add-Assertion -Name 'Intentionally failed install leaves no half-registered product or service' -Passed ($failedInstall.ExitCode -ne 0 -and -not $failedInstall.TimedOut -and $products.Count -eq 0 -and $null -eq $service -and -not $installPresent) -Details "FailedInstallExitCode=$($failedInstall.ExitCode); ProductCount=$($products.Count); ServicePresent=$($null -ne $service); InstallPathPresent=$installPresent." -EvidencePath $evidence
         }
         'history-retention' {
             if ((Get-InstalledProduct).Count -eq 0) { Invoke-Msi -Action Install -PackagePath $MsiPath -EvidenceName ($CaseId + '-install') | Out-Null }
@@ -286,6 +335,9 @@ try {
             Invoke-Msi -Action Uninstall -PackagePath $MsiPath -EvidenceName $CaseId | Out-Null
             $evidence = Write-Evidence -Name 'history-retention' -Value ([ordered]@{ MarkerPath = $marker; MarkerPresentAfterUninstall = Test-Path -LiteralPath $marker -PathType Leaf; HistoryRootPresent = Test-Path -LiteralPath $HistoryPath -PathType Container })
             Add-Assertion -Name 'History marker survives uninstall' -Passed ((Test-Path -LiteralPath $marker -PathType Leaf) -and (Test-Path -LiteralPath $HistoryPath -PathType Container)) -Details 'Only an empty acceptance marker was created; existing history was not deleted.' -EvidencePath $evidence
+            Invoke-Msi -Action Install -PackagePath $MsiPath -EvidenceName ($CaseId + '-reinstall') | Out-Null
+            $reuseEvidence = Write-Evidence -Name 'history-reuse-after-reinstall' -Value ([ordered]@{ MarkerPath = $marker; MarkerPresentAfterReinstall = Test-Path -LiteralPath $marker -PathType Leaf; ProductCount = (Get-InstalledProduct).Count })
+            Add-Assertion -Name 'Reinstall can reuse retained history' -Passed ((Test-Path -LiteralPath $marker -PathType Leaf) -and (Get-InstalledProduct).Count -eq 1) -Details 'The retained history marker remains available after reinstall.' -EvidencePath $reuseEvidence
         }
         'service' {
             if ((Get-InstalledProduct).Count -eq 0) { Invoke-Msi -Action Install -PackagePath $MsiPath -EvidenceName ($CaseId + '-install') | Out-Null }

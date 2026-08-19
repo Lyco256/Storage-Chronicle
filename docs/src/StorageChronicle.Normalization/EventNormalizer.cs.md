@@ -17,7 +17,7 @@
 - Rename/Move keeps the typed volume, file, parent, old-name, new-name, and source ordering facts. A folder move produces only the observed root event; descendants are reconstructed elsewhere.
 - Recycle and Restore are distinct operations. A cut becomes `Move` only after the Clipboard generation, same volume, same File ID, and changed parent are all confirmed. Cross-volume or incomplete cut evidence remains a normal create with a rejection marker.
 - ETW process attribution is copied as supplied and is never upgraded from `Correlated` to `Exact`. Missing USN metadata is retained with `JournalOnly` quality; reconciliation is marked `Reconciled`; unknown operation is retained as `UnverifiedGap`.
-- Only a small structural property allow-list is copied. Keys that could carry content, hashes, or MIME data are excluded.
+- Only a small structural property allow-list is copied. Reconciliation run IDs, uncertainty boundaries, metadata quality, scan counts, and user decisions are retained so a restart can explain the durable reconciliation outcome; keys that could carry content, hashes, or MIME data are excluded.
 
 ## Failure behavior and dependencies
 

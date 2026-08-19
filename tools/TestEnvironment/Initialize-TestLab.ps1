@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$ConfigPath,
+    [ValidateSet('Windows11', 'Windows10', 'Both')][string]$Target = 'Windows11',
     [switch]$Apply
 )
 
@@ -15,6 +16,7 @@ $manifest = [ordered]@{
     Schema = 'StorageChronicle.TestLabInitialization.v1'
     Status = 'NOT_EXECUTED'
     Apply = [bool]$Apply
+    Target = $Target
     StartedUtc = [DateTimeOffset]::UtcNow
     VMs = @()
     ArtifactDirectory = $artifactDirectory
@@ -23,8 +25,9 @@ $manifest = [ordered]@{
 try {
     $config = Get-TestLabConfig -ConfigPath $ConfigPath
     $root = Assert-TestLabRoot -Root $config.Root
-    Assert-ExistingIso -Path $config.Windows11Iso -Label 'Windows 11 ISO'
-    Assert-ExistingIso -Path $config.Windows10Iso -Label 'Windows 10 22H2 ISO'
+    $guests = if ($Target -eq 'Both') { @('Windows11', 'Windows10') } else { @($Target) }
+    if ($guests -contains 'Windows11') { Assert-ExistingIso -Path $config.Windows11Iso -Label 'Windows 11 ISO' }
+    if ($guests -contains 'Windows10') { Assert-ExistingIso -Path $config.Windows10Iso -Label 'Windows 10 22H2 ISO' }
 
     if (-not $Apply) {
         $manifest.Status = 'READY_FOR_USER_APPLY'
@@ -35,21 +38,22 @@ try {
     }
 
     Assert-HyperVMutationPrerequisites
-    foreach ($guest in @('Windows11', 'Windows10')) {
+    foreach ($guest in $guests) {
         $definition = Get-TestLabVmDefinition -Guest $guest
         $osPath = Assert-PathUnderRoot -Root $root -Path (Join-Path $root ($definition.Name + '\os.vhdx'))
         $isoPath = [string]$config[$definition.IsoKey]
-        $existing = Get-VM -Name $definition.Name -ErrorAction SilentlyContinue
-        $created = $false
+            $existing = Get-VM -Name $definition.Name -ErrorAction SilentlyContinue
+            $created = $false
         if ($null -eq $existing) {
             if (Test-Path -LiteralPath $osPath) { throw "Refusing to reuse an untracked OS VHDX: $osPath" }
-            $existing = New-VM -Name $definition.Name -Generation 2 -MemoryStartupBytes ($definition.MemoryGiB * 1GB) -NewVHDPath $osPath -NewVHDSizeBytes ($definition.VhdxSizeGiB * 1GB) -Path (Join-Path $root $definition.Name)
+            $existing = New-VM -Name $definition.Name -Generation 2 -MemoryStartupBytes ($definition.StartupMemoryGiB * 1GB) -NewVHDPath $osPath -NewVHDSizeBytes ($definition.VhdxSizeGiB * 1GB) -Path (Join-Path $root $definition.Name)
             $created = $true
         }
 
-        $actual = Get-VM -Name $definition.Name
-        if ($actual.Generation -ne 2) { throw "The existing VM has the wrong generation: $($definition.Name)" }
-        Set-VMMemory -VMName $definition.Name -DynamicMemoryEnabled $true -MinimumBytes ($definition.MemoryGiB * 1GB) -StartupBytes ($definition.MemoryGiB * 1GB) -MaximumBytes ($definition.MaximumMemoryGiB * 1GB)
+            $actual = Get-VM -Name $definition.Name
+            if ($actual.Generation -ne 2) { throw "The existing VM has the wrong generation: $($definition.Name)" }
+            Assert-TestLabVmDisks -Vm $actual -Root $root
+            Set-VMMemory -VMName $definition.Name -DynamicMemoryEnabled $true -MinimumBytes ($definition.MinimumMemoryGiB * 1GB) -StartupBytes ($definition.StartupMemoryGiB * 1GB) -MaximumBytes ($definition.MaximumMemoryGiB * 1GB)
         Set-VMProcessor -VMName $definition.Name -Count 2
         $adapters = @(Get-VMNetworkAdapter -VMName $definition.Name -ErrorAction SilentlyContinue)
         if ($adapters.Count -gt 0) { $adapters | Remove-VMNetworkAdapter -Confirm:$false }
@@ -59,7 +63,7 @@ try {
         $dvd = Get-VMDvdDrive -VMName $definition.Name -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $dvd) { $dvd = Add-VMDvdDrive -VMName $definition.Name -Path $isoPath -Passthru }
         else { Set-VMDvdDrive -VMName $definition.Name -Path $isoPath }
-        $manifest.VMs += [ordered]@{ Name = $definition.Name; Created = $created; OsVhdx = $osPath; Iso = $isoPath; Generation = 2; ProcessorCount = 2; DynamicMemory = '2-6GiB'; Network = 'Disconnected'; SecureBoot = $definition.SecureBoot; Vtpm = $definition.Tpm }
+            $manifest.VMs += [ordered]@{ Name = $definition.Name; Created = $created; OsVhdx = $osPath; Iso = $isoPath; Generation = 2; ProcessorCount = 2; DynamicMemory = '2-6GiB'; StartupMemory = '4GiB'; Network = 'Disconnected'; SecureBoot = $definition.SecureBoot; Vtpm = $definition.Tpm }
     }
 
     $manifest.Status = 'CREATED_WAITING_FOR_GUEST_INSTALL'

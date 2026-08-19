@@ -27,7 +27,7 @@ if ($RemoveAcceptanceVhdx) {
     if ([string]::IsNullOrWhiteSpace($TestDataRoot)) { throw '-TestDataRoot is required with -RemoveAcceptanceVhdx.' }
     $root = [IO.Path]::GetFullPath($TestDataRoot).TrimEnd('\')
     if ($root -match '^[A-Za-z]:$' -or $root -match '^C:\?$' -or $root -in @($env:WINDIR.TrimEnd('\'), $env:ProgramFiles.TrimEnd('\'), $env:ProgramData.TrimEnd('\'))) { throw 'Refusing to remove from a system or volume root.' }
-    $vhdxFiles = @(Get-ChildItem -LiteralPath $root -Filter '*.vhdx' -File -Recurse -ErrorAction SilentlyContinue | Where-Object { Test-Path -LiteralPath (Join-Path $_.DirectoryName '.storage-chronicle-testlab-marker.json') -PathType Leaf })
+    $vhdxFiles = @(Get-ChildItem -LiteralPath $root -Filter '*.vhdx' -File -Recurse -ErrorAction SilentlyContinue | Where-Object { (Test-Path -LiteralPath (Join-Path $_.DirectoryName '.storage-chronicle-testlab-marker.json') -PathType Leaf) -and (Test-Path -LiteralPath (Join-Path $_.DirectoryName 'StorageChronicleTestVolume.json') -PathType Leaf) })
     foreach ($vhdx in $vhdxFiles) {
         if ($PSCmdlet.ShouldProcess($vhdx.FullName, 'Dismount and remove explicitly marked acceptance VHDX')) {
             $dismountCommand = Get-Command Dismount-DiskImage -ErrorAction SilentlyContinue

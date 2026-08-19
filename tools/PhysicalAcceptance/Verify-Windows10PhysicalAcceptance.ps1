@@ -37,8 +37,20 @@ if (-not (Test-Path -LiteralPath $TestDataRoot -PathType Container)) { Add-Check
     $insideBundle = $trimmed.Equals($bundleTrimmed, [StringComparison]::OrdinalIgnoreCase) -or $trimmed.StartsWith($bundleTrimmed + '\\', [StringComparison]::OrdinalIgnoreCase)
     $safe = $trimmed -notin $blocked -and $trimmed -notmatch '^[A-Za-z]:$' -and -not $insideBundle
     $markerPath = Join-Path $TestDataRoot '.storage-chronicle-testlab-marker.json'
+    $volumeMarkerPath = Join-Path $TestDataRoot 'StorageChronicleTestVolume.json'
     $markerPresent = Test-Path -LiteralPath $markerPath -PathType Leaf
-    Add-Check 'TestDataRoot' ($safe -and $markerPresent) ("Root={0}; systemBlocked={1}; bundleBlocked={2}; marker={3}" -f $TestDataRoot, ($trimmed -in $blocked), $insideBundle, $markerPresent)
+    $volumeMarkerPresent = Test-Path -LiteralPath $volumeMarkerPath -PathType Leaf
+    $markerValid = $false
+    if ($markerPresent -and $volumeMarkerPresent) {
+        $marker = Get-Content -Raw -Encoding UTF8 -LiteralPath $markerPath | ConvertFrom-Json
+        $volumeMarker = Get-Content -Raw -Encoding UTF8 -LiteralPath $volumeMarkerPath | ConvertFrom-Json
+        $markerValid = [string]$marker.Schema -eq 'StorageChronicle.TestLabDataMarker.v1' -and -not [string]::IsNullOrWhiteSpace([string]$marker.TestId) -and [string]$volumeMarker.Schema -eq 'StorageChronicle.TestLabDataMarker.v1' -and [string]$volumeMarker.TestId -eq [string]$marker.TestId
+    }
+    Add-Check 'TestDataRoot' ($safe -and $markerValid) ("Root={0}; systemBlocked={1}; bundleBlocked={2}; executionMarker={3}; volumeMarker={4}; markerValid={5}" -f $TestDataRoot, ($trimmed -in $blocked), $insideBundle, $markerPresent, $volumeMarkerPresent, $markerValid)
+    $driveId = if ($TestDataRoot -match '^[A-Za-z]:') { $TestDataRoot.Substring(0, 2) } else { $null }
+    $disk = if ($driveId) { Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='$driveId'" -ErrorAction SilentlyContinue } else { $null }
+    $freeGiB = if ($null -eq $disk) { 0 } else { [math]::Round([double]$disk.FreeSpace / 1GB, 2) }
+    Add-Check 'TestLab VHDX destination and free space' ($null -ne $disk -and $freeGiB -ge 10) ("Volume={0}; FreeSpaceGiB={1}; minimum=10" -f $driveId, $freeGiB)
 }
 $payload = [ordered]@{
     Schema = 'StorageChronicle.Windows10PhysicalPreflight.v1'

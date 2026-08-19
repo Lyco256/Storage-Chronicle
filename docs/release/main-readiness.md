@@ -6,7 +6,7 @@ The branch/ref audit for this continuation is recorded in `docs/release/branch-a
 
 `build/quality/Test-FinalAcceptance.ps1` is the final evidence aggregator. It requires nine real, eligible artifacts and exits with `2` when any artifact is missing, diagnostic, partial, failed, or `AcceptanceEligible=false`; the no-argument verification on 2026-08-19 correctly remained blocked.
 
-## Verified on 2026-08-03
+## Verified on 2026-08-20
 
 - `dotnet build StorageChronicle.slnx --no-restore -v:minimal`: 0 warnings, 0 errors.
 - `build/Test-Fast.ps1 -NoRestore`: all 22 non-privileged test projects passed.
@@ -17,7 +17,7 @@ The branch/ref audit for this continuation is recorded in `docs/release/branch-a
 
 ## Blocking release evidence
 
-- The latest partial `build/Test-WindowsPrivileged.ps1` Release run is recorded at `artifacts/acceptance/windows-privileged-20260803-230134.json`. It passed ReadDirectoryChangesW and Session on a safe existing directory, but VHDX, USN, MFT, ETW, SMB, service, and removable-media capabilities remained `NOT_EXECUTED`; the overall fail-closed exit code was 2.
+- `build/Test-Privileged.ps1` now emits a v2 manifest with the complete required capability list and per-run environment/capability/oracle/source/canonical/state/reconciliation/service/error/result artifacts. It refuses USN journal creation/resizing and remains fail-closed: the current host cannot execute the required matrix, so no capability is promoted to acceptance by the new artifact shape.
 - Windows 10 22H2 compatibility, physical media insertion, ETW, service recovery, and clean installer/update/rollback are not available in this current environment.
 - The feature checkout is clean at the latest reviewed commit, but it has not yet been merged into `devenv`; no `main` merge is authorized.
 - A post-integration 600-second resource-budget diagnostic completed with complete lifecycle/resource/queue evidence, but the formal acceptance run remains pending because it was intentionally diagnostic and lacks independent final-five-minute quiet-period evidence. Live Agent/Explorer correlation measurements also remain pending; the deterministic correlation fixture is measured at Exact 1/3, Correlated 1/3, Unknown 1/3, Explorer 1/3.
@@ -26,7 +26,7 @@ The branch/ref audit for this continuation is recorded in `docs/release/branch-a
 
 ## Additional implementation blockers found in the 2026-08-04 audit
 
-- The confirmed Execute path, selected-volume NTFS/public-MFT route, non-NTFS directory route, candidate-only metadata reads, durable Source/Canonical/State ordering, cancellation/failure gaps, scoped `SeBackupPrivilege`, and low-priority I/O telemetry are now implemented on the feature branch and covered by 20 Agent tests. They still require the real Windows TestLab capability matrix before acceptance can be marked verified.
+- The confirmed Execute path, selected-volume NTFS/public-MFT route, non-NTFS directory route, candidate-only metadata reads, durable Source/Canonical/State ordering, cancellation/failure gaps, scoped `SeBackupPrivilege`, low-priority I/O telemetry, and a bounded post-commit live-event reconciliation buffer are implemented on the feature branch and covered by 25 Agent tests. They still require the real Windows TestLab capability matrix before acceptance can be marked verified.
 - The Windows TestLab scripts and real metadata-only file-mutation workload are now present with fail-closed root/VM/VHDX/marker checks. The current host preflight remains blocking: Windows 11 Home, no Hyper-V PowerShell module/VMMS, and no approved local ISO/TestLab root.
 - R-17 IPC role separation is now implemented and tested: `--diagnostic` skips service registration/recovery configuration, both clients send a versioned role/session hello, the Agent verifies the authenticated process/session, limits Session Agent connections to ClipboardCandidate, and rejects an unpublished Session Agent role.
 - The shared build language-version override and release-signing procedure gaps were corrected in the current feature branch; Native AOT configuration is now opt-in and remains non-acceptance diagnostic work.
@@ -41,6 +41,7 @@ The final-acceptance requirements are now represented by executable orchestratio
 - privileged Windows matrix and Windows 10 22H2: not executed on this host;
 - formal 600-second dual-process resource gate with independent quiet-period evidence: not executed;
 - dedicated `SC_TEST_MFT_VOLUME` 10K/100K/1M matrix: harness expanded, volume/marker run pending;
-- physical installer and real Agent/Explorer correlation: not executed;
+- MFT benchmark correctness artifact: the current BenchmarkDotNet harness validates method presence but does not yet populate and validate the required per-run dataset/candidate/detail-query/drop/environment oracle; this remains blocking until the TestLab workload is connected;
+- physical installer and real Agent/Explorer correlation: not executed; the correlation wrapper intentionally reports fixture-only or live `NOT_EXECUTED` and has no synthetic Explorer substitute;
 - physical acceptance bundles are now generated by `build/package/New-ManualAcceptanceBundle.ps1`; the generator refuses missing updated/rollback MSI inputs and generated bundles remain `AcceptanceEligible=false` until real-machine evidence exists;
 - `devenv`/`main` integration: intentionally pending until every blocking gate has an eligible artifact.

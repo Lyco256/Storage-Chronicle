@@ -4,7 +4,7 @@ Coordinates multiple collectors through bounded source storage, deterministic no
 
 ## Role
 
-This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle.
+This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle. The pipeline also exposes a post-commit source notification used by the Agent reconciliation live-event buffer.
 
 ## Public types and responsibilities
 

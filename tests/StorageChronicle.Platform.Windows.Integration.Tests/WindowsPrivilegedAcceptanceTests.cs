@@ -36,6 +36,8 @@ public sealed class WindowsPrivilegedAcceptanceTests
     [Fact]
     [Trait("Category", "WindowsPrivileged")]
     [Trait("Capability", "Usn")]
+    [Trait("Capability", "UsnQuery")]
+    [Trait("Capability", "UsnRead")]
     public async Task ExistingUsnJournalCanBeReadWithoutCreatingOrResizingIt()
     {
         var root = WindowsAcceptanceEnvironment.RootPath;
@@ -233,6 +235,7 @@ public sealed class WindowsPrivilegedAcceptanceTests
     [Fact]
     [Trait("Category", "WindowsPrivileged")]
     [Trait("Capability", "Session")]
+    [Trait("Capability", "Clipboard")]
     public async Task InteractiveSessionCanReadClipboardMetadataAndCreateItsNotificationWindow()
     {
         Assert.True(Environment.UserInteractive, "An interactive user session is required for the clipboard acceptance check.");

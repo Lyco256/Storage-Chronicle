@@ -69,6 +69,7 @@ $caseDefinitions = @(
     [ordered]@{ Id = 'update'; Name = 'Update'; Requirements = @('MsiPath', 'UpdatedMsiPath') },
     [ordered]@{ Id = 'rollback'; Name = 'Rollback'; Requirements = @('MsiPath', 'UpdatedMsiPath', 'RollbackMsiPath') },
     [ordered]@{ Id = 'uninstall'; Name = 'Uninstall'; Requirements = @('MsiPath') },
+    [ordered]@{ Id = 'failed-install-rollback'; Name = 'Intentionally failed install rollback'; Requirements = @('MsiPath') },
     [ordered]@{ Id = 'history-retention'; Name = 'History retention'; Requirements = @('MsiPath', 'HistoryPath') },
     [ordered]@{ Id = 'service'; Name = 'LocalSystem service and recovery'; Requirements = @('MsiPath', 'ServiceName', 'ServiceCredentialReference') },
     [ordered]@{ Id = 'session'; Name = 'Session Agent startup'; Requirements = @('MsiPath', 'SessionUser') },

@@ -44,6 +44,7 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
     private readonly AppendOnlyStorageEngine storage;
     private readonly IEventNormalizer normalizer;
     private readonly AgentHealthState health;
+    private readonly ReconciliationLiveEventBuffer liveEvents;
 
     /// <summary>Initializes the production reconciliation runner.</summary>
     public ConfirmedReconciliationRunner(
@@ -53,7 +54,8 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
         WindowsFileMetadataReader metadataReader,
         AppendOnlyStorageEngine storage,
         IEventNormalizer normalizer,
-        AgentHealthState health)
+        AgentHealthState health,
+        ReconciliationLiveEventBuffer? liveEvents = null)
     {
         this.volumes = volumes ?? throw new ArgumentNullException(nameof(volumes));
         this.ntfsApi = ntfsApi ?? throw new ArgumentNullException(nameof(ntfsApi));
@@ -62,6 +64,7 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
         this.storage = storage ?? throw new ArgumentNullException(nameof(storage));
         this.normalizer = normalizer ?? throw new ArgumentNullException(nameof(normalizer));
         this.health = health ?? throw new ArgumentNullException(nameof(health));
+        this.liveEvents = liveEvents ?? new ReconciliationLiveEventBuffer();
     }
 
     /// <inheritdoc />
@@ -81,17 +84,18 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
         var metrics = new ReconciliationScopeMetrics();
         var sourceSequence = Math.Max(storage.Status.LastSourceSequence + 1, request.SourceSequence.GetValueOrDefault() + 1);
         var uncertainFrom = request.DiscoveredUtc;
+        using var liveSession = liveEvents.Begin(requestedVolume, request.SourceSequence.GetValueOrDefault());
         try
         {
             var saved = await ReadSavedEntriesAsync(requestedVolume, cancellationToken).ConfigureAwait(false);
             if (string.Equals(descriptor.FileSystem, "NTFS", StringComparison.OrdinalIgnoreCase) && descriptor.SupportsUsn)
             {
                 var summary = await ExecuteNtfsAsync(descriptor, saved, runId, uncertainFrom, sourceSequence, metrics, cancellationToken).ConfigureAwait(false);
-                return summary with { StartedUtc = started, FinishedUtc = DateTimeOffset.UtcNow };
+                return await FinishWithLiveEventsAsync(summary with { StartedUtc = started, FinishedUtc = DateTimeOffset.UtcNow }, liveSession, descriptor, uncertainFrom, sourceSequence, cancellationToken).ConfigureAwait(false);
             }
 
             var nonNtfs = await ExecuteDirectoryAsync(descriptor, saved, runId, uncertainFrom, sourceSequence, metrics, cancellationToken).ConfigureAwait(false);
-            return nonNtfs with { StartedUtc = started, FinishedUtc = DateTimeOffset.UtcNow };
+            return await FinishWithLiveEventsAsync(nonNtfs with { StartedUtc = started, FinishedUtc = DateTimeOffset.UtcNow }, liveSession, descriptor, uncertainFrom, sourceSequence, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException exception) when (cancellationToken.IsCancellationRequested)
         {
@@ -105,6 +109,32 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
             await AppendFailureAsync(descriptor, runId, uncertainFrom, finished, sourceSequence, "Failed", exception.Message, CancellationToken.None).ConfigureAwait(false);
             return new ReconciliationExecutionSummary(runId, requestedVolume, descriptor.FileSystem, false, "Failed", 0, 0, 0, 0, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.Priority, started, finished, exception.Message);
         }
+    }
+
+    private async ValueTask<ReconciliationExecutionSummary> FinishWithLiveEventsAsync(
+        ReconciliationExecutionSummary summary,
+        ReconciliationLiveEventBuffer.ReconciliationLiveEventSession liveSession,
+        VolumeDescriptor volume,
+        DateTimeOffset uncertainFrom,
+        long sourceSequence,
+        CancellationToken cancellationToken)
+    {
+        var batch = liveSession.Complete();
+        if (batch.Overflowed)
+        {
+            const string reason = "The bounded live-event reconciliation buffer overflowed; the run was not completed.";
+            await AppendFailureAsync(volume, summary.RunId, uncertainFrom, DateTimeOffset.UtcNow, sourceSequence, "Failed", reason, CancellationToken.None).ConfigureAwait(false);
+            return summary with { Completed = false, Status = "Failed", FinishedUtc = DateTimeOffset.UtcNow, FailureReason = reason };
+        }
+
+        foreach (var source in batch.Events)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var canonical = normalizer.Normalize(source);
+            if (canonical is not null) await storage.ApplyAsync(canonical, cancellationToken).ConfigureAwait(false);
+        }
+
+        return summary;
     }
 
     private async ValueTask<ReconciliationExecutionSummary> ExecuteNtfsAsync(

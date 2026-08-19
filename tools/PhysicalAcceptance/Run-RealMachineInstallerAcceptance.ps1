@@ -17,12 +17,25 @@ $manifestPath = Join-Path $BundleRoot 'bundle-manifest.json'
 $hashPath = Join-Path $BundleRoot 'hash-manifest.json'
 if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw "Bundle manifest is missing: $manifestPath" }
 if (-not (Test-Path -LiteralPath $hashPath -PathType Leaf)) { throw "Hash manifest is missing: $hashPath" }
-$manifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $manifestPath | ConvertFrom-Json
-$target = [string]$manifest.TargetOs
-if ($target -notin @('Windows10-22H2', 'Windows11')) { throw "Unsupported bundle target: $target" }
-$hashManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $hashPath | ConvertFrom-Json
-$integrityFailures = [System.Collections.Generic.List[string]]::new()
-foreach ($entry in @($hashManifest.Files)) {
+    $manifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $manifestPath | ConvertFrom-Json
+    $target = [string]$manifest.TargetOs
+    if ($target -notin @('Windows10-22H2', 'Windows11')) { throw "Unsupported bundle target: $target" }
+    if (@($manifest.MissingInputs).Count -gt 0) { throw ('Bundle is incomplete; missing inputs: ' + (@($manifest.MissingInputs) -join ', ')) }
+    $hashManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $hashPath | ConvertFrom-Json
+    $integrityFailures = [System.Collections.Generic.List[string]]::new()
+    $requiredPayload = @('StorageChronicle.msi', 'StorageChronicle.updated.msi', 'StorageChronicle.rollback.msi', 'Test-Installer.ps1', 'Invoke-RealInstallerCase.ps1', 'Probe-WriteAccess.ps1', 'Collect-PhysicalAcceptanceResults.ps1')
+    $hashEntries = @($hashManifest.Files | ForEach-Object { [string]$_.RelativePath })
+    foreach ($relative in $requiredPayload) {
+        $path = Join-Path $BundleRoot $relative
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { [void]$integrityFailures.Add("Missing required payload: $path") }
+        if ($hashEntries -notcontains $relative) { [void]$integrityFailures.Add("Required payload is absent from hash manifest: $relative") }
+    }
+    foreach ($relative in @('agent/StorageChronicle.Agent.exe', 'session-agent/StorageChronicle.SessionAgent.exe', 'ui/StorageChronicle.UI.Desktop.exe')) {
+        $path = Join-Path $BundleRoot $relative
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { [void]$integrityFailures.Add("Missing self-contained executable: $path") }
+        if ($hashEntries -notcontains $relative) { [void]$integrityFailures.Add("Self-contained executable is absent from hash manifest: $relative") }
+    }
+    foreach ($entry in @($hashManifest.Files)) {
     $path = Join-Path $BundleRoot ([string]$entry.RelativePath)
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { [void]$integrityFailures.Add("Missing payload: $path"); continue }
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash
@@ -45,8 +58,14 @@ $bundleRootTrimmed = $BundleRoot.TrimEnd('\')
 $insideBundle = $testDataRootFull.Equals($bundleRootTrimmed, [StringComparison]::OrdinalIgnoreCase) -or $testDataRootFull.StartsWith($bundleRootTrimmed + '\', [StringComparison]::OrdinalIgnoreCase)
 if ($testDataRootFull -match '^[A-Za-z]:$' -or $testDataRootFull -in $blockedRoots -or $insideBundle) { throw "Refusing system, volume, or bundle test root: $TestDataRoot" }
 if (-not (Test-Path -LiteralPath $testDataRootFull -PathType Container)) { throw "Approved test root does not exist: $TestDataRoot" }
-$markerFiles = @(Get-ChildItem -LiteralPath $testDataRootFull -Filter '.storage-chronicle-testlab-marker.json' -File -ErrorAction SilentlyContinue)
-if ($markerFiles.Count -ne 1) { throw 'The approved test root must contain exactly one .storage-chronicle-testlab-marker.json marker created by the TestLab/data-volume preparation step.' }
+    $markerFiles = @(Get-ChildItem -LiteralPath $testDataRootFull -Filter '.storage-chronicle-testlab-marker.json' -File -ErrorAction SilentlyContinue)
+    if ($markerFiles.Count -ne 1) { throw 'The approved test root must contain exactly one .storage-chronicle-testlab-marker.json marker created by the TestLab/data-volume preparation step.' }
+    $volumeMarkerPath = Join-Path $testDataRootFull 'StorageChronicleTestVolume.json'
+    if (-not (Test-Path -LiteralPath $volumeMarkerPath -PathType Leaf)) { throw "The approved test root lacks the required volume marker: $volumeMarkerPath" }
+    $marker = Get-Content -Raw -Encoding UTF8 -LiteralPath $markerFiles[0].FullName | ConvertFrom-Json
+    $volumeMarker = Get-Content -Raw -Encoding UTF8 -LiteralPath $volumeMarkerPath | ConvertFrom-Json
+    if ([string]$marker.Schema -ne 'StorageChronicle.TestLabDataMarker.v1' -or [string]::IsNullOrWhiteSpace([string]$marker.TestId)) { throw 'The execution marker schema or TestId is invalid.' }
+    if ([string]$volumeMarker.Schema -ne 'StorageChronicle.TestLabDataMarker.v1' -or [string]$volumeMarker.TestId -ne [string]$marker.TestId) { throw 'The volume marker schema or TestId does not match the execution marker.' }
 $logicalDisk = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='$($testDataRootFull.Substring(0, 2))'" -ErrorAction SilentlyContinue
 $freeSpaceGiB = if ($null -eq $logicalDisk) { 0 } else { [math]::Round([double]$logicalDisk.FreeSpace / 1GB, 2) }
 if ($freeSpaceGiB -lt 10) { throw "Insufficient free space on the test volume: ${freeSpaceGiB} GiB; at least 10 GiB is required." }

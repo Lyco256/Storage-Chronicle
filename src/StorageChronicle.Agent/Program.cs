@@ -33,6 +33,7 @@ public static class Program
         var flushSeconds = Math.Clamp(initialMachineSettings.FlushIntervalSeconds, 1, 60);
         builder.Services.AddSingleton(new AppendOnlyStorageEngine(new StorageEngineOptions(storageDirectory) { FlushInterval = TimeSpan.FromSeconds(flushSeconds) }));
         builder.Services.AddSingleton<AgentHealthState>();
+        builder.Services.AddSingleton<ReconciliationLiveEventBuffer>();
         builder.Services.AddSingleton<IEventStore>(services => services.GetRequiredService<AppendOnlyStorageEngine>());
         builder.Services.AddSingleton<IStateStore>(services => services.GetRequiredService<AppendOnlyStorageEngine>());
         builder.Services.AddSingleton<IEventNormalizer, EventNormalizer>();

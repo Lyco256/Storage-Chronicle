@@ -57,7 +57,7 @@ public sealed class EventNormalizer : IEventNormalizer
             "clipboardGeneration", "clipboardIntent", "clipboardEffect", "sourcePathAvailable",
             "destinationPathAvailable", "copySourceFileId", "copyCorrelationQuality",
             "cutCorrelationQuality", "cutCorrelationRejected", "copyScope", "explorerOperation",
-            "correlationQuality", "reconciliationReason", "mountReason", "volumeChange",
+            "correlationQuality", "reconciliationReason", "reconciliationRunId", "reconciliationStatus", "reconciliationRequestId", "reconciliationDecision", "userDeclined", "uncertainFromUtc", "uncertainToUtc", "metadataQuality", "scanSequence", "mountReason", "volumeChange",
             "sourceRoute", "destinationRoute", "isRootChange", "path", "oldPath", "process.name", "process.executable", "process.parentInstanceId",
             "media.logicalMediaId", "media.quality", "media.branch", "media.segment", "media.importedFromPc", "media.removed", "media.recovery");
 

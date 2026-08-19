@@ -6,18 +6,19 @@ Runs the R-20 physical installer acceptance matrix for one explicitly declared W
 
 ## Public types and responsibilities
 
-The PowerShell script has no shared product contract or substitute domain type. Its public command-line parameters select the MSI artifacts, target (`Windows10-22H2` or `Windows11`), execution mode (`Local` or `VM`), isolated-environment driver, guest paths, and non-secret credential references. The fixed manifest contains these ten cases:
+The PowerShell script has no shared product contract or substitute domain type. Its public command-line parameters select the MSI artifacts, target (`Windows10-22H2` or `Windows11`), execution mode (`Local` or `VM`), isolated-environment driver, guest paths, and non-secret credential references. The fixed manifest contains these eleven cases:
 
 1. clean install
 2. repair
 3. update
 4. rollback
 5. uninstall
-6. history retention
-7. LocalSystem service and recovery
-8. Session Agent startup
-9. non-admin UI
-10. storage permission
+6. intentionally failed install rollback
+7. history retention and reinstall reuse
+8. LocalSystem service and recovery
+9. Session Agent startup
+10. non-admin UI
+11. storage permission
 
 The external driver performs the destructive MSI operations and state assertions in the disposable target. The harness validates the driver's result rather than replacing those operations with fake data.
 
@@ -35,9 +36,9 @@ The script depends on Windows MSI/SCM/session/ACL capabilities, PowerShell, the 
 
 ## Invariants
 
-- The ten R-20 cases are always represented in the manifest, including when none can run.
+- The eleven R-20 cases are always represented in the manifest, including when none can run.
 - Missing MSI artifacts, target OS, driver, ISO, VM, isolation declaration, account, credential reference, or administrator/service capability produces `NOT_EXECUTED`, never `PASSED`.
-- A nonzero exit code is returned for `FAILED` or `NOT_EXECUTED`; only ten passed cases produce exit code `0`.
+- A nonzero exit code is returned for `FAILED` or `NOT_EXECUTED`; only eleven passed cases produce exit code `0`.
 - VM results must identify the VM and the requested Windows target. A driver exit code alone is insufficient evidence.
 - History is checked by the driver as retained state; the harness never adds a history-deletion operation.
 - No file contents or file-content hashes are read by the harness. Evidence is checked only by path existence, and credential references are recorded without secret material.
@@ -60,4 +61,4 @@ MSI, LocalSystem service recovery, user-logon Session Agent startup, non-adminis
 
 ## Change-sensitive contracts
 
-Keep the ten case IDs stable because release reports and `docs/release/requirements-verification.md` refer to them. Changes to the driver result schema must remain backward-incompatible only through a new `Schema` or script version. Do not weaken the isolated-target, administrator, assertion, evidence-path, or fail-closed checks to make a physical acceptance run pass. Changes to the WiX product contract belong in `installer/**` and its manifest tests, not in this harness.
+Keep the eleven case IDs stable because release reports and `docs/release/requirements-verification.md` refer to them. Changes to the driver result schema must remain backward-incompatible only through a new `Schema` or script version. Do not weaken the isolated-target, administrator, assertion, evidence-path, or fail-closed checks to make a physical acceptance run pass. Changes to the WiX product contract belong in `installer/**` and its manifest tests, not in this harness.

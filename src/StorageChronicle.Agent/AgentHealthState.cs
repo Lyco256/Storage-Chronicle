@@ -15,6 +15,7 @@ public sealed class AgentHealthState
     private readonly ConcurrentDictionary<string, PendingReconciliationRequest> pending = new(StringComparer.Ordinal);
     private string? failureReason;
     private int queueDepth;
+    private int historyRestored;
 
     /// <summary>Observes one source fact without retaining its path or contents.</summary>
     public void Observe(SourceEvent source)
@@ -29,7 +30,7 @@ public sealed class AgentHealthState
             : source.Quality == EventQuality.Reconciled || source.Origin is EventOrigin.MftReconciliation or EventOrigin.DirectoryReconciliation
                 ? MonitoringContinuity.ReconciledState
                 : source.Origin == EventOrigin.RecoveredUsn ? MonitoringContinuity.JournalRecovered : MonitoringContinuity.Continuous;
-        var reason = source.Properties.GetValueOrDefault("reconciliationReason") ?? source.Properties.GetValueOrDefault("reason");
+        var reason = GetProperty(source.Properties, "reconciliationReason") ?? GetProperty(source.Properties, "reason");
         if (source.VolumeId is { } volume)
         {
             if (!isGap && volumes.TryGetValue(volume.Value, out var previous) && previous.Continuity == MonitoringContinuity.UnverifiedGap &&
@@ -116,4 +117,74 @@ public sealed class AgentHealthState
     /// <summary>Looks up a pending request without exposing the mutable health dictionary.</summary>
     public bool TryGetPending(string requestId, out PendingReconciliationRequest request)
         => pending.TryGetValue(requestId, out request!);
+
+    /// <summary>Rehydrates continuity and unresolved reconciliation prompts from immutable canonical history after an Agent restart.</summary>
+    public async ValueTask RestoreFromHistoryAsync(AppendOnlyStorageEngine storage, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(storage);
+        if (Interlocked.Exchange(ref historyRestored, 1) != 0) return;
+
+        try
+        {
+            var offset = 0;
+            while (true)
+            {
+                var page = await storage.ReadCanonicalPageAsync(offset, 512, cancellationToken: cancellationToken).ConfigureAwait(false);
+                if (page.Count == 0) break;
+                foreach (var canonical in page)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (canonical.VolumeId is not { } volume) continue;
+                    var isGap = canonical.Quality == EventQuality.UnverifiedGap || canonical.Operation == CanonicalOperation.UnverifiedGap;
+                    var isDeclined = isGap && string.Equals(GetProperty(canonical.Properties, "userDeclined"), "true", StringComparison.OrdinalIgnoreCase);
+                    var isReconciled = canonical.Quality == EventQuality.Reconciled || ((canonical.Origin is EventOrigin.MftReconciliation or EventOrigin.DirectoryReconciliation) && canonical.Operation == CanonicalOperation.ReconciliationDiscovered);
+                    if (!isGap && !isReconciled) continue;
+
+                    var source = new SourceEvent(
+                        canonical.EventId,
+                        canonical.SchemaVersion,
+                        canonical.Origin,
+                        canonical.VolumeId,
+                        canonical.FileId,
+                        canonical.ParentFileId,
+                        canonical.Name,
+                        canonical.OldName,
+                        canonical.Operation,
+                        canonical.Metadata,
+                        canonical.Time,
+                        canonical.Quality,
+                        canonical.ProcessInstanceId,
+                        canonical.ProcessQuality,
+                        canonical.MountSessionId,
+                        canonical.OperationCorrelationId,
+                        canonical.Properties);
+                    Observe(source, createPendingReconciliation: isGap && !isDeclined);
+                    if (isDeclined || isReconciled) ResolvePendingForVolume(volume);
+                }
+
+                offset += page.Count;
+                if (page.Count < 512) break;
+            }
+        }
+        catch
+        {
+            Interlocked.Exchange(ref historyRestored, 0);
+            throw;
+        }
+    }
+
+    private void ResolvePendingForVolume(VolumeId volume)
+    {
+        foreach (var request in pending.Values.Where(value => value.VolumeId == volume)) pending.TryRemove(request.RequestId, out _);
+    }
+
+    private static string? GetProperty(IReadOnlyDictionary<string, string> properties, string name)
+    {
+        foreach (var pair in properties)
+        {
+            if (string.Equals(pair.Key, name, StringComparison.OrdinalIgnoreCase)) return pair.Value;
+        }
+
+        return null;
+    }
 }

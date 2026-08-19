@@ -8,7 +8,7 @@ The Agent owns the user-confirmed execution boundary while platform collectors o
 
 ## Inputs and outputs
 
-Input is one selected `PendingReconciliationRequest`; output is a bounded `ReconciliationExecutionSummary` plus durable Source, Canonical, and State updates or an explicit Failed/Interrupted gap.
+Input is one selected `PendingReconciliationRequest`; output is a bounded `ReconciliationExecutionSummary` plus durable Source, Canonical, and State updates or an explicit Failed/Interrupted gap. A volume-scoped bounded live-event session remains open through reconciliation appends; committed ordinary events are replayed to state after the scan, and overflow creates a failed gap.
 
 ## Public types and responsibilities
 
@@ -20,11 +20,11 @@ Only the requested volume is scanned. NTFS detailed metadata is requested only f
 
 ## Dependencies
 
-The runner depends on the volume, NTFS, production snapshot, metadata, normalization, health, and append storage boundaries. Tests cover candidate selection, metadata-query bounds, durable reconciliation quality, deletion, cancellation/failure records, and role-triggered execution; Windows TestLab supplies the real-I/O acceptance evidence.
+The runner depends on the volume, NTFS, production snapshot, metadata, normalization, health, append storage, and bounded live-event buffer boundaries. Tests cover candidate selection, metadata-query bounds, durable reconciliation quality, deletion, cancellation/failure records, live-event capture, and role-triggered execution; Windows TestLab supplies the real-I/O acceptance evidence.
 
 ## Threading and lifetime
 
-The runner is asynchronous and bounded by the caller cancellation token. Native privilege and priority scopes are created and disposed around each synchronous candidate metadata operation, so thread token state does not cross an await.
+The runner is asynchronous and bounded by the caller cancellation token. Native privilege and priority scopes are created and disposed around each synchronous candidate metadata operation, so thread token state does not cross an await. The live-event capture is bounded and closes before replay.
 
 ## Failure behavior
 

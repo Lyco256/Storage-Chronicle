@@ -1,10 +1,10 @@
 # AgentWorker.cs
 
-Adapts the multi-collector pipeline to the .NET hosted-service lifecycle. It forwards collector failures, source continuity, and bounded queue depth to health IPC, catches durable pipeline failures as quality state, retries recoverable stopped storage through `TryResumeAsync`, disposes event-driven Windows sources on shutdown, and flushes durable storage before service completion. It has no UI and is intended for LocalSystem deployment with service recovery settings.
+Adapts the multi-collector pipeline to the .NET hosted-service lifecycle. Before the first collection pass it rehydrates unresolved continuity prompts from canonical history, then forwards collector failures, source continuity, and bounded queue depth to health IPC, catches durable pipeline failures as quality state, retries recoverable stopped storage through `TryResumeAsync`, disposes event-driven Windows sources on shutdown, and flushes durable storage before service completion. It has no UI and is intended for LocalSystem deployment with service recovery settings.
 
 ## Role
 
-This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle.
+This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle. The worker wires the singleton bounded reconciliation live-event buffer to the pipeline's post-commit source notification so reconciliation never relies on a global monitoring stop.
 
 ## Public types and responsibilities
 

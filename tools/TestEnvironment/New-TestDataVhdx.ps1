@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][ValidateSet('SC-Test-W11', 'SC-Test-W10')][string]$VmName,
-    [ValidateSet('Workload', 'Mft')][string]$Role = 'Workload',
-    [string]$TestId = (Get-Date -Format 'yyyyMMdd-HHmmss'),
+    [ValidateSet('Workload', 'Mft', 'NonNtfs')][string]$Role = 'Workload',
+    [string]$TestId = ([guid]::NewGuid().ToString('N')),
     [int]$SizeGiB,
     [string]$ConfigPath,
     [switch]$Apply
@@ -20,6 +20,7 @@ try {
     $root = Assert-TestLabRoot -Root $config.Root
     if ($SizeGiB -le 0) { $SizeGiB = if ($Role -eq 'Mft') { 16 } else { 4 } }
     if ($Role -eq 'Mft' -and $SizeGiB -lt 16) { throw 'The MFT benchmark VHDX must be at least 16 GiB.' }
+    if ($Role -eq 'NonNtfs' -and $SizeGiB -lt 4) { throw 'The non-NTFS test VHDX must be at least 4 GiB.' }
     $path = Assert-PathUnderRoot -Root $root -Path (Join-Path $root "data\$VmName\$safeTestId-$Role.vhdx")
     if (-not $Apply) {
         $manifest.Status = 'READY_FOR_USER_APPLY'
@@ -39,7 +40,7 @@ try {
     $manifest.Status = 'CREATED_AND_ATTACHED'
     $manifest.VhdxPath = $path
     $manifest.SizeGiB = $SizeGiB
-    $manifest.Marker = [ordered]@{ FileName = '.storage-chronicle-testlab-marker.json'; Schema = 'StorageChronicle.TestLabDataMarker.v1'; TestId = $TestId; Role = $Role; VhdxPath = $path }
+    $manifest.Marker = [ordered]@{ FileName = '.storage-chronicle-testlab-marker.json'; VolumeMarkerFileName = 'StorageChronicleTestVolume.json'; Schema = 'StorageChronicle.TestLabDataMarker.v1'; TestId = $TestId; Role = $Role; VolumeLabel = if ($Role -eq 'Mft') { 'SC_TEST_MFT_VOLUME' } elseif ($Role -eq 'NonNtfs') { 'SC_TEST_NONNTFS_VOLUME' } else { 'SC_TEST_VOLUME' }; FileSystem = if ($Role -eq 'NonNtfs') { 'exFAT' } else { 'NTFS' }; VhdxPath = $path }
     Write-TestLabJson -Path $manifestPath -Value $manifest
     Write-Output ($manifest | ConvertTo-Json -Depth 10)
     exit 0

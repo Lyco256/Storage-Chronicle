@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][ValidateSet('SC-Test-W11', 'SC-Test-W10')][string]$Name,
-    [string]$CheckpointName = 'StorageChronicle-Baseline',
+    [string]$CheckpointName = 'SC-CLEAN-BASELINE',
     [string]$ConfigPath,
     [switch]$Apply
 )

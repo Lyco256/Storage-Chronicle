@@ -3,6 +3,7 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
     [string]$AcceptanceRoot,
+    [string]$TestLabRoot,
     [string]$VhdxPath,
     [string]$VhdxRoot,
     [string]$DevicePath,
@@ -34,10 +35,13 @@ $oldEnvironment = @{}
 foreach ($name in $environmentNames) { $oldEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 
 $manifest = [ordered]@{
+    Schema = 'StorageChronicle.WindowsPrivilegedAcceptance.v2'
     RunId = $runId
     StartedUtc = [DateTime]::UtcNow.ToString('O')
     Configuration = $Configuration
     Status = 'RUNNING'
+    AcceptanceEligible = $false
+    RequiredCapabilities = @('Vhdx', 'UsnQuery', 'UsnRead', 'Mft', 'Reconciliation', 'Etw', 'ReadDirectoryChangesW', 'BufferGap', 'Smb', 'Service', 'SessionAgent', 'Clipboard', 'VolumeGuid', 'HotAttachDetach', 'AclDeniedMetadata', 'NonNtfs')
     ExitCode = $null
     Environment = [ordered]@{}
     Capabilities = @()
@@ -147,6 +151,26 @@ function Write-Manifest([int]$ExitCode, [string]$Status) {
     $manifest.Status = $Status
     $manifest.ExitCode = $ExitCode
     $manifest.CompletedUtc = [DateTime]::UtcNow.ToString('O')
+    $requiredResults = @($manifest.Tests | Where-Object { $manifest.RequiredCapabilities -contains $_.Capability })
+    $manifest.AcceptanceEligible = $Status -eq 'PASSED' -and $requiredResults.Count -eq $manifest.RequiredCapabilities.Count -and @($requiredResults | Where-Object Status -ne 'PASSED').Count -eq 0
+    $evidenceDirectory = Join-Path $artifactRoot "windows-privileged-$runId"
+    New-Item -ItemType Directory -Force -Path $evidenceDirectory | Out-Null
+    $manifest.Artifacts.Directory = $evidenceDirectory
+    $manifest.Artifacts.Environment = Join-Path $evidenceDirectory 'environment.json'
+    $manifest.Artifacts.Capabilities = Join-Path $evidenceDirectory 'capabilities.json'
+    $manifest.Artifacts.Oracle = Join-Path $evidenceDirectory 'oracle.json'
+    $manifest.Artifacts.SourceEventSummary = Join-Path $evidenceDirectory 'source-event-summary.json'
+    $manifest.Artifacts.CanonicalSummary = Join-Path $evidenceDirectory 'canonical-summary.json'
+    $manifest.Artifacts.FinalStateSummary = Join-Path $evidenceDirectory 'final-state-summary.json'
+    $manifest.Artifacts.ReconciliationSummary = Join-Path $evidenceDirectory 'reconciliation-summary.json'
+    $manifest.Artifacts.ServiceSummary = Join-Path $evidenceDirectory 'service-summary.json'
+    $manifest.Artifacts.Errors = Join-Path $evidenceDirectory 'errors.json'
+    $manifest.Artifacts.Result = Join-Path $evidenceDirectory 'result.json'
+    $manifest.Environment | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $manifest.Artifacts.Environment -Encoding UTF8
+    [ordered]@{ Schema = 'StorageChronicle.WindowsPrivilegedCapabilities.v1'; Required = $manifest.RequiredCapabilities; Definitions = $manifest.Capabilities; Tests = $manifest.Tests } | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $manifest.Artifacts.Capabilities -Encoding UTF8
+    foreach ($name in @('Oracle', 'SourceEventSummary', 'CanonicalSummary', 'FinalStateSummary', 'ReconciliationSummary', 'ServiceSummary')) { [ordered]@{ Schema = "StorageChronicle.WindowsPrivileged.$name.v1"; Status = 'NOT_EXECUTED'; Reason = 'This capability artifact is populated only by the real TestLab product workload; no synthetic summary is accepted.' } | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $manifest.Artifacts[$name] -Encoding UTF8 }
+    [ordered]@{ Schema = 'StorageChronicle.WindowsPrivilegedErrors.v1'; Errors = @($manifest.Tests | Where-Object Status -in @('FAILED', 'NOT_EXECUTED')) } | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $manifest.Artifacts.Errors -Encoding UTF8
+    $manifest | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $manifest.Artifacts.Result -Encoding UTF8
     $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 }
 
@@ -163,17 +187,24 @@ try {
         exit $exitCode
     }
 
+    $TestLabRoot = if ([string]::IsNullOrWhiteSpace($TestLabRoot)) { [Environment]::GetEnvironmentVariable('SC_TESTLAB_ROOT', 'Process') } else { $TestLabRoot }
+    if ([string]::IsNullOrWhiteSpace($TestLabRoot)) { throw 'A user-approved TestLabRoot is required; privileged acceptance never targets an unbounded host path.' }
+    $TestLabRoot = [IO.Path]::GetFullPath($TestLabRoot).TrimEnd('\')
+    if (-not (Test-Path -LiteralPath $TestLabRoot -PathType Container)) { throw "The approved TestLab root does not exist: $TestLabRoot" }
+    if ($CreateUsnJournal) { throw 'Refusing -CreateUsnJournal: the acceptance suite must query/read an existing journal and must not create or resize a journal.' }
+
     if ($CreateVhdx) {
         if ([string]::IsNullOrWhiteSpace($VhdxPath)) { throw '-CreateVhdx requires -VhdxPath.' }
         $VhdxPath = [IO.Path]::GetFullPath($VhdxPath)
         if ([IO.Path]::GetExtension($VhdxPath) -ine '.vhdx') { throw '-VhdxPath must have a .vhdx extension.' }
+        if (-not ($VhdxPath.Equals($TestLabRoot, [StringComparison]::OrdinalIgnoreCase) -or $VhdxPath.StartsWith($TestLabRoot + '\', [StringComparison]::OrdinalIgnoreCase))) { throw "The disposable VHDX must be under the approved TestLab root: $VhdxPath" }
         if (Test-Path -LiteralPath $VhdxPath) { throw "Refusing to overwrite an existing VHDX: $VhdxPath" }
         if (-not (Test-Path -LiteralPath (Split-Path -Parent $VhdxPath))) { throw 'The VHDX parent directory must already exist.' }
         foreach ($command in @('New-VHD', 'Mount-VHD', 'Get-Disk', 'Initialize-Disk', 'New-Partition', 'Format-Volume')) {
             if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "The Hyper-V/Storage command $command is not available; VHDX setup was not executed." }
         }
 
-        New-VHD -Path $VhdxPath -SizeBytes 1GB -Dynamic | Out-Null
+        New-VHD -Path $VhdxPath -SizeBytes 4GB -Dynamic | Out-Null
         $createdVhdx = $true
         $diskImage = Mount-VHD -Path $VhdxPath -Passthru
         $mountedVhdx = $true
@@ -182,9 +213,14 @@ try {
         if ($disk.IsReadOnly) { Set-Disk -Number $disk.Number -IsReadOnly $false }
         Initialize-Disk -Number $disk.Number -PartitionStyle GPT | Out-Null
         $partition = New-Partition -DiskNumber $disk.Number -UseMaximumSize -AssignDriveLetter
-        Format-Volume -Partition $partition -FileSystem NTFS -NewFileSystemLabel 'StorageChronicleAcceptance' -Confirm:$false | Out-Null
+        Format-Volume -Partition $partition -FileSystem NTFS -NewFileSystemLabel 'SC_TEST_VOLUME' -Confirm:$false | Out-Null
         $VhdxRoot = "$($partition.DriveLetter):\"
-        $AcceptanceRoot = $VhdxRoot
+        $AcceptanceRoot = Join-Path $VhdxRoot 'StorageChronicleAcceptance'
+        New-Item -ItemType Directory -Force -Path $AcceptanceRoot | Out-Null
+        $markerValue = [ordered]@{ Schema = 'StorageChronicle.TestLabDataMarker.v1'; TestId = $runId; Role = 'Workload'; VolumeLabel = 'SC_TEST_VOLUME'; FileSystem = 'NTFS'; VhdxPath = $VhdxPath; CreatedUtc = [DateTimeOffset]::UtcNow }
+        $markerJson = $markerValue | ConvertTo-Json -Depth 10
+        Set-Content -LiteralPath (Join-Path $AcceptanceRoot '.storage-chronicle-testlab-marker.json') -Value $markerJson -Encoding UTF8
+        Set-Content -LiteralPath (Join-Path $AcceptanceRoot 'StorageChronicleTestVolume.json') -Value $markerJson -Encoding UTF8
         Write-Host "Created and mounted disposable VHDX at $VhdxPath -> $AcceptanceRoot" -ForegroundColor Cyan
     } elseif (-not [string]::IsNullOrWhiteSpace($VhdxRoot)) {
         $VhdxRoot = [IO.Path]::GetFullPath($VhdxRoot)
@@ -196,14 +232,6 @@ try {
         $AcceptanceRoot = [IO.Path]::GetFullPath($AcceptanceRoot)
         if (-not (Test-Path -LiteralPath $AcceptanceRoot -PathType Container)) { throw "Acceptance root is not a directory: $AcceptanceRoot" }
         if (-not (Is-PathSafeForAcceptance $AcceptanceRoot)) { throw "Refusing to use a protected or volume-root path as the mutation root: $AcceptanceRoot" }
-    }
-
-    if ($CreateUsnJournal -and -not $CreateVhdx) {
-        throw '-CreateUsnJournal is allowed only together with -CreateVhdx so the setup cannot alter an existing user volume.'
-    }
-    if ($CreateUsnJournal) {
-        $journalSetup = Invoke-Captured 'fsutil.exe' @('usn', 'createjournal', 'm=33554432', 'a=4194304', $AcceptanceRoot)
-        if ($journalSetup.ExitCode -ne 0) { throw "Explicit VHDX USN journal setup failed: $($journalSetup.Error) $($journalSetup.Output)" }
     }
 
     $admin = Is-Administrator
@@ -282,19 +310,26 @@ try {
         InteractiveSession = $sessionReady
         VolumeFileSystem = if ($volume) { $volume.FileSystem } else { $null }
         VhdxAttached = $vhdxAttached
+        TestLabRoot = $TestLabRoot
     }
 
     $capabilities = @(
-        Add-Capability 'Vhdx' ($vhdxAttached -and $rootReady) $vhdxReason
-        Add-Capability 'Usn' ($usnReady -and $deviceReady) $usnReason
+        Add-Capability 'Vhdx' ($CreateVhdx -and $vhdxAttached -and $rootReady) $(if ($CreateVhdx) { $vhdxReason } else { 'Acceptance requires this runner to create, attach, initialize, format, detach, and destroy the disposable VHDX.' })
+        Add-Capability 'UsnQuery' ($usnReady -and $deviceReady) $usnReason
+        Add-Capability 'UsnRead' ($usnReady -and $deviceReady) 'The real USN query/read test must run against the existing journal without changing journal configuration.'
         Add-Capability 'Mft' ($usnReady -and $deviceReady) $usnReason
-        Add-Capability 'ReadDirectoryChangesW' $rootReady $(if ($rootReady) { 'The configured directory can be monitored by ReadDirectoryChangesW.' } else { 'A writable acceptance root is required.' })
-        Add-Capability 'Etw' ($rootReady -and $admin) $(if ($rootReady -and $admin) { 'Administrator elevation and a mutation root are available for the kernel ETW session.' } else { 'Administrator elevation and a writable acceptance root are required.' })
-        Add-Capability 'Smb' $smbReady $smbReason
-        Add-Capability 'Service' $serviceReady $serviceReason
-        Add-Capability 'Session' $sessionReady $sessionReason
-        Add-Capability 'RemovableMedia' $removableReady $removableReason
-        Add-Capability 'RemovableMediaEvent' ($removableReady -and $WaitForMediaChange) $(if (-not $WaitForMediaChange) { 'Media arrival/removal waiting is disarmed; pass -WaitForMediaChange only when a physical action is planned.' } elseif ($removableReady) { 'The media event wait is explicitly armed.' } else { $removableReason })
+        Add-Capability 'Reconciliation' $false 'The real selected-volume reconciliation and durable source/canonical/state oracle must be executed by the Agent in TestLab; this harness has no fixture substitute.'
+        Add-Capability 'Etw' $false 'The existing smoke test observes file I/O only; full session start/stop and process correlation are not acceptance-complete.'
+        Add-Capability 'ReadDirectoryChangesW' $false 'The existing smoke test does not cover the required create/rename/delete and bounded-gap matrix.'
+        Add-Capability 'BufferGap' $false 'A bounded buffer-overflow test with fail-closed gap evidence is not wired into this acceptance runner.'
+        Add-Capability 'Smb' $false 'The existing share snapshot smoke test does not create/change/remove the configured share.'
+        Add-Capability 'Service' $false 'The existing SCM smoke test only queries a service; install/start/stop/recovery configuration is covered by real installer acceptance.'
+        Add-Capability 'SessionAgent' $false 'Interactive Session Agent IPC and session identity acceptance is not wired into this privileged runner.'
+        Add-Capability 'Clipboard' $sessionReady $sessionReason
+        Add-Capability 'VolumeGuid' $false 'A drive-letter-free volume GUID identity test is not wired into this acceptance runner.'
+        Add-Capability 'HotAttachDetach' $false 'A real VHDX hot attach/detach lifecycle test is not wired into this acceptance runner.'
+        Add-Capability 'AclDeniedMetadata' $false 'The ACL-denied metadata plus scoped SeBackupPrivilege acceptance is not wired into this runner.'
+        Add-Capability 'NonNtfs' $false 'The non-NTFS notification plus reconciliation acceptance is not wired into this runner.'
     )
 
     Set-ProcessEnvironment 'STORAGE_CHRONICLE_ACCEPTANCE_ROOT' $AcceptanceRoot

@@ -39,6 +39,9 @@ public sealed class AgentPipeline
     /// <summary>Raised after one source fact enters the bounded durable pipeline.</summary>
     public event Action<SourceEvent>? SourceObserved;
 
+    /// <summary>Raised after one source fact and its canonical state have been durably committed.</summary>
+    public event Action<SourceEvent>? SourceCommitted;
+
     /// <summary>Raised when an optional secondary sink fails after primary durability.</summary>
     public event Action<ICanonicalEventSink, Exception>? SinkFailed;
 
@@ -86,6 +89,8 @@ public sealed class AgentPipeline
                         SinkFailed?.Invoke(sink, exception);
                     }
                 }
+
+                SourceCommitted?.Invoke(source);
             }
             await producerCompletion.ConfigureAwait(false);
         }

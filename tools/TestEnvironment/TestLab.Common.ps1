@@ -14,14 +14,14 @@ function Get-TestLabConfig {
     }
 
     $config = Import-PowerShellDataFile -LiteralPath $path
-    foreach ($key in @('Root', 'Windows11Iso', 'Windows10Iso')) {
+    foreach ($key in @('Root', 'Windows11Iso')) {
         if (-not $config.ContainsKey($key) -or [string]::IsNullOrWhiteSpace([string]$config[$key])) {
             throw "TestLab configuration key '$key' is required."
         }
     }
     $config.Root = [IO.Path]::GetFullPath([string]$config.Root)
     $config.Windows11Iso = [IO.Path]::GetFullPath([string]$config.Windows11Iso)
-    $config.Windows10Iso = [IO.Path]::GetFullPath([string]$config.Windows10Iso)
+    $config.Windows10Iso = if ($config.ContainsKey('Windows10Iso') -and -not [string]::IsNullOrWhiteSpace([string]$config.Windows10Iso)) { [IO.Path]::GetFullPath([string]$config.Windows10Iso) } else { $null }
     return $config
 }
 
@@ -67,9 +67,9 @@ function Assert-HyperVMutationPrerequisites {
 function Get-TestLabVmDefinition {
     param([Parameter(Mandatory = $true)][ValidateSet('Windows11', 'Windows10')][string]$Guest)
     if ($Guest -eq 'Windows11') {
-        return [pscustomobject]@{ Name = 'SC-Test-W11'; MemoryGiB = 2; MaximumMemoryGiB = 6; VhdxSizeGiB = 80; IsoKey = 'Windows11Iso'; SecureBoot = $true; Tpm = $true }
+        return [pscustomobject]@{ Name = 'SC-Test-W11'; MinimumMemoryGiB = 2; StartupMemoryGiB = 4; MaximumMemoryGiB = 6; VhdxSizeGiB = 80; IsoKey = 'Windows11Iso'; SecureBoot = $true; Tpm = $true }
     }
-    return [pscustomobject]@{ Name = 'SC-Test-W10'; MemoryGiB = 2; MaximumMemoryGiB = 6; VhdxSizeGiB = 64; IsoKey = 'Windows10Iso'; SecureBoot = $false; Tpm = $false }
+    return [pscustomobject]@{ Name = 'SC-Test-W10'; MinimumMemoryGiB = 2; StartupMemoryGiB = 4; MaximumMemoryGiB = 6; VhdxSizeGiB = 64; IsoKey = 'Windows10Iso'; SecureBoot = $false; Tpm = $false }
 }
 
 function Assert-ExactTestLabVm {
@@ -78,6 +78,24 @@ function Assert-ExactTestLabVm {
     $vm = Get-VM -Name $Name -ErrorAction SilentlyContinue
     if ($null -eq $vm) { throw "Approved TestLab VM does not exist: $Name" }
     return $vm
+}
+
+function Assert-TestLabVmDisks {
+    param(
+        [Parameter(Mandatory = $true)]$Vm,
+        [Parameter(Mandatory = $true)][string]$Root
+    )
+
+    $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd('\')
+    $disks = @(Get-VMHardDiskDrive -VMName $Vm.Name -ErrorAction Stop)
+    if ($disks.Count -eq 0) { throw "The approved TestLab VM has no virtual disks: $($Vm.Name)" }
+    foreach ($disk in $disks) {
+        if ([string]::IsNullOrWhiteSpace([string]$disk.Path)) { throw "The approved TestLab VM has a virtual disk without a host path: $($Vm.Name)" }
+        $diskPath = [IO.Path]::GetFullPath([string]$disk.Path)
+        if (-not ($diskPath.Equals($rootFull, [StringComparison]::OrdinalIgnoreCase) -or $diskPath.StartsWith($rootFull + '\', [StringComparison]::OrdinalIgnoreCase))) {
+            throw "The approved TestLab VM disk is outside the approved root: $diskPath"
+        }
+    }
 }
 
 function Assert-PathUnderRoot {

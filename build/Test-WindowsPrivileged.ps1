@@ -3,6 +3,7 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
     [string]$AcceptanceRoot,
+    [string]$TestLabRoot,
     [string]$VhdxPath,
     [string]$VhdxRoot,
     [string]$DevicePath,
@@ -21,6 +22,7 @@ $arguments = @{
     AcceptanceRoot = $AcceptanceRoot
     VhdxPath = $VhdxPath
     VhdxRoot = $VhdxRoot
+    TestLabRoot = $TestLabRoot
     DevicePath = $DevicePath
     RemovableRoot = $RemovableRoot
     SmbShareName = $SmbShareName
