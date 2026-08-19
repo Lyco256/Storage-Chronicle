@@ -18,13 +18,15 @@ namespace StorageChronicle.Agent;
 /// <summary>Builds the LocalSystem-compatible Windows Service host.</summary>
 public static class Program
 {
-    /// <summary>Starts the LocalSystem service with durable storage and the Windows filesystem collector.</summary>
+    /// <summary>Starts the LocalSystem service, diagnostic console, or isolated TestLab collector host.</summary>
     public static Task Main(string[] args)
     {
         var diagnosticMode = args.Any(value => string.Equals(value, "--diagnostic", StringComparison.OrdinalIgnoreCase));
-        if (!diagnosticMode) _ = WindowsServiceRecoveryConfigurator.TryConfigure();
+        var testLabMode = args.Any(value => string.Equals(value, "--testlab", StringComparison.OrdinalIgnoreCase));
+        if (diagnosticMode && testLabMode) throw new ArgumentException("--diagnostic and --testlab are mutually exclusive.");
+        if (!diagnosticMode && !testLabMode) _ = WindowsServiceRecoveryConfigurator.TryConfigure();
         var builder = Host.CreateApplicationBuilder(args);
-        if (!diagnosticMode) builder.Services.AddWindowsService(options => options.ServiceName = "Storage Chronicle Agent");
+        if (!diagnosticMode && !testLabMode) builder.Services.AddWindowsService(options => options.ServiceName = "Storage Chronicle Agent");
         var productRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Storage Chronicle");
         var defaultHistoryRoot = Path.Combine(productRoot, "history");
         var machineSettingsStore = new MachineSettingsStore();

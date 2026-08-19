@@ -27,6 +27,9 @@ $manifest = [ordered]@{
     Target = $Target
     Status = 'NOT_EXECUTED'
     AcceptanceEligible = $false
+    ExecutionMode = 'TestLab'
+    Diagnostic = $false
+    AgentHostMode = 'TestLab'
     StartedUtc = [DateTimeOffset]::UtcNow
     DataRole = $DataRole
     WorkloadCount = $WorkloadCount
@@ -207,7 +210,7 @@ try {
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent `$settingsPath), `$historyRoot | Out-Null
 `$settings = [ordered]@{ schemaVersion = 1; settings = [ordered]@{ monitoringPaths = @($(Quote-GuestLiteral $GuestDataRoot)); excludedPaths = @(); noiseFilter = 0; logStoragePath = `$historyRoot; mediaMirrors = @{}; flushIntervalSeconds = 1 } }
 `$settings | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath `$settingsPath -Encoding UTF8
-`$agent = Start-Process -FilePath $(Quote-GuestLiteral $guestAgentDestination) -ArgumentList '--diagnostic' -PassThru -RedirectStandardOutput (Join-Path `$historyRoot 'agent.stdout.log') -RedirectStandardError (Join-Path `$historyRoot 'agent.stderr.log')
+`$agent = Start-Process -FilePath $(Quote-GuestLiteral $guestAgentDestination) -ArgumentList '--testlab' -PassThru -RedirectStandardOutput (Join-Path `$historyRoot 'agent.stdout.log') -RedirectStandardError (Join-Path `$historyRoot 'agent.stderr.log')
 try {
     Start-Sleep -Seconds 5
     if (`$agent.HasExited) { throw "The Agent exited before the workload started with code `$(`$agent.ExitCode)." }

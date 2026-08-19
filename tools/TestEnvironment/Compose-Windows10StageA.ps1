@@ -91,6 +91,9 @@ function Assert-TestLab {
     if ([string]$value.Schema -ne 'StorageChronicle.WindowsTestLabExecution.v2' -or
         [string]$value.Target -ne 'Windows10' -or
         [string]$value.Status -ne 'COMPLETED_REAL_IO_ACCEPTANCE' -or
+        [string]$value.ExecutionMode -ne 'TestLab' -or
+        $null -eq $value.PSObject.Properties['Diagnostic'] -or
+        [bool]$value.Diagnostic -or
         -not [bool]$value.AcceptanceEligible -or
         -not [bool]$value.AgentIntegrationExecuted -or
         -not [bool]$value.RealIoAcceptance) {

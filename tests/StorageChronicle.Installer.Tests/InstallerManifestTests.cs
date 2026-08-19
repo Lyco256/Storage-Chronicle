@@ -109,6 +109,8 @@ public sealed class InstallerManifestTests
         var resource = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-ResourceBudgetAcceptance.ps1"));
         var mft = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-FullBenchmarkMatrix.ps1"));
         var windows10Finalizer = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Finalize-Windows10PhysicalAcceptance.ps1"));
+        var agent = File.ReadAllText(Path.Combine(root, "src", "StorageChronicle.Agent", "Program.cs"));
+        var testLab = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Invoke-WindowsTestLab.ps1"));
 
         Assert.Contains("Windows11HyperVInstallerManifest", finalGate, StringComparison.Ordinal);
         Assert.Contains("Assert-Windows11HyperVInstallerPrerequisite", finalGate, StringComparison.Ordinal);
@@ -120,6 +122,11 @@ public sealed class InstallerManifestTests
         Assert.Contains("STORAGE_CHRONICLE_MFT_VOLUME_LABEL", mft, StringComparison.Ordinal);
         Assert.Contains("Get-RequiredInstallerCaseIds", windows10Finalizer, StringComparison.Ordinal);
         Assert.Contains("Status -ne 'PASSED'", windows10Finalizer, StringComparison.Ordinal);
+        Assert.Contains("--testlab", agent, StringComparison.Ordinal);
+        Assert.Contains("--testlab", testLab, StringComparison.Ordinal);
+        Assert.Contains("ExecutionMode = 'TestLab'", testLab, StringComparison.Ordinal);
+        Assert.Contains("Diagnostic = $false", testLab, StringComparison.Ordinal);
+        Assert.Contains("not an eligible non-diagnostic TestLab execution", finalGate, StringComparison.Ordinal);
     }
 
     [Fact]

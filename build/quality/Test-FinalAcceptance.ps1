@@ -81,7 +81,11 @@ function Assert-GroupEvidence {
     $schema = if ($null -ne $Value.PSObject.Properties['Schema']) { [string]$Value.Schema } else { '' }
     switch ($Name) {
         'TestLabAndRealIo' {
-            if ($schema -ne 'StorageChronicle.WindowsTestLabExecution.v2') { throw 'TestLab evidence has an unexpected schema.' }
+            if ($schema -ne 'StorageChronicle.WindowsTestLabExecution.v2' -or
+                [string]$Value.Status -ne 'COMPLETED_REAL_IO_ACCEPTANCE' -or
+                [string]$Value.ExecutionMode -ne 'TestLab' -or
+                $null -eq $Value.PSObject.Properties['Diagnostic'] -or
+                [bool]$Value.Diagnostic) { throw 'TestLab evidence is not an eligible non-diagnostic TestLab execution.' }
             if ([string]$Value.Target -notin @('Windows11', 'Both')) { throw 'TestLab evidence does not include the required Windows 11 target.' }
             if (@($Value.Stages).Count -eq 0) { throw 'TestLab evidence has no execution stages.' }
             if (-not [bool]$Value.AgentIntegrationExecuted -or -not [bool]$Value.RealIoAcceptance) { throw 'TestLab evidence does not prove the real Agent and Oracle comparison path.' }
