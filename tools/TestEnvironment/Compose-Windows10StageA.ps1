@@ -12,6 +12,8 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+. (Join-Path $repositoryRoot 'build/quality/AcceptanceContracts.ps1')
+$requiredWindowsPrivilegedCapabilities = @(Get-RequiredWindowsPrivilegedCapabilities)
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = Join-Path $repositoryRoot ('artifacts/acceptance/windows10/windows10-stage-a-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.json')
 }
@@ -113,8 +115,13 @@ function Assert-Privileged {
         [string]$value.Environment.Architecture -ne 'x64') { throw 'Privileged evidence does not prove Windows 10 22H2 x64.' }
     $required = @($value.RequiredCapabilities)
     $tests = @($value.Tests)
-    if ($required.Count -eq 0 -or (@($required | Sort-Object -Unique).Count -ne $required.Count)) { throw 'Privileged evidence has no unique required capability list.' }
-    foreach ($name in $required) {
+    if ($required.Count -ne $requiredWindowsPrivilegedCapabilities.Count -or
+        (@($required | Sort-Object -Unique).Count -ne $required.Count) -or
+        @($requiredWindowsPrivilegedCapabilities | Where-Object { $required -notcontains $_ }).Count -ne 0 -or
+        @($required | Where-Object { $requiredWindowsPrivilegedCapabilities -notcontains $_ }).Count -ne 0) {
+        throw 'Privileged evidence does not declare the complete required capability contract.'
+    }
+    foreach ($name in $requiredWindowsPrivilegedCapabilities) {
         $matches = @($tests | Where-Object { [string]$_.Capability -eq [string]$name })
         if ($matches.Count -ne 1 -or [string]$matches[0].Status -ne 'PASSED') { throw "Windows 10 privileged capability is not exactly PASSED: $name" }
     }

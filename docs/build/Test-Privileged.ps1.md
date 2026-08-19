@@ -40,4 +40,4 @@ This is Windows-only and must be run on the required Windows 11 and Windows 10 2
 
 ## Change-sensitive contracts
 
-Capability names, fail-closed exit codes, safe-target checks, environment variables, and artifact manifest fields are release contracts.
+Capability names, the shared `build/quality/AcceptanceContracts.ps1` list, fail-closed exit codes, safe-target checks, environment variables, and artifact manifest fields are release contracts. The producer and final gates require all sixteen Windows 11 capabilities exactly once; a self-declared subset cannot become eligible.

@@ -22,6 +22,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'quality/AcceptanceContracts.ps1')
 $platformTestProject = Join-Path $root 'tests/StorageChronicle.Platform.Windows.Integration.Tests/StorageChronicle.Platform.Windows.Integration.Tests.csproj'
 $agentTestProject = Join-Path $root 'tests/StorageChronicle.Agent.Tests/StorageChronicle.Agent.Tests.csproj'
 $testProjects = @($platformTestProject, $agentTestProject)
@@ -51,7 +52,7 @@ $manifest = [ordered]@{
     Configuration = $Configuration
     Status = 'RUNNING'
     AcceptanceEligible = $false
-    RequiredCapabilities = @('Vhdx', 'UsnQuery', 'UsnRead', 'Mft', 'Reconciliation', 'Etw', 'ReadDirectoryChangesW', 'BufferGap', 'Smb', 'Service', 'SessionAgent', 'Clipboard', 'VolumeGuid', 'HotAttachDetach', 'AclDeniedMetadata', 'NonNtfs')
+    RequiredCapabilities = @(Get-RequiredWindowsPrivilegedCapabilities)
     ExitCode = $null
     Environment = [ordered]@{}
     Capabilities = @()

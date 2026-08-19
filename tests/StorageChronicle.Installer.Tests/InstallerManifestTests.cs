@@ -79,6 +79,28 @@ public sealed class InstallerManifestTests
         Assert.Contains("AcceptanceEligible = $false", host, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void PrivilegedAcceptanceUsesOneFixedCapabilityContract()
+    {
+        var root = FindRoot();
+        var contract = File.ReadAllText(Path.Combine(root, "build", "quality", "AcceptanceContracts.ps1"));
+        var producer = File.ReadAllText(Path.Combine(root, "build", "Test-Privileged.ps1"));
+        var stageA = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Compose-Windows10StageA.ps1"));
+        var finalGate = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-FinalAcceptance.ps1"));
+
+        foreach (var capability in new[] { "Vhdx", "UsnQuery", "UsnRead", "Mft", "Reconciliation", "Etw", "ReadDirectoryChangesW", "BufferGap", "Smb", "Service", "SessionAgent", "Clipboard", "VolumeGuid", "HotAttachDetach", "AclDeniedMetadata", "NonNtfs" })
+        {
+            Assert.Contains($"'{capability}'", contract, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("AcceptanceContracts.ps1", producer, StringComparison.Ordinal);
+        Assert.Contains("Get-RequiredWindowsPrivilegedCapabilities", producer, StringComparison.Ordinal);
+        Assert.Contains("Get-RequiredWindowsPrivilegedCapabilities", stageA, StringComparison.Ordinal);
+        Assert.Contains("Get-RequiredWindowsPrivilegedCapabilities", finalGate, StringComparison.Ordinal);
+        Assert.Contains("Windows 11", finalGate, StringComparison.Ordinal);
+        Assert.Contains("IsAdministrator", finalGate, StringComparison.Ordinal);
+    }
+
     private static string FindRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);
