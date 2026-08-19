@@ -381,48 +381,66 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
 
     private FileMetadata? ReadCandidateMetadata(VolumeDescriptor volume, MftEntry entry, string path, ReconciliationScopeMetrics metrics, out EventQuality quality)
     {
-        CandidateMetadataResult result;
+        var result = CreateFallbackMetadata(EventQuality.Unknown, false);
         var priority = WindowsReconciliationPriorityScope.Enter();
-        var privilege = WindowsSeBackupPrivilegeScope.Enter();
+        WindowsSeBackupPrivilegeScope? privilege = null;
         try
         {
             try
             {
-                using var handle = metadataReader.OpenMetadataHandle(path, entry.IsDirectory);
-                _ = priority.TrySetLowFileIoPriority(handle);
-
-                var value = metadataReader.Read(path, Path.GetDirectoryName(path));
-                quality = value.IsAccessDenied ? EventQuality.ExistenceOnly : EventQuality.Reconciled;
-                result = new CandidateMetadataResult(new FileMetadata(volume.Id, value.FileId, value.ParentFileId ?? entry.ToParentFileId(), value.Name, value.Kind, value.LogicalSize, value.AllocatedSize, value.CreatedUtc, value.LastAccessUtc, value.LastWriteUtc, value.FileSystemChangeUtc, value.Attributes, value.ReparsePointKind, null, quality, value.Exists, false), quality, value.IsAccessDenied);
+                result = ReadCandidateMetadataWithCurrentToken(allowAccessDeniedMetadata: false);
             }
-            catch (UnauthorizedAccessException)
+            catch (Exception exception) when (IsAccessDenied(exception))
             {
-                quality = EventQuality.Unknown;
-                result = new CandidateMetadataResult(new FileMetadata(volume.Id, entry.ToFileId(), entry.ToParentFileId(), entry.Name, entry.IsDirectory ? FileKind.Directory : FileKind.File, null, null, null, null, null, null, (FileAttributes)entry.FileAttributes, null, null, quality, true, false), quality, true);
+                privilege = WindowsSeBackupPrivilegeScope.Enter();
+                try
+                {
+                    result = ReadCandidateMetadataWithCurrentToken(allowAccessDeniedMetadata: true);
+                }
+                catch (Exception retryException) when (IsMetadataReadFailure(retryException))
+                {
+                    result = CreateFallbackMetadata(EventQuality.Unknown, true);
+                }
             }
-            catch (IOException exception)
+            catch (Exception exception) when (IsMetadataReadFailure(exception))
             {
-                quality = EventQuality.Unknown;
-                result = new CandidateMetadataResult(new FileMetadata(volume.Id, entry.ToFileId(), entry.ToParentFileId(), entry.Name, entry.IsDirectory ? FileKind.Directory : FileKind.File, null, null, null, null, null, null, (FileAttributes)entry.FileAttributes, null, null, quality, true, false), quality, IsAccessDenied(exception));
-            }
-            catch (System.ComponentModel.Win32Exception exception)
-            {
-                quality = EventQuality.Unknown;
-                result = new CandidateMetadataResult(new FileMetadata(volume.Id, entry.ToFileId(), entry.ToParentFileId(), entry.Name, entry.IsDirectory ? FileKind.Directory : FileKind.File, null, null, null, null, null, null, (FileAttributes)entry.FileAttributes, null, null, quality, true, false), quality, exception.NativeErrorCode == 5);
+                result = CreateFallbackMetadata(EventQuality.Unknown, IsAccessDenied(exception));
             }
         }
         finally
         {
-            privilege.Dispose();
+            var privilegeResult = privilege?.Result;
+            privilege?.Dispose();
             priority.Dispose();
+            metrics.Record(privilegeResult, priority.Result, result.UsedAclFallback);
         }
 
-        metrics.Record(privilege.Result, priority.Result, result.UsedAclFallback);
         quality = result.Quality;
         return result.Metadata;
+
+        CandidateMetadataResult ReadCandidateMetadataWithCurrentToken(bool allowAccessDeniedMetadata)
+        {
+            using var handle = metadataReader.OpenMetadataHandle(path, entry.IsDirectory);
+            _ = priority.TrySetLowFileIoPriority(handle);
+            var value = metadataReader.Read(path, Path.GetDirectoryName(path));
+            if (value.IsAccessDenied && !allowAccessDeniedMetadata) throw new UnauthorizedAccessException($"Metadata access was denied: {path}");
+            var metadataQuality = value.IsAccessDenied ? EventQuality.ExistenceOnly : EventQuality.Reconciled;
+            return new CandidateMetadataResult(new FileMetadata(volume.Id, value.FileId, value.ParentFileId ?? entry.ToParentFileId(), value.Name, value.Kind, value.LogicalSize, value.AllocatedSize, value.CreatedUtc, value.LastAccessUtc, value.LastWriteUtc, value.FileSystemChangeUtc, value.Attributes, value.ReparsePointKind, null, metadataQuality, value.Exists, false), metadataQuality, value.IsAccessDenied);
+        }
+
+        CandidateMetadataResult CreateFallbackMetadata(EventQuality fallbackQuality, bool aclFallback)
+            => new(new FileMetadata(volume.Id, entry.ToFileId(), entry.ToParentFileId(), entry.Name, entry.IsDirectory ? FileKind.Directory : FileKind.File, null, null, null, null, null, null, (FileAttributes)entry.FileAttributes, null, null, fallbackQuality, true, false), fallbackQuality, aclFallback);
     }
 
-    private static bool IsAccessDenied(IOException exception) => (exception.HResult & 0xFFFF) == 5;
+    private static bool IsAccessDenied(Exception exception) => exception switch
+    {
+        UnauthorizedAccessException => true,
+        IOException ioException => (ioException.HResult & 0xFFFF) == 5,
+        System.ComponentModel.Win32Exception win32Exception => win32Exception.NativeErrorCode == 5,
+        _ => false
+    };
+
+    private static bool IsMetadataReadFailure(Exception exception) => exception is UnauthorizedAccessException or IOException or System.ComponentModel.Win32Exception;
 
     private static bool IsCandidate(MftEntry entry, IReadOnlyDictionary<FileId, SavedEntry> saved)
     {
@@ -515,12 +533,15 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
         public int AclFallbackCount { get; private set; }
         public ReconciliationPriorityResult Priority { get { lock (gate) return priority; } }
 
-        public void Record(ReconciliationPrivilegeResult privilege, ReconciliationPriorityResult priorityResult, bool aclFallback)
+        public void Record(ReconciliationPrivilegeResult? privilege, ReconciliationPriorityResult priorityResult, bool aclFallback)
         {
             lock (gate)
             {
-                if (privilege.Enabled) PrivilegeEnableSuccessCount++;
-                else PrivilegeFallbackCount++;
+                if (privilege is not null)
+                {
+                    if (privilege.Enabled) PrivilegeEnableSuccessCount++;
+                    else PrivilegeFallbackCount++;
+                }
                 if (aclFallback) AclFallbackCount++;
                 priority = new(
                     priority.BackgroundModeEnabled || priorityResult.BackgroundModeEnabled,

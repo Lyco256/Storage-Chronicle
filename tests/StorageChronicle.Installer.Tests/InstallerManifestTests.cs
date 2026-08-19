@@ -85,6 +85,7 @@ public sealed class InstallerManifestTests
         var root = FindRoot();
         var contract = File.ReadAllText(Path.Combine(root, "build", "quality", "AcceptanceContracts.ps1"));
         var producer = File.ReadAllText(Path.Combine(root, "build", "Test-Privileged.ps1"));
+        var wrapper = File.ReadAllText(Path.Combine(root, "build", "Test-WindowsPrivileged.ps1"));
         var stageA = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Compose-Windows10StageA.ps1"));
         var finalGate = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-FinalAcceptance.ps1"));
 
@@ -97,8 +98,12 @@ public sealed class InstallerManifestTests
         Assert.Contains("Get-RequiredWindowsPrivilegedCapabilities", producer, StringComparison.Ordinal);
         Assert.Contains("Get-RequiredWindowsPrivilegedCapabilities", stageA, StringComparison.Ordinal);
         Assert.Contains("Get-RequiredWindowsPrivilegedCapabilities", finalGate, StringComparison.Ordinal);
+        Assert.Contains("WorkloadOraclePath", wrapper, StringComparison.Ordinal);
+        Assert.Contains("AgentHistoryPath", wrapper, StringComparison.Ordinal);
         Assert.Contains("Windows 11", finalGate, StringComparison.Ordinal);
         Assert.Contains("IsAdministrator", finalGate, StringComparison.Ordinal);
+        Assert.Contains("AcceptanceEligible=true", finalGate, StringComparison.Ordinal);
+        Assert.Contains("placeholder, failed, or ineligible result", finalGate, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -146,6 +151,8 @@ public sealed class InstallerManifestTests
         Assert.Contains("AgentHistoryPath", wrapper, StringComparison.Ordinal);
         Assert.Contains("SourceCorrelatedCount", wrapper, StringComparison.Ordinal);
         Assert.Contains("FileStateCorrectness", wrapper, StringComparison.Ordinal);
+        Assert.Contains("SourceEventCount", finalGate, StringComparison.Ordinal);
+        Assert.Contains("FailureReasons", finalGate, StringComparison.Ordinal);
     }
 
     [Fact]

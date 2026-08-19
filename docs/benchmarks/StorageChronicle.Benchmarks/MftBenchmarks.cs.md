@@ -12,7 +12,7 @@ Measures public Windows NTFS MFT enumeration and reconciliation import against a
 
 ## Inputs and outputs
 
-It reads only metadata returned by the public NTFS enumeration API and the `STORAGE_CHRONICLE_MFT_VOLUME`, `STORAGE_CHRONICLE_MFT_VOLUME_LABEL`, and `STORAGE_CHRONICLE_MFT_MARKER_PATH` environment variables. The five measured methods also emit `StorageChronicle.MftBenchmarkEvidence.v1` to `STORAGE_CHRONICLE_MFT_EVIDENCE_PATH`, including dataset/enumeration/candidate/detail-query/generated-canonical/drop counters, elapsed time, allocation, and the required OS/VM/VHDX environment fields. It writes BenchmarkDotNet output under the caller-selected artifact directory and never reads file contents.
+It reads only metadata returned by the public NTFS enumeration API and the `STORAGE_CHRONICLE_MFT_VOLUME`, `STORAGE_CHRONICLE_MFT_VOLUME_LABEL`, and `STORAGE_CHRONICLE_MFT_MARKER_PATH` environment variables. The five measured methods also emit `StorageChronicle.MftBenchmarkEvidence.v1` to `STORAGE_CHRONICLE_MFT_EVIDENCE_PATH`, including dataset/enumeration/candidate/detail-query/generated-canonical/drop counters, elapsed time, allocation, and the required OS/VM/VHDX environment fields. Candidate metadata first uses the ordinary metadata path and retries `SeBackupPrivilege` only for access-denied candidates; both file and directory metadata handles receive low-I/O hints when supported. It writes BenchmarkDotNet output under the caller-selected artifact directory and never reads file contents.
 
 ## Dependencies
 

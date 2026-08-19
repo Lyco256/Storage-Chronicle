@@ -198,34 +198,47 @@ public class WindowsMftBenchmarks
             var entry = candidate.Current;
             var path = ResolveMftPath(entry, entries, mountRoot);
             using var priority = WindowsReconciliationPriorityScope.Enter();
-            using var privilege = WindowsSeBackupPrivilegeScope.Enter();
-            if (privilege.Result.Enabled) privilegeSuccesses++;
-            else privilegeFallbacks++;
+            WindowsSeBackupPrivilegeScope? privilege = null;
 
             NativeFileMetadataRecord nativeMetadata;
             EventQuality quality;
             try
             {
-                if (entry.IsDirectory)
+                try
                 {
-                    using var handle = reader.OpenDirectoryHandle(path);
-                    if (priority.TrySetLowFileIoPriority(handle)) ioHintSuccesses++;
-                    else ioHintFailures++;
-                    ioHintAttempts++;
+                    nativeMetadata = ReadCandidateMetadataWithCurrentToken(allowAccessDeniedMetadata: false);
+                    quality = EventQuality.Reconciled;
                 }
-
-                nativeMetadata = reader.Read(path, Path.GetDirectoryName(path));
-                quality = nativeMetadata.IsAccessDenied ? EventQuality.ExistenceOnly : EventQuality.Reconciled;
+                catch (Exception exception) when (IsAccessDenied(exception))
+                {
+                    privilege = WindowsSeBackupPrivilegeScope.Enter();
+                    try
+                    {
+                        nativeMetadata = ReadCandidateMetadataWithCurrentToken(allowAccessDeniedMetadata: true);
+                        quality = nativeMetadata.IsAccessDenied ? EventQuality.ExistenceOnly : EventQuality.Reconciled;
+                    }
+                    catch (Exception retryException) when (IsMetadataReadFailure(retryException))
+                    {
+                        nativeMetadata = FallbackMetadata(entry);
+                        quality = EventQuality.ExistenceOnly;
+                    }
+                }
+                catch (Exception exception) when (IsMetadataReadFailure(exception))
+                {
+                    nativeMetadata = FallbackMetadata(entry);
+                    quality = EventQuality.Unknown;
+                }
             }
-            catch (UnauthorizedAccessException)
+            finally
             {
-                nativeMetadata = FallbackMetadata(entry);
-                quality = EventQuality.ExistenceOnly;
-            }
-            catch (IOException)
-            {
-                nativeMetadata = FallbackMetadata(entry);
-                quality = EventQuality.Unknown;
+                var privilegeResult = privilege?.Result;
+                privilege?.Dispose();
+                priority.Dispose();
+                if (privilegeResult is not null)
+                {
+                    if (privilegeResult.Enabled) privilegeSuccesses++;
+                    else privilegeFallbacks++;
+                }
             }
             var metadata = new FileMetadata(
                 VolumeId.Create(devicePath),
@@ -269,6 +282,17 @@ public class WindowsMftBenchmarks
                 runId,
                 properties);
             if (eventNormalizer.Normalize(source) is not null) generatedCanonicalCount++;
+
+            NativeFileMetadataRecord ReadCandidateMetadataWithCurrentToken(bool allowAccessDeniedMetadata)
+            {
+                using var handle = reader.OpenMetadataHandle(path, entry.IsDirectory);
+                if (priority.TrySetLowFileIoPriority(handle)) ioHintSuccesses++;
+                else ioHintFailures++;
+                ioHintAttempts++;
+                var value = reader.Read(path, Path.GetDirectoryName(path));
+                if (value.IsAccessDenied && !allowAccessDeniedMetadata) throw new UnauthorizedAccessException($"Metadata access was denied: {path}");
+                return value;
+            }
         }
 
         await Task.CompletedTask.ConfigureAwait(false);
@@ -301,6 +325,16 @@ public class WindowsMftBenchmarks
         null,
         true,
         true);
+
+    private static bool IsAccessDenied(Exception exception) => exception switch
+    {
+        UnauthorizedAccessException => true,
+        IOException ioException => (ioException.HResult & 0xFFFF) == 5,
+        System.ComponentModel.Win32Exception win32Exception => win32Exception.NativeErrorCode == 5,
+        _ => false
+    };
+
+    private static bool IsMetadataReadFailure(Exception exception) => exception is UnauthorizedAccessException or IOException or System.ComponentModel.Win32Exception;
 
     private static string ResolveMftPath(MftEntry entry, IReadOnlyDictionary<FileId, MftEntry> entries, string root)
     {

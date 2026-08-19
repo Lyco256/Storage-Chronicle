@@ -79,6 +79,7 @@ function Assert-GroupEvidence {
     param([Parameter(Mandatory = $true)][string]$Name, [Parameter(Mandatory = $true)]$Value)
 
     $schema = if ($null -ne $Value.PSObject.Properties['Schema']) { [string]$Value.Schema } else { '' }
+    if ($Name -ne 'BranchIntegration' -and ($null -eq $Value.PSObject.Properties['AcceptanceEligible'] -or -not [bool]$Value.AcceptanceEligible)) { throw "$Name evidence is not marked AcceptanceEligible=true." }
     switch ($Name) {
         'TestLabAndRealIo' {
             if ($schema -ne 'StorageChronicle.WindowsTestLabExecution.v2' -or
@@ -99,6 +100,8 @@ function Assert-GroupEvidence {
                 if ([string]::IsNullOrWhiteSpace($evidencePath) -or -not (Test-Path -LiteralPath $evidencePath -PathType Leaf)) { throw "Agent integration evidence is missing: $($stage.Name)" }
                 $realIo = Get-Content -Raw -Encoding UTF8 -LiteralPath $evidencePath | ConvertFrom-Json
                 if ([string]$realIo.Schema -ne 'StorageChronicle.WindowsTestLabRealIoEvidence.v1' -or [string]$realIo.Status -ne 'PASSED' -or -not [bool]$realIo.AcceptanceEligible) { throw "Real-I/O evidence is not eligible: $evidencePath" }
+                foreach ($field in @('OracleOperationCount', 'SourceEventCount', 'CanonicalEventCount', 'FinalStateCount', 'Checks', 'FailureReasons', 'HistoryPath')) { if ($null -eq $realIo.PSObject.Properties[$field]) { throw "Real-I/O evidence is missing ${field}: $evidencePath" } }
+                if ([int64]$realIo.OracleOperationCount -le 0 -or [int64]$realIo.SourceEventCount -le 0 -or [int64]$realIo.CanonicalEventCount -le 0 -or [int64]$realIo.FinalStateCount -le 0 -or @($realIo.FailureReasons).Count -ne 0 -or @($realIo.Checks).Count -eq 0 -or @($realIo.Checks | Where-Object { [string]$_.Status -ne 'PASSED' }).Count -ne 0 -or -not (Test-Path -LiteralPath ([string]$realIo.HistoryPath) -PathType Container)) { throw "Real-I/O evidence contains incomplete durable counts, failed checks, or a missing history path: $evidencePath" }
             }
         }
         'ConfirmedReconciliation' {
@@ -147,6 +150,30 @@ function Assert-GroupEvidence {
                 $artifactProperty = $Value.Artifacts.PSObject.Properties[$artifactName]
                 if ($null -eq $artifactProperty -or [string]::IsNullOrWhiteSpace([string]$artifactProperty.Value) -or -not (Test-Path -LiteralPath ([string]$artifactProperty.Value) -PathType Leaf)) { throw "Windows privileged artifact is missing: $artifactName" }
             }
+            $capabilities = Read-ReferencedJson -Path ([string]$Value.Artifacts.Capabilities) -Label 'Windows privileged capability artifact'
+            if ([string]$capabilities.Schema -ne 'StorageChronicle.WindowsPrivilegedCapabilities.v1' -or @($capabilities.Required).Count -ne $requiredWindowsPrivilegedCapabilities.Count -or @($capabilities.Tests | Where-Object { [string]$_.Status -ne 'PASSED' }).Count -ne 0) { throw 'Windows privileged capability artifact is not a complete passed result.' }
+            $errors = Read-ReferencedJson -Path ([string]$Value.Artifacts.Errors) -Label 'Windows privileged error artifact'
+            if ([string]$errors.Schema -ne 'StorageChronicle.WindowsPrivilegedErrors.v1' -or @($errors.Errors).Count -ne 0) { throw 'Windows privileged error artifact contains failures or is malformed.' }
+            $result = Read-ReferencedJson -Path ([string]$Value.Artifacts.Result) -Label 'Windows privileged result artifact'
+            if ([string]$result.Schema -ne 'StorageChronicle.WindowsPrivilegedAcceptance.v2' -or [string]$result.Status -ne 'PASSED' -or -not [bool]$result.AcceptanceEligible) { throw 'Windows privileged result artifact is not eligible.' }
+            foreach ($artifactName in @('Oracle', 'SourceEventSummary', 'CanonicalSummary', 'FinalStateSummary', 'ReconciliationSummary', 'ServiceSummary')) {
+                $payload = Read-ReferencedJson -Path ([string]$Value.Artifacts.$artifactName) -Label "Windows privileged $artifactName artifact"
+                if ([string]$payload.Schema -ne "StorageChronicle.WindowsPrivileged.$artifactName.v1" -or [string]$payload.Status -ne 'PASSED' -or -not [bool]$payload.AcceptanceEligible) { throw "Windows privileged $artifactName artifact is a placeholder, failed, or ineligible result." }
+                switch ($artifactName) {
+                    'Oracle' {
+                        if ([string]::IsNullOrWhiteSpace([string]$payload.OraclePath) -or -not (Test-Path -LiteralPath ([string]$payload.OraclePath) -PathType Leaf)) { throw 'Windows privileged Oracle artifact references a missing workload oracle.' }
+                    }
+                    { $_ -in @('SourceEventSummary', 'CanonicalSummary', 'FinalStateSummary') } {
+                        if ([string]::IsNullOrWhiteSpace([string]$payload.HistoryPath) -or -not (Test-Path -LiteralPath ([string]$payload.HistoryPath) -PathType Container)) { throw "Windows privileged $artifactName artifact references a missing Agent history directory." }
+                    }
+                    'ReconciliationSummary' {
+                        if ([string]::IsNullOrWhiteSpace([string]$payload.EvidencePath) -or -not (Test-Path -LiteralPath ([string]$payload.EvidencePath) -PathType Leaf)) { throw 'Windows privileged reconciliation summary references missing evidence.' }
+                    }
+                    'ServiceSummary' {
+                        if ([string]::IsNullOrWhiteSpace([string]$payload.EvidencePath) -or -not (Test-Path -LiteralPath ([string]$payload.EvidencePath) -PathType Leaf)) { throw 'Windows privileged service summary references missing transcript evidence.' }
+                    }
+                }
+            }
         }
         'Windows10_22H2' {
             if ($schema -ne 'StorageChronicle.Windows10PhysicalAcceptance.v1') { throw 'Windows 10 evidence has an unexpected schema.' }
@@ -188,7 +215,7 @@ function Assert-GroupEvidence {
         'MftPerformance' {
             if ($schema -ne 'StorageChronicle.FullBenchmarkMatrixEvidence.v1') { throw 'MFT performance evidence has an unexpected schema.' }
             if (-not [bool]$Value.IncludeMft -or [string]$Value.Configuration -ne 'Release' -or $null -eq $Value.MftEvidence) { throw 'MFT performance evidence is missing the connected Release MFT correctness artifact.' }
-            if ([string]$Value.ExecutionStatus -ne 'completed' -or [string]$Value.MftEvidence.Schema -ne 'StorageChronicle.MftBenchmarkEvidence.v1' -or [string]$Value.MftEvidence.Status -ne 'PASSED' -or -not [bool]$Value.MftEvidence.AcceptanceEligible) { throw 'MFT performance evidence is not a completed eligible real matrix.' }
+            if ([string]$Value.ExecutionStatus -ne 'completed' -or [string]$Value.MftEvidence.Schema -ne 'StorageChronicle.MftBenchmarkEvidence.v1' -or [string]$Value.MftEvidence.Status -ne 'PASSED' -or -not [bool]$Value.MftEvidence.AcceptanceEligible -or $null -eq $Value.MftEvidence.PSObject.Properties['FailureReasons'] -or @($Value.MftEvidence.FailureReasons).Count -ne 0) { throw 'MFT performance evidence is not a completed eligible real matrix.' }
             if ([string]$Value.Host.MftVolumeLabel -ne 'SC_TEST_MFT_VOLUME' -or
                 [string]::IsNullOrWhiteSpace([string]$Value.Host.MftMarkerPath) -or
                 -not (Test-Path -LiteralPath ([string]$Value.Host.MftMarkerPath) -PathType Leaf) -or

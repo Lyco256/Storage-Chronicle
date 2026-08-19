@@ -10,6 +10,9 @@ param(
     [string]$RemovableRoot,
     [string]$SmbShareName,
     [string]$ServiceName = 'StorageChronicleAgent',
+    [string]$SessionAgentExecutable,
+    [string]$WorkloadOraclePath,
+    [string]$AgentHistoryPath,
     [switch]$CreateVhdx,
     [switch]$CreateUsnJournal,
     [switch]$WaitForMediaChange,
@@ -27,6 +30,9 @@ $arguments = @{
     RemovableRoot = $RemovableRoot
     SmbShareName = $SmbShareName
     ServiceName = $ServiceName
+    SessionAgentExecutable = $SessionAgentExecutable
+    WorkloadOraclePath = $WorkloadOraclePath
+    AgentHistoryPath = $AgentHistoryPath
     CreateVhdx = $CreateVhdx
     CreateUsnJournal = $CreateUsnJournal
     WaitForMediaChange = $WaitForMediaChange

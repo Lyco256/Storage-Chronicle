@@ -13,6 +13,8 @@ param(
     [string]$SmbShareName,
     [string]$ServiceName = 'StorageChronicleAgent',
     [string]$SessionAgentExecutable,
+    [string]$WorkloadOraclePath,
+    [string]$AgentHistoryPath,
     [string]$AgentPipeName = 'StorageChronicle.Agent',
     [switch]$CreateVhdx,
     [switch]$CreateUsnJournal,
@@ -200,15 +202,66 @@ function Write-Manifest([int]$ExitCode, [string]$Status) {
     $manifest.Artifacts.ServiceSummary = Join-Path $evidenceDirectory 'service-summary.json'
     $manifest.Artifacts.Errors = Join-Path $evidenceDirectory 'errors.json'
     $manifest.Artifacts.Result = Join-Path $evidenceDirectory 'result.json'
+    $manifest.Artifacts.RealIoOracle = Join-Path $evidenceDirectory 'real-io-evidence.json'
     if (-not (Test-Path -LiteralPath $manifest.Artifacts.ConfirmedReconciliation -PathType Leaf)) {
         [ordered]@{ Schema = 'StorageChronicle.ConfirmedReconciliationAcceptance.v1'; AcceptanceEligible = $false; Status = 'NOT_EXECUTED'; Reason = 'The real Agent reconciliation acceptance test did not produce evidence.' } | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $manifest.Artifacts.ConfirmedReconciliation -Encoding UTF8
     }
     $manifest.Environment | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $manifest.Artifacts.Environment -Encoding UTF8
     [ordered]@{ Schema = 'StorageChronicle.WindowsPrivilegedCapabilities.v1'; Required = $manifest.RequiredCapabilities; Definitions = $manifest.Capabilities; Tests = $manifest.Tests } | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $manifest.Artifacts.Capabilities -Encoding UTF8
     foreach ($name in @('Oracle', 'SourceEventSummary', 'CanonicalSummary', 'FinalStateSummary', 'ReconciliationSummary', 'ServiceSummary')) { [ordered]@{ Schema = "StorageChronicle.WindowsPrivileged.$name.v1"; Status = 'NOT_EXECUTED'; Reason = 'This capability artifact is populated only by the real TestLab product workload; no synthetic summary is accepted.' } | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $manifest.Artifacts[$name] -Encoding UTF8 }
-    [ordered]@{ Schema = 'StorageChronicle.WindowsPrivilegedErrors.v1'; Errors = @($manifest.Tests | Where-Object Status -in @('FAILED', 'NOT_EXECUTED')) } | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $manifest.Artifacts.Errors -Encoding UTF8
+    $productEvidenceReady = Populate-ProductEvidence
+    $manifest.ProductEvidenceReady = $productEvidenceReady
+    if (-not $productEvidenceReady -and $Status -eq 'PASSED') {
+        $Status = 'NOT_EXECUTED'
+        if ($ExitCode -eq 0) { $ExitCode = 2 }
+    }
+    $manifest.Status = $Status
+    $manifest.ExitCode = $ExitCode
+    $manifest.AcceptanceEligible = $Status -eq 'PASSED' -and $productEvidenceReady -and $requiredResults.Count -eq $manifest.RequiredCapabilities.Count -and @($requiredResults | Where-Object Status -ne 'PASSED').Count -eq 0
+    $errors = @($manifest.Tests | Where-Object Status -in @('FAILED', 'NOT_EXECUTED'))
+    if ($manifest.Contains('ProductEvidenceError') -and -not [string]::IsNullOrWhiteSpace([string]$manifest.ProductEvidenceError)) { $errors += [ordered]@{ Capability = 'ProductEvidence'; Status = 'NOT_EXECUTED'; Reason = [string]$manifest.ProductEvidenceError } }
+    [ordered]@{ Schema = 'StorageChronicle.WindowsPrivilegedErrors.v1'; Errors = $errors } | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $manifest.Artifacts.Errors -Encoding UTF8
     $manifest | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $manifest.Artifacts.Result -Encoding UTF8
     $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+}
+
+function Write-ProductEvidencePayload([string]$Name, $Value) {
+    $Value | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $manifest.Artifacts[$Name] -Encoding UTF8
+}
+
+function Populate-ProductEvidence {
+    if ([string]::IsNullOrWhiteSpace($WorkloadOraclePath) -or [string]::IsNullOrWhiteSpace($AgentHistoryPath)) {
+        $manifest.ProductEvidenceError = 'A real workload oracle and Agent history directory are required; capability-only output remains ineligible.'
+        return $false
+    }
+    try {
+        $oracleFull = [IO.Path]::GetFullPath($WorkloadOraclePath)
+        $historyFull = [IO.Path]::GetFullPath($AgentHistoryPath)
+        if (-not (Test-Path -LiteralPath $oracleFull -PathType Leaf)) { throw "The real workload oracle does not exist: $oracleFull" }
+        if (-not (Test-Path -LiteralPath $historyFull -PathType Container)) { throw "The real Agent history directory does not exist: $historyFull" }
+        $validatorProject = Join-Path $root 'tools/StorageChronicle.RealIoOracleValidator/StorageChronicle.RealIoOracleValidator.csproj'
+        if (-not (Test-Path -LiteralPath $validatorProject -PathType Leaf)) { throw "The real-I/O validator project is missing: $validatorProject" }
+        & dotnet run --project $validatorProject --configuration Release --no-restore -- --oracle $oracleFull --history $historyFull --output $manifest.Artifacts.RealIoOracle 2>&1 | Tee-Object -FilePath (Join-Path $artifactRoot "windows-privileged-$runId.real-io-validator.log")
+        if ($LASTEXITCODE -ne 0) { throw "The real-I/O validator failed with exit code $LASTEXITCODE." }
+        $realIo = Get-Content -Raw -Encoding UTF8 -LiteralPath $manifest.Artifacts.RealIoOracle | ConvertFrom-Json
+        if ([string]$realIo.Schema -ne 'StorageChronicle.WindowsTestLabRealIoEvidence.v1' -or [string]$realIo.Status -ne 'PASSED' -or -not [bool]$realIo.AcceptanceEligible -or [int64]$realIo.OracleOperationCount -le 0 -or [int64]$realIo.SourceEventCount -le 0 -or [int64]$realIo.CanonicalEventCount -le 0 -or [int64]$realIo.FinalStateCount -le 0 -or @($realIo.FailureReasons).Count -ne 0 -or @($realIo.Checks | Where-Object Status -ne 'PASSED').Count -ne 0) { throw 'The real-I/O evidence is incomplete, failed, or ineligible.' }
+        $base = [ordered]@{ Status = 'PASSED'; AcceptanceEligible = $true; OraclePath = $oracleFull; HistoryPath = $historyFull; RunId = [string]$realIo.RunId; Scenario = [string]$realIo.Scenario; OracleOperationCount = [int64]$realIo.OracleOperationCount; SourceEventCount = [int64]$realIo.SourceEventCount; CanonicalEventCount = [int64]$realIo.CanonicalEventCount; FinalStateCount = [int64]$realIo.FinalStateCount; Checks = @($realIo.Checks); FailureReasons = @() }
+        Write-ProductEvidencePayload 'Oracle' ([ordered]@{ Schema = 'StorageChronicle.WindowsPrivileged.Oracle.v1'; Status = $base.Status; AcceptanceEligible = $base.AcceptanceEligible; OraclePath = $base.OraclePath; RunId = $base.RunId; Scenario = $base.Scenario; OracleOperationCount = $base.OracleOperationCount })
+        Write-ProductEvidencePayload 'SourceEventSummary' ([ordered]@{ Schema = 'StorageChronicle.WindowsPrivileged.SourceEventSummary.v1'; Status = $base.Status; AcceptanceEligible = $base.AcceptanceEligible; SourceEventCount = $base.SourceEventCount; Checks = $base.Checks; HistoryPath = $base.HistoryPath })
+        Write-ProductEvidencePayload 'CanonicalSummary' ([ordered]@{ Schema = 'StorageChronicle.WindowsPrivileged.CanonicalSummary.v1'; Status = $base.Status; AcceptanceEligible = $base.AcceptanceEligible; CanonicalEventCount = $base.CanonicalEventCount; Checks = $base.Checks; HistoryPath = $base.HistoryPath })
+        Write-ProductEvidencePayload 'FinalStateSummary' ([ordered]@{ Schema = 'StorageChronicle.WindowsPrivileged.FinalStateSummary.v1'; Status = $base.Status; AcceptanceEligible = $base.AcceptanceEligible; FinalStateCount = $base.FinalStateCount; Checks = $base.Checks; HistoryPath = $base.HistoryPath })
+        $serviceTest = @($manifest.Tests | Where-Object { [string]$_.Capability -eq 'Service' -and [string]$_.Status -eq 'PASSED' })
+        if ($serviceTest.Count -ne 1) { throw 'The Service capability did not produce exactly one passed result.' }
+        Write-ProductEvidencePayload 'ServiceSummary' ([ordered]@{ Schema = 'StorageChronicle.WindowsPrivileged.ServiceSummary.v1'; Status = 'PASSED'; AcceptanceEligible = $true; Capability = 'Service'; Test = $serviceTest[0]; EvidencePath = $runOutputPath })
+        if (-not (Test-Path -LiteralPath $reconciliationEvidencePath -PathType Leaf)) { throw "The confirmed reconciliation evidence was not produced: $reconciliationEvidencePath" }
+        $reconciliation = Get-Content -Raw -Encoding UTF8 -LiteralPath $reconciliationEvidencePath | ConvertFrom-Json
+        if ([string]$reconciliation.Schema -ne 'StorageChronicle.ConfirmedReconciliationAcceptance.v1' -or [string]$reconciliation.Status -ne 'PASSED' -or -not [bool]$reconciliation.AcceptanceEligible) { throw 'Confirmed reconciliation evidence is not an eligible passed result.' }
+        Write-ProductEvidencePayload 'ReconciliationSummary' ([ordered]@{ Schema = 'StorageChronicle.WindowsPrivileged.ReconciliationSummary.v1'; Status = 'PASSED'; AcceptanceEligible = $true; EvidencePath = $reconciliationEvidencePath; RunId = [string]$reconciliation.RunId; SourceEventCount = [int64]$reconciliation.SourceEventCount; CanonicalEventCount = [int64]$reconciliation.CanonicalEventCount; FinalStateCount = [int64]$reconciliation.FinalStateCount; CandidateCount = [int64]$reconciliation.CandidateCount; DetailedMetadataQueryCount = [int64]$reconciliation.DetailedMetadataQueryCount })
+        return $true
+    } catch {
+        $manifest.ProductEvidenceError = $_.Exception.Message
+        return $false
+    }
 }
 
 $createdVhdx = $false
