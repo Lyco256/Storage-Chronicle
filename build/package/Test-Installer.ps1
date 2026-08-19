@@ -4,6 +4,7 @@ param(
     [string]$UpdatedMsiPath,
     [string]$RollbackMsiPath,
     [string]$TargetOs,
+    [ValidateSet('PhysicalMachine', 'HyperVVm')][string]$TargetKind,
     [string]$ExecutionMode,
     [string]$DriverScript,
     [string]$VmName,
@@ -44,6 +45,7 @@ $MsiPath = Get-EnvironmentFallback $MsiPath 'STORAGE_CHRONICLE_INSTALLER_MSI'
 $UpdatedMsiPath = Get-EnvironmentFallback $UpdatedMsiPath 'STORAGE_CHRONICLE_INSTALLER_UPDATED_MSI'
 $RollbackMsiPath = Get-EnvironmentFallback $RollbackMsiPath 'STORAGE_CHRONICLE_INSTALLER_ROLLBACK_MSI'
 $TargetOs = Get-EnvironmentFallback $TargetOs 'STORAGE_CHRONICLE_INSTALLER_TARGET_OS'
+$TargetKind = Get-EnvironmentFallback $TargetKind 'STORAGE_CHRONICLE_INSTALLER_TARGET_KIND'
 $ExecutionMode = Get-EnvironmentFallback $ExecutionMode 'STORAGE_CHRONICLE_INSTALLER_MODE'
 $DriverScript = Get-EnvironmentFallback $DriverScript 'STORAGE_CHRONICLE_INSTALLER_DRIVER'
 $VmName = Get-EnvironmentFallback $VmName 'STORAGE_CHRONICLE_INSTALLER_VM_NAME'
@@ -93,11 +95,13 @@ $script:Manifest = [ordered]@{
     AcceptanceEligible = $false
     ExitCode = $null
     TargetOs = $TargetOs
+    TargetKind = $TargetKind
     ExecutionMode = $ExecutionMode
     ExecuteRequested = [bool]$Execute
     Environment = [ordered]@{
         Host = [Environment]::OSVersion.VersionString
         TargetOs = $TargetOs
+        TargetKind = $TargetKind
         ExecutionMode = $ExecutionMode
         MsiPath = $MsiPath
         UpdatedMsiPath = $UpdatedMsiPath
@@ -356,6 +360,7 @@ function Get-DriverInvocation {
     $driverArguments = @(
         '-CaseId', $CaseId,
         '-TargetOs', $TargetOs,
+        '-TargetKind', $TargetKind,
         '-ExecutionMode', $ExecutionMode,
         '-MsiPath', $MsiPath,
         '-UpdatedMsiPath', $UpdatedMsiPath,
@@ -441,7 +446,7 @@ function Read-DriverResult {
         }
     }
 
-    if ($null -eq $payload.Target -or [string]$payload.Target.OS -ne $TargetOs -or [string]$payload.Target.Mode -ne $ExecutionMode -or $payload.Target.Isolated -ne $true -or $payload.Target.IsAdministrator -ne $true) {
+    if ($null -eq $payload.Target -or [string]$payload.Target.OS -ne $TargetOs -or [string]$payload.Target.Kind -ne $TargetKind -or [string]$payload.Target.Mode -ne $ExecutionMode -or $payload.Target.Isolated -ne $true -or $payload.Target.IsAdministrator -ne $true) {
         throw "Driver result '$CaseId' lacks a matching isolated, administrator target declaration."
     }
     if ($ExecutionMode -eq 'VM' -and [string]::IsNullOrWhiteSpace([string]$payload.Target.VmName)) {
@@ -482,7 +487,7 @@ function Invoke-InstallerCase {
     $caseId = [string]$Definition.Id
     $caseResultPath = Join-Path $caseDirectory "$caseId.json"
     $caseLogPath = Join-Path $caseDirectory "$caseId.log"
-    $reasons = Get-PreconditionReasons @('WindowsHost', 'ExecutionArmed', 'TargetOs', 'ExecutionMode', 'Driver', 'CaseTimeout', 'HostAdministrator', 'Isolation', 'MsiPath')
+    $reasons = Get-PreconditionReasons @('WindowsHost', 'ExecutionArmed', 'TargetOs', 'TargetKind', 'ExecutionMode', 'Driver', 'CaseTimeout', 'HostAdministrator', 'Isolation', 'MsiPath')
     $reasons += Get-PreconditionReasons $Definition.Requirements
     if ($reasons.Count -gt 0) {
         Add-CaseResult -Id $caseId -Name ([string]$Definition.Name) -Status 'NOT_EXECUTED' -Reason (($reasons | Select-Object -Unique) -join '; ')
@@ -571,7 +576,7 @@ function Write-MarkdownArtifact {
     [void]$builder.AppendLine()
     [void]$builder.AppendLine('## Driver contract')
     [void]$builder.AppendLine()
-    [void]$builder.AppendLine('The driver supplied through `-DriverScript` or `STORAGE_CHRONICLE_INSTALLER_DRIVER` must perform the case on the declared Windows target and write the requested result JSON. A passing result must contain the matching `CaseId`, `Status: PASSED`, `Target.OS`, `Target.Mode`, `Target.Isolated: true`, `Target.IsAdministrator: true`, and at least one passing assertion with an existing `EvidencePath`. For VM runs, `Target.VmName` is also required. The harness does not synthesize or infer a pass from an exit code alone.')
+    [void]$builder.AppendLine('The driver supplied through `-DriverScript` or `STORAGE_CHRONICLE_INSTALLER_DRIVER` must perform the case on the declared Windows target and write the requested result JSON. A passing result must contain the matching `CaseId`, `Status: PASSED`, `Target.OS`, `Target.Kind`, `Target.Mode`, `Target.Isolated: true`, `Target.IsAdministrator: true`, and at least one passing assertion with an existing `EvidencePath`. For VM runs, `Target.VmName` is also required. The harness does not synthesize or infer a pass from an exit code alone.')
     [void]$builder.AppendLine()
     [void]$builder.AppendLine('## Exit codes')
     [void]$builder.AppendLine()
@@ -590,6 +595,7 @@ try {
     $currentTarget = Get-CurrentWindowsTarget
     $validTarget = $TargetOs -in @('Windows10-22H2', 'Windows11')
     $validMode = $ExecutionMode -in @('Local', 'VM')
+    $validTargetKind = $TargetKind -in @('PhysicalMachine', 'HyperVVm')
     $driverReady = Test-DriverLauncher $DriverScript
     $hyperVReady = $false
     $vmReady = $false
@@ -609,6 +615,7 @@ try {
     Add-Precondition 'WindowsHost' $isWindows 'The installer acceptance harness requires a Windows host because MSI, service, session, and ACL checks are Windows-only.'
     Add-Precondition 'ExecutionArmed' ([bool]$Execute) 'The run is armed only when -Execute is supplied; planning or omitted execution never passes.'
     Add-Precondition 'TargetOs' ($validTarget) 'TargetOs must be Windows10-22H2 or Windows11 and must be supplied explicitly.'
+    Add-Precondition 'TargetKind' $validTargetKind 'TargetKind must be PhysicalMachine or HyperVVm and must be supplied explicitly.'
     Add-Precondition 'ExecutionMode' ($validMode) 'ExecutionMode must be Local or VM and must be supplied explicitly.'
     Add-Precondition 'Driver' $driverReady 'A real installer driver script or executable is required; no fake/default driver is provided.'
     Add-Precondition 'CaseTimeout' ($CaseTimeoutSeconds -ge 1 -and $CaseTimeoutSeconds -le 7200) 'CaseTimeoutSeconds must be between 1 and 7200 seconds.'

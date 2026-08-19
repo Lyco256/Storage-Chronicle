@@ -70,6 +70,7 @@ function Assert-GroupEvidence {
         'PhysicalInstaller' {
             if ($schema -ne 'storage-chronicle.installer-acceptance.v1') { throw 'Installer evidence has an unexpected schema.' }
             if ($null -eq $Value.PSObject.Properties['Summary'] -or [int]$Value.Summary.Total -ne 11 -or [int]$Value.Summary.Passed -ne 11) { throw 'Installer evidence does not contain all eleven passed cases.' }
+            if ([string]$Value.TargetKind -ne 'PhysicalMachine' -or [string]$Value.ExecutionMode -ne 'Local') { throw 'Installer evidence is not from the required physical-machine acceptance path.' }
         }
         'AgentExplorerCorrelation' {
             if ($schema -ne 'StorageChronicle.AgentExplorerCorrelationEvidence.v1') { throw 'Agent/Explorer correlation evidence has an unexpected schema.' }

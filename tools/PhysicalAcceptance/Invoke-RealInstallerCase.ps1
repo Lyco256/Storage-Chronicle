@@ -2,6 +2,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$CaseId,
     [Parameter(Mandatory = $true)][ValidateSet('Windows10-22H2', 'Windows11')][string]$TargetOs,
+    [ValidateSet('PhysicalMachine', 'HyperVVm')][string]$TargetKind = 'PhysicalMachine',
     [Parameter(Mandatory = $true)][ValidateSet('Local', 'VM')][string]$ExecutionMode,
     [Parameter(Mandatory = $true)][string]$MsiPath,
     [string]$UpdatedMsiPath,
@@ -33,6 +34,7 @@ $result = [ordered]@{
     Reason = $null
     Target = [ordered]@{
         OS = $TargetOs
+        Kind = $TargetKind
         Mode = $ExecutionMode
         Isolated = $false
         IsAdministrator = $false
@@ -245,7 +247,7 @@ function Assert-StoragePermission {
 try {
     $result.Target.IsAdministrator = Test-Administrator
     if (-not $result.Target.IsAdministrator) { throw 'The installer driver requires an elevated process.' }
-    if ($ExecutionMode -ne 'Local') { throw 'This physical-machine driver only supports ExecutionMode=Local.' }
+    if ($TargetKind -ne 'PhysicalMachine' -or $ExecutionMode -ne 'Local') { throw 'This physical-machine driver requires TargetKind=PhysicalMachine and ExecutionMode=Local.' }
     $acceptanceRoot = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_ACCEPTANCE_TEST_ROOT', 'Process')
     if ([string]::IsNullOrWhiteSpace($acceptanceRoot) -or -not (Test-Path -LiteralPath $acceptanceRoot -PathType Container)) { throw 'The driver was not given an existing approved acceptance root.' }
     $acceptanceRoot = [IO.Path]::GetFullPath($acceptanceRoot).TrimEnd('\\')

@@ -6,7 +6,7 @@ Runs the R-20 physical installer acceptance matrix for one explicitly declared W
 
 ## Public types and responsibilities
 
-The PowerShell script has no shared product contract or substitute domain type. Its public command-line parameters select the MSI artifacts, target (`Windows10-22H2` or `Windows11`), execution mode (`Local` or `VM`), isolated-environment driver, guest paths, and non-secret credential references. The fixed manifest contains these eleven cases:
+The PowerShell script has no shared product contract or substitute domain type. Its public command-line parameters select the MSI artifacts, target (`Windows10-22H2` or `Windows11`), target kind (`PhysicalMachine` or `HyperVVm`), execution mode (`Local` or `VM`), isolated-environment driver, guest paths, and non-secret credential references. The fixed manifest contains these eleven cases:
 
 1. clean install
 2. repair
@@ -24,7 +24,7 @@ The external driver performs the destructive MSI operations and state assertions
 
 ## Inputs and outputs
 
-Parameters may be supplied directly or through process environment variables. The important variables are `STORAGE_CHRONICLE_INSTALLER_MSI`, `STORAGE_CHRONICLE_INSTALLER_UPDATED_MSI`, `STORAGE_CHRONICLE_INSTALLER_ROLLBACK_MSI`, `STORAGE_CHRONICLE_INSTALLER_TARGET_OS`, `STORAGE_CHRONICLE_INSTALLER_MODE`, `STORAGE_CHRONICLE_INSTALLER_DRIVER`, `STORAGE_CHRONICLE_INSTALLER_VM_NAME`, `STORAGE_CHRONICLE_INSTALLER_WINDOWS_ISO`, `STORAGE_CHRONICLE_INSTALLER_NONADMIN_USER`, `STORAGE_CHRONICLE_INSTALLER_NONADMIN_CREDENTIAL_REF`, `STORAGE_CHRONICLE_INSTALLER_SESSION_USER`, and `STORAGE_CHRONICLE_INSTALLER_SERVICE_CREDENTIAL_REF`. No plaintext password is accepted or written to the manifest.
+Parameters may be supplied directly or through process environment variables. The important variables are `STORAGE_CHRONICLE_INSTALLER_MSI`, `STORAGE_CHRONICLE_INSTALLER_UPDATED_MSI`, `STORAGE_CHRONICLE_INSTALLER_ROLLBACK_MSI`, `STORAGE_CHRONICLE_INSTALLER_TARGET_OS`, `STORAGE_CHRONICLE_INSTALLER_TARGET_KIND`, `STORAGE_CHRONICLE_INSTALLER_MODE`, `STORAGE_CHRONICLE_INSTALLER_DRIVER`, `STORAGE_CHRONICLE_INSTALLER_VM_NAME`, `STORAGE_CHRONICLE_INSTALLER_WINDOWS_ISO`, `STORAGE_CHRONICLE_INSTALLER_NONADMIN_USER`, `STORAGE_CHRONICLE_INSTALLER_NONADMIN_CREDENTIAL_REF`, `STORAGE_CHRONICLE_INSTALLER_SESSION_USER`, and `STORAGE_CHRONICLE_INSTALLER_SERVICE_CREDENTIAL_REF`. No plaintext password is accepted or written to the manifest.
 
 `-Execute` is required to arm a run. VM mode requires a running Hyper-V VM, a Windows ISO, administrator rights, and a driver; local mode additionally requires `-AllowLocalIsolatedExecution` and a disposable host whose OS matches the requested target. The default output directory is `artifacts/installer/acceptance`.
 
@@ -39,7 +39,7 @@ The script depends on Windows MSI/SCM/session/ACL capabilities, PowerShell, the 
 - The eleven R-20 cases are always represented in the manifest, including when none can run.
 - Missing MSI artifacts, target OS, driver, ISO, VM, isolation declaration, account, credential reference, or administrator/service capability produces `NOT_EXECUTED`, never `PASSED`.
 - A nonzero exit code is returned for `FAILED` or `NOT_EXECUTED`; only eleven passed cases produce exit code `0`.
-- VM results must identify the VM and the requested Windows target. A driver exit code alone is insufficient evidence.
+- VM results must identify the VM and the requested Windows target; physical results must declare `TargetKind=PhysicalMachine` and `ExecutionMode=Local`. A driver exit code alone is insufficient evidence.
 - History is checked by the driver as retained state; the harness never adds a history-deletion operation.
 - No file contents or file-content hashes are read by the harness. Evidence is checked only by path existence, and credential references are recorded without secret material.
 
@@ -61,4 +61,4 @@ MSI, LocalSystem service recovery, user-logon Session Agent startup, non-adminis
 
 ## Change-sensitive contracts
 
-Keep the eleven case IDs stable because release reports and `docs/release/requirements-verification.md` refer to them. Changes to the driver result schema must remain backward-incompatible only through a new `Schema` or script version. Do not weaken the isolated-target, administrator, assertion, evidence-path, or fail-closed checks to make a physical acceptance run pass. Changes to the WiX product contract belong in `installer/**` and its manifest tests, not in this harness.
+Keep the eleven case IDs stable because release reports and `docs/release/requirements-verification.md` refer to them. Keep `TargetKind` explicit so a VM artifact cannot satisfy the physical-installer group. Changes to the driver result schema must remain backward-incompatible only through a new `Schema` or script version. Do not weaken the isolated-target, administrator, assertion, evidence-path, or fail-closed checks to make a physical acceptance run pass. Changes to the WiX product contract belong in `installer/**` and its manifest tests, not in this harness.

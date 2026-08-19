@@ -53,6 +53,30 @@ function Invoke-GuestCommand {
     return $output
 }
 
+function Copy-GuestArtifactDirectory {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmName,
+        [Parameter(Mandatory = $true)][string]$SourceDirectory,
+        [Parameter(Mandatory = $true)][string]$DestinationDirectory,
+        [Parameter(Mandatory = $true)][string]$LogPath
+    )
+
+    $sourceRoot = [IO.Path]::GetFullPath($SourceDirectory)
+    if (-not (Test-Path -LiteralPath $sourceRoot -PathType Container)) { throw "Guest artifact directory does not exist: $sourceRoot" }
+    $files = @(Get-ChildItem -LiteralPath $sourceRoot -Recurse -File)
+    if ($files.Count -eq 0) { throw "Guest artifact directory is empty: $sourceRoot" }
+    foreach ($file in $files) {
+        $relative = [IO.Path]::GetRelativePath($sourceRoot, $file.FullName)
+        $destination = Join-Path $DestinationDirectory $relative
+        $parent = Split-Path -Parent $destination
+        Invoke-GuestCommand -VmName $VmName -Command "New-Item -ItemType Directory -Force -Path $(Quote-GuestLiteral $parent) | Out-Null" | Out-Null
+        $copyArguments = @{ VmName = $VmName; SourcePath = $file.FullName; DestinationPath = $destination; ConfigPath = $ConfigPath }
+        if ($null -ne $Credential) { $copyArguments.Credential = $Credential }
+        & (Join-Path $PSScriptRoot 'Copy-TestArtifactsToVm.ps1') @copyArguments 2>&1 | Out-File -LiteralPath $LogPath -Append -Encoding UTF8
+        if ($LASTEXITCODE -ne 0) { throw "Guest artifact transfer failed for $($file.FullName) with exit code $LASTEXITCODE." }
+    }
+}
+
 function Get-GuestDataDefinition {
     switch ($DataRole) {
         'Mft' { return [ordered]@{ Label = 'SC_TEST_MFT_VOLUME'; FileSystem = 'NTFS'; Scenario = 'mft' } }
@@ -129,11 +153,13 @@ try {
     }
     $workloadSource = [IO.Path]::GetFullPath($GuestWorkloadExecutable)
     if (-not (Test-Path -LiteralPath $workloadSource -PathType Leaf)) { throw "Guest workload executable does not exist: $GuestWorkloadExecutable" }
+    $workloadSourceDirectory = Split-Path -Parent $workloadSource
     $agentSource = $null
     if (-not [string]::IsNullOrWhiteSpace($GuestAgentExecutable)) {
         $agentSource = [IO.Path]::GetFullPath($GuestAgentExecutable)
         if (-not (Test-Path -LiteralPath $agentSource -PathType Leaf)) { throw "Guest Agent executable does not exist: $GuestAgentExecutable" }
     }
+    $agentSourceDirectory = if ($null -ne $agentSource) { Split-Path -Parent $agentSource } else { $null }
 
     if (-not $Apply) {
         Add-Stage 'preflight' 'READY_FOR_USER_APPLY' 'Configuration, local ISO paths, and workload artifact are valid; no VM or guest operation was run.'
@@ -148,7 +174,9 @@ try {
     Assert-HyperVMutationPrerequisites
     Add-Stage 'preflight' 'PASSED' 'Hyper-V and VMMS were available on the elevated host.'
     $guestWorkloadDestination = 'C:\StorageChronicleTest\StorageChronicle.FileMutationWorkload.exe'
+    $guestWorkloadDirectory = Split-Path -Parent $guestWorkloadDestination
     $guestAgentDestination = 'C:\StorageChronicleTest\StorageChronicle.Agent.exe'
+    $guestAgentDirectory = Split-Path -Parent $guestAgentDestination
     $validatorProject = Join-Path $repositoryRoot 'tools/StorageChronicle.RealIoOracleValidator/StorageChronicle.RealIoOracleValidator.csproj'
     if ($null -ne $agentSource -and -not (Test-Path -LiteralPath $validatorProject -PathType Leaf)) { throw "Real-I/O oracle validator project is missing: $validatorProject" }
     $definitionData = Get-GuestDataDefinition
@@ -205,13 +233,9 @@ Compress-Archive -Path (Join-Path `$historyRoot '*') -DestinationPath `$historyZ
             [void]$activeVhdx.Add([pscustomobject]@{ VmName = $definition.Name; Path = $vhdxPath })
             Start-VM -Name $definition.Name -ErrorAction Stop | Out-Null
             Add-Stage $definition.Name 'STARTED' 'Baseline restored, disposable VHDX attached, and the approved VM started.' $vhdxPath
-            Invoke-GuestCommand -VmName $definition.Name -Command "New-Item -ItemType Directory -Force -Path $(Quote-GuestLiteral ([IO.Path]::GetDirectoryName($guestWorkloadDestination))) | Out-Null" | Out-Null
-            & (Join-Path $PSScriptRoot 'Copy-TestArtifactsToVm.ps1') -VmName $definition.Name -SourcePath $workloadSource -DestinationPath $guestWorkloadDestination -Credential $Credential -ConfigPath $ConfigPath | Out-File -LiteralPath (Join-Path $guestArtifactDirectory 'copy-workload.log') -Encoding UTF8
-            if ($LASTEXITCODE -ne 0) { throw "Workload transfer failed for $($definition.Name)." }
+            Copy-GuestArtifactDirectory -VmName $definition.Name -SourceDirectory $workloadSourceDirectory -DestinationDirectory $guestWorkloadDirectory -LogPath (Join-Path $guestArtifactDirectory 'copy-workload.log')
             if ($null -ne $agentSource) {
-                Invoke-GuestCommand -VmName $definition.Name -Command "New-Item -ItemType Directory -Force -Path $(Quote-GuestLiteral ([IO.Path]::GetDirectoryName($guestAgentDestination))) | Out-Null" | Out-Null
-                & (Join-Path $PSScriptRoot 'Copy-TestArtifactsToVm.ps1') -VmName $definition.Name -SourcePath $agentSource -DestinationPath $guestAgentDestination -Credential $Credential -ConfigPath $ConfigPath | Out-File -LiteralPath (Join-Path $guestArtifactDirectory 'copy-agent.log') -Encoding UTF8
-                if ($LASTEXITCODE -ne 0) { throw "Agent transfer failed for $($definition.Name)." }
+                Copy-GuestArtifactDirectory -VmName $definition.Name -SourceDirectory $agentSourceDirectory -DestinationDirectory $guestAgentDirectory -LogPath (Join-Path $guestArtifactDirectory 'copy-agent.log')
             }
             Initialize-GuestDataVolume -VmName $definition.Name -Root $GuestDataRoot
             $executionCommand = if ($null -ne $agentSource) { $agentGuestCommand } else { $guestCommand }
