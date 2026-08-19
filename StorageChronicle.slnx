@@ -48,6 +48,7 @@
     <Project Path="tests/StorageChronicle.WindowsIntegration.Tests/StorageChronicle.WindowsIntegration.Tests.csproj" />
     <Project Path="tests/StorageChronicle.DocMirrorValidator.Tests/StorageChronicle.DocMirrorValidator.Tests.csproj" />
     <Project Path="tests/StorageChronicle.Platform.Windows.Integration.Tests/StorageChronicle.Platform.Windows.Integration.Tests.csproj" />
+    <Project Path="tests/StorageChronicle.RealIoOracleValidator.Tests/StorageChronicle.RealIoOracleValidator.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/StorageChronicle.DocMirrorValidator/StorageChronicle.DocMirrorValidator.csproj" />

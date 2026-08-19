@@ -6,7 +6,7 @@ This read-only console tool compares a real `StorageChronicle.FileMutationWorklo
 
 ## Public types and responsibilities
 
-The entry point validates the oracle schema and per-operation UTC boundaries, opens the immutable history through `AppendOnlyStorageEngine`, checks source/canonical/state presence, checks compatible high-level operation coverage, verifies process-quality values and excludes read/open/query observations from durable canonical history, and emits `StorageChronicle.WindowsTestLabRealIoEvidence.v1`.
+The entry point validates the oracle schema and per-operation UTC boundaries, opens the immutable history through `AppendOnlyStorageEngine`, and emits `StorageChronicle.WindowsTestLabRealIoEvidence.v1`. Acceptance checks use reconstructed parent/name paths rather than leaf names, require every oracle operation to have path-matched canonical evidence, require write/rename/move/delete operation semantics, verify rename/move FileId continuity and delete metadata retention, and compare operations with the final state. A same-name object in another directory, an unrelated operation of the same kind, or a missing final-state object cannot satisfy the oracle.
 
 ## Inputs and outputs
 
@@ -18,7 +18,7 @@ Depends on the platform-neutral Domain and Storage projects. It does not acquire
 
 ## Invariants
 
-Missing oracle operations, absent durable streams, empty final state, invalid timestamps, unsupported process-quality values, read-only observations entering canonical history, or missing high-level operation coverage remain failures. Directory operations are checked as parent-scoped records rather than descendant event synthesis.
+Missing oracle operations, absent durable streams, empty final state, invalid timestamps, unsupported process-quality values, read-only observations entering canonical history, path mismatch, incorrect operation semantics, broken rename/move identity, missing delete metadata, or missing final-state coverage remain failures. Directory operations are checked as parent-scoped records rather than descendant event synthesis.
 
 ## Threading and lifetime
 
@@ -30,7 +30,7 @@ Malformed input or unavailable history produces an explicit failed artifact. A p
 
 ## Tests
 
-The tool is compiled by the solution build and invoked by the Windows TestLab real-I/O stage.
+The tool is compiled by the solution build and invoked by the Windows TestLab real-I/O stage. `tests/StorageChronicle.RealIoOracleValidator.Tests` covers exact path/state success and rejects same-name path substitution, wrong rename identity, and delete-without-metadata artifacts.
 
 ## OS constraints
 
