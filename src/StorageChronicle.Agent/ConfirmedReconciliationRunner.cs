@@ -31,6 +31,9 @@ public sealed record ReconciliationExecutionSummary(
     /// <summary>Gets the explicit detailed-query to candidate ratio for this run.</summary>
     public double DetailedQueryCandidateRatio => CandidateCount == 0 ? 0d : (double)DetailedMetadataQueryCount / CandidateCount;
 
+    /// <summary>Gets the public lightweight MFT entry count recorded for this run.</summary>
+    public int MftEntryCount => LightweightEntryCount;
+
     /// <summary>Gets the privilege-enable failures represented by the fallback count.</summary>
     public int PrivilegeEnableFailureCount => PrivilegeFallbackCount;
 

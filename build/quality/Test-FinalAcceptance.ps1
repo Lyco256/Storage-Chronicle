@@ -40,9 +40,10 @@ function Assert-GroupEvidence {
         }
         'ConfirmedReconciliation' {
             if ($schema -ne 'StorageChronicle.ConfirmedReconciliationAcceptance.v1') { throw 'Confirmed reconciliation evidence has an unexpected schema.' }
-            foreach ($field in @('RunId', 'VolumeId', 'FileSystem', 'SourceEventCount', 'CanonicalEventCount', 'FinalStateCount', 'LightweightEntryCount', 'CandidateCount', 'DetailedMetadataQueryCount', 'DetailedQueryCandidateRatio', 'PrivilegeEnableSuccessCount', 'PrivilegeEnableFailureCount', 'AclFallbackCount', 'BackgroundModeEnabled', 'IoHintAttempts', 'IoHintSuccesses', 'IoHintFailures', 'ElapsedMilliseconds', 'Status')) {
+            foreach ($field in @('RunId', 'VolumeId', 'FileSystem', 'SourceEventCount', 'CanonicalEventCount', 'FinalStateCount', 'LightweightEntryCount', 'MftEntryCount', 'CandidateCount', 'DetailedMetadataQueryCount', 'DetailedQueryCandidateRatio', 'PrivilegeEnableSuccessCount', 'PrivilegeEnableFailureCount', 'AclFallbackCount', 'BackgroundModeEnabled', 'IoHintAttempts', 'IoHintSuccesses', 'IoHintFailures', 'ElapsedMilliseconds', 'Status')) {
                 if ($null -eq $Value.PSObject.Properties[$field]) { throw "Confirmed reconciliation evidence is missing $field." }
             }
+            if ([int64]$Value.MftEntryCount -ne [int64]$Value.LightweightEntryCount) { throw 'Confirmed reconciliation MFT and lightweight entry counts disagree.' }
             if ([string]$Value.Status -ne 'PASSED') { throw "Confirmed reconciliation evidence status is not PASSED: $($Value.Status)" }
             if ([int64]$Value.CandidateCount -eq 0 -and [int64]$Value.DetailedMetadataQueryCount -ne 0) { throw 'Confirmed reconciliation performed detailed metadata queries without candidates.' }
             $expectedRatio = if ([int64]$Value.CandidateCount -eq 0) { 0d } else { [double]$Value.DetailedMetadataQueryCount / [double]$Value.CandidateCount }

@@ -12,7 +12,7 @@ Input is one selected `PendingReconciliationRequest`; output is a bounded `Recon
 
 ## Public types and responsibilities
 
-`IConfirmedReconciliationRunner` is the Agent-owned execution seam and `ReconciliationExecutionSummary` is the bounded evidence summary. The summary exposes lightweight entry count, candidate count, detailed-query count and ratio, privilege success/failure, ACL fallback, low-priority/I/O-hint telemetry, and elapsed time. The runner coordinates platform acquisition and durable persistence; it does not expose manual UI commands or generate descendant events.
+`IConfirmedReconciliationRunner` is the Agent-owned execution seam and `ReconciliationExecutionSummary` is the bounded evidence summary. The summary exposes matching public MFT/lightweight entry counts, candidate count, detailed-query count and ratio, privilege success/failure, ACL fallback, low-priority/I/O-hint telemetry, and elapsed time. The runner coordinates platform acquisition and durable persistence; it does not expose manual UI commands or generate descendant events.
 
 ## Invariants
 
