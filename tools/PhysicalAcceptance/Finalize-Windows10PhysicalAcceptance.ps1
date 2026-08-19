@@ -10,7 +10,13 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
-. (Join-Path $repositoryRoot 'build/quality/AcceptanceContracts.ps1')
+$contractCandidates = @(
+    (Join-Path $repositoryRoot 'build/quality/AcceptanceContracts.ps1'),
+    (Join-Path $PSScriptRoot 'AcceptanceContracts.ps1')
+)
+$contractPath = @($contractCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1)
+if ($contractPath.Count -ne 1) { throw 'AcceptanceContracts.ps1 is missing from the repository or manual Windows 10 bundle.' }
+. $contractPath[0]
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = Join-Path $repositoryRoot ('artifacts/acceptance/windows10/windows10-physical-acceptance-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.json')
 }

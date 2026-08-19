@@ -122,6 +122,18 @@ public sealed class InstallerManifestTests
         Assert.Contains("Status -ne 'PASSED'", windows10Finalizer, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Windows10ManualBundleCarriesSharedAcceptanceContract()
+    {
+        var root = FindRoot();
+        var bundleGenerator = File.ReadAllText(Path.Combine(root, "build", "package", "New-ManualAcceptanceBundle.ps1"));
+        var finalizer = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Finalize-Windows10PhysicalAcceptance.ps1"));
+
+        Assert.Contains("AcceptanceContracts.ps1", bundleGenerator, StringComparison.Ordinal);
+        Assert.Contains("payloadFiles.Add('AcceptanceContracts.ps1')", bundleGenerator, StringComparison.Ordinal);
+        Assert.Contains("Join-Path $PSScriptRoot 'AcceptanceContracts.ps1'", finalizer, StringComparison.Ordinal);
+    }
+
     private static string FindRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

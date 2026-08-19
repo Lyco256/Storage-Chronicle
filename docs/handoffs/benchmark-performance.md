@@ -12,6 +12,7 @@ Updated 2026-08-20. This handoff records the top-agent changes on `feat/benchmar
 - Added `tools/TestEnvironment/Compose-Windows10StageA.ps1`, which composes the Windows 10 Stage A contract only from real TestLab Agent/Oracle evidence, the Windows 10 privileged matrix, the Hyper-V eleven-case installer artifact, and independent Cloud Files/no-driver checks. Missing or diagnostic inputs remain `NOT_EXECUTED`.
 - Added `tools/PhysicalAcceptance/Finalize-Windows10PhysicalAcceptance.ps1` and corrected the physical bundle instructions to consume `results/windows10-preflight.json` from `Verify-Windows10PhysicalAcceptance.ps1`, not the installer's separate `RealMachineInstallerPreflight` artifact.
 - Strengthened all final acceptance paths to require the defined eleven installer case IDs, not only a count of eleven passed rows. The privileged manifest now records ProductName, DisplayVersion, Build, and architecture for Windows 10 evidence binding. Added a regression contract test and mirrored documentation for every new source script; synchronized release readiness and requirements verification records.
+- Closed a manual-bundle dependency gap: Windows 10 bundles now carry the shared `AcceptanceContracts.ps1` file and hash it in both bundle manifests, while `Finalize-Windows10PhysicalAcceptance.ps1` resolves the repository or bundle-local contract. Added a static regression test and verified the copied finalizer produces a fail-closed `NOT_EXECUTED` artifact when inputs are absent.
 
 ## Validation commands and results
 
@@ -28,6 +29,8 @@ Updated 2026-08-20. This handoff records the top-agent changes on `feat/benchmar
 - `build/Test-Fast.ps1 -NoRestore`: exit code 0; 22 non-privileged projects passed. Agent: 30 passed, 3 expected environment-gated skips. Installer contract tests: 3 passed.
 - `dotnet build StorageChronicle.slnx --no-restore --nologo -v:minimal`: 0 warnings, 0 errors.
 - `build/quality/Test-FinalAcceptance.ps1` with no artifacts: exit code 2; all nine blocking groups remained `NOT_EXECUTED` and `AcceptanceEligible=false`.
+- Preparation bundle contract-path check: Windows 10 bundle generation completed; `AcceptanceContracts.ps1` existed, appeared once in `hash-manifest.json`, and appeared in `bundle-manifest.json` payloads. Running the copied finalizer with no inputs exited 2 and wrote `StorageChronicle.Windows10PhysicalAcceptance.v1` with `Status=NOT_EXECUTED`.
+- `dotnet build StorageChronicle.slnx --no-restore --nologo -v:q /nodeReuse:false`: 0 warnings, 0 errors; installer contract tests: 7 passed. `build/Test-Fast.ps1 -NoRestore`: exit code 0; 22 project logs completed with 0 failures, 3 known environment-gated skips. PowerShell parser: 48 files, 0 errors; `Test-DocMirror.ps1`: passed.
 
 The repository-wide Build, Fast, quality, UI, and coverage validation passed on 2026-08-20 via `powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1` with exit code 0. This remains non-privileged validation; the script intentionally isolates the privileged Windows acceptance lane, which remains pending.
 

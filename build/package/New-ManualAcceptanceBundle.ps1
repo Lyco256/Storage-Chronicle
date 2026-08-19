@@ -67,6 +67,8 @@ $win10Verifier = Join-Path $root 'tools/PhysicalAcceptance/Verify-Windows10Physi
 if (-not (Test-Path -LiteralPath $win10Verifier -PathType Leaf)) { throw "Windows 10 verifier is missing: $win10Verifier" }
 $win10Finalizer = Join-Path $root 'tools/PhysicalAcceptance/Finalize-Windows10PhysicalAcceptance.ps1'
 if (-not (Test-Path -LiteralPath $win10Finalizer -PathType Leaf)) { throw "Windows 10 finalizer is missing: $win10Finalizer" }
+$acceptanceContracts = Join-Path $root 'build/quality/AcceptanceContracts.ps1'
+if (-not (Test-Path -LiteralPath $acceptanceContracts -PathType Leaf)) { throw "Acceptance contract is missing: $acceptanceContracts" }
 
 function Copy-Payload {
     param([string]$Source, [string]$Destination)
@@ -113,6 +115,8 @@ function New-Bundle {
         [void]$payloadFiles.Add('Verify-Windows10PhysicalAcceptance.ps1')
         Copy-Item -LiteralPath $win10Finalizer -Destination (Join-Path $bundle 'Finalize-Windows10PhysicalAcceptance.ps1') -Force:$Force
         [void]$payloadFiles.Add('Finalize-Windows10PhysicalAcceptance.ps1')
+        Copy-Item -LiteralPath $acceptanceContracts -Destination (Join-Path $bundle 'AcceptanceContracts.ps1') -Force:$Force
+        [void]$payloadFiles.Add('AcceptanceContracts.ps1')
     }
 
     $hashEntries = [System.Collections.Generic.List[object]]::new()
