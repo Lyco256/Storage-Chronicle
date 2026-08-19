@@ -21,9 +21,9 @@ foreach ($buildProject in $projects) {
 }
 $project = Join-Path $root 'tests/StorageChronicle.Architecture.Tests/StorageChronicle.Architecture.Tests.csproj'
 $assemblyName = [IO.Path]::GetFileNameWithoutExtension($project)
-$assembly = Get-ChildItem (Join-Path (Split-Path -Parent $project) "bin\$Configuration") -Recurse -File -Filter ($assemblyName + '.dll') |
+$testExecutable = Get-ChildItem (Join-Path (Split-Path -Parent $project) "bin\$Configuration") -Recurse -File -Filter ($assemblyName + '.exe') |
     Sort-Object LastWriteTimeUtc -Descending |
     Select-Object -First 1
-if ($null -eq $assembly) { Write-Error "Architecture test assembly was not found: $assemblyName"; exit 6 }
-dotnet test $assembly.FullName.Substring($root.Length + 1) --no-restore --results-directory $artifact
+if ($null -eq $testExecutable) { Write-Error "Architecture test executable was not found: $assemblyName"; exit 6 }
+& $testExecutable.FullName --progress off --minimum-expected-tests 1 --results-directory $artifact
 exit $LASTEXITCODE

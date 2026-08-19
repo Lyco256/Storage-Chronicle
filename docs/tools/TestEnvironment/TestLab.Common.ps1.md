@@ -1,0 +1,7 @@
+# TestLab.Common.ps1
+
+This helper is the shared safety boundary for the Hyper-V acceptance scripts. It loads only the user-approved ignored `TestLab.local.psd1`, validates the dedicated root and official local ISO paths, restricts VM names to `SC-Test-W11` and `SC-Test-W10`, and requires an elevated Windows host with Hyper-V/VMMS already available.
+
+It never enables Windows features, reboots, changes firmware, downloads an ISO, touches a host physical volume, or deletes an unvalidated path. Mutating callers must pass their own explicit apply/confirmation switch and must keep VHDX files under the approved TestLab root. Artifact output is restricted to `artifacts/acceptance/testlab/<run>`.
+
+Relevant requirements: 21, 22, 25, 26, 28, 29, and 31. The callers are `Initialize-TestLab.ps1`, `Reset-TestVm.ps1`, `New-TestDataVhdx.ps1`, `Remove-TestDataVhdx.ps1`, `Invoke-TestLabCommand.ps1`, the copy helpers, and `Invoke-WindowsTestLab.ps1`.

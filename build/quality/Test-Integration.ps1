@@ -11,11 +11,11 @@ foreach ($project in $projects) {
     $projectPath = Join-Path $root $project
     $projectDirectory = Split-Path -Parent $projectPath
     $assemblyName = [IO.Path]::GetFileNameWithoutExtension($projectPath)
-    $assembly = Get-ChildItem (Join-Path $projectDirectory 'bin\Debug') -Recurse -File -Filter ($assemblyName + '.dll') |
+    $testExecutable = Get-ChildItem (Join-Path $projectDirectory 'bin\Debug') -Recurse -File -Filter ($assemblyName + '.exe') |
         Sort-Object LastWriteTimeUtc -Descending |
         Select-Object -First 1
-    if ($null -eq $assembly) { Write-Error "Test assembly was not found: $assemblyName"; exit 6 }
-    dotnet test $assembly.FullName.Substring($root.Length + 1) --no-restore --results-directory $artifact
+    if ($null -eq $testExecutable) { Write-Error "Test executable was not found: $assemblyName"; exit 6 }
+    & $testExecutable.FullName --progress off --minimum-expected-tests 1 --results-directory $artifact
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 exit 0

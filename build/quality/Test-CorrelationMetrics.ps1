@@ -49,13 +49,13 @@ try {
         throw "Correlation acceptance project build failed with exit code $exitCode."
     }
     $assemblyName = [IO.Path]::GetFileNameWithoutExtension($project)
-    $assembly = Get-ChildItem (Join-Path (Split-Path -Parent $project) "bin\$Configuration") -Recurse -File -Filter ($assemblyName + '.dll') |
+    $testExecutable = Get-ChildItem (Join-Path (Split-Path -Parent $project) "bin\$Configuration") -Recurse -File -Filter ($assemblyName + '.exe') |
         Sort-Object LastWriteTimeUtc -Descending |
         Select-Object -First 1
-    if ($null -eq $assembly) { throw 'Correlation acceptance test assembly was not produced.' }
+    if ($null -eq $testExecutable) { throw 'Correlation acceptance test executable was not produced.' }
     $env:STORAGE_CHRONICLE_CORRELATION_FIXTURE = [IO.Path]::GetFullPath($FixturePath)
     $env:STORAGE_CHRONICLE_CORRELATION_REPORT = [IO.Path]::GetFullPath($OutputPath)
-    & dotnet test $assembly.FullName.Substring($root.Length + 1) --no-restore 2>&1 | Tee-Object -FilePath $logPath
+    & $testExecutable.FullName --progress off --minimum-expected-tests 1 2>&1 | Tee-Object -FilePath $logPath
     $exitCode = $LASTEXITCODE
 }
 finally {

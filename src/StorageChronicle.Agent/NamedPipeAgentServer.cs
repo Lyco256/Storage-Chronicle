@@ -25,20 +25,20 @@ public sealed class NamedPipeAgentServer : BackgroundService
     private readonly AgentSettingsService? settings;
     private readonly AgentHealthState health;
     private readonly IEventNormalizer normalizer;
-    private readonly IMonitoringLifecycle? monitoringLifecycle;
+    private readonly IConfirmedReconciliationRunner? reconciliationRunner;
     private readonly ConcurrentDictionary<string, byte> clipboardDedup = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<string> clipboardDedupOrder = new();
     private const int ClipboardDedupCapacity = 4096;
 
     /// <summary>Initializes the named pipe server.</summary>
-    public NamedPipeAgentServer(IProjectionService projection, AppendOnlyStorageEngine store, AgentHealthState health, IEventNormalizer normalizer, AgentSettingsService? settings = null, IMonitoringLifecycle? monitoringLifecycle = null)
+    public NamedPipeAgentServer(IProjectionService projection, AppendOnlyStorageEngine store, AgentHealthState health, IEventNormalizer normalizer, AgentSettingsService? settings = null, IMonitoringLifecycle? monitoringLifecycle = null, IConfirmedReconciliationRunner? reconciliationRunner = null)
     {
         this.projection = projection ?? throw new ArgumentNullException(nameof(projection));
         this.store = store ?? throw new ArgumentNullException(nameof(store));
         this.health = health ?? throw new ArgumentNullException(nameof(health));
         this.normalizer = normalizer ?? throw new ArgumentNullException(nameof(normalizer));
         this.settings = settings;
-        this.monitoringLifecycle = monitoringLifecycle;
+        this.reconciliationRunner = reconciliationRunner;
     }
 
     /// <inheritdoc />
@@ -177,9 +177,10 @@ public sealed class NamedPipeAgentServer : BackgroundService
             if (!health.TryGetPending(value.RequestId, out var pendingRequest)) return Rejected("The reconciliation request is no longer pending.");
             if (value.Execute)
             {
-                if (monitoringLifecycle is null) return Rejected("Monitoring lifecycle is unavailable.");
-                await monitoringLifecycle.RestartAsync(cancellationToken).ConfigureAwait(false);
                 health.TryResolve(pendingRequest.RequestId);
+                if (reconciliationRunner is null) return Rejected("Confirmed reconciliation is unavailable.");
+                var summary = await reconciliationRunner.ExecuteAsync(pendingRequest, cancellationToken).ConfigureAwait(false);
+                if (!summary.Completed) return IpcProtocol.Create("AgentHealth", health.Snapshot(store.Status));
                 return IpcProtocol.Create("AgentHealth", health.Snapshot(store.Status));
             }
 

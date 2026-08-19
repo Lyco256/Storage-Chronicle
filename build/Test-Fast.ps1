@@ -17,22 +17,23 @@ foreach ($project in $projects) {
         exit $buildExitCode
     }
 
-    $assembly = Get-ChildItem (Join-Path $project.Directory.FullName 'bin\Debug') -Recurse -File -Filter ($project.BaseName + '.dll') |
+    $testExecutable = Get-ChildItem (Join-Path $project.Directory.FullName 'bin\Debug') -Recurse -File -Filter ($project.BaseName + '.exe') |
         Sort-Object LastWriteTimeUtc -Descending |
         Select-Object -First 1
-    if ($null -eq $assembly) {
-        Write-Error "Test assembly was not produced: $($project.BaseName)"
+    if ($null -eq $testExecutable) {
+        Write-Error "MTP test executable was not produced: $($project.BaseName)"
         exit 6
     }
 
-    # .NET 10's MTP project invocation can select the legacy VSTest target for a single project.
-    # The emitted MTP test module is the authoritative executable boundary and avoids a false 0-test result.
-    $assemblyArgument = $assembly.FullName.Substring($root.Length + 1)
-    $args = @('test', $assemblyArgument)
-    if ($NoRestore) { $args += '--no-restore' }
     $log = Join-Path $logRoot ($project.BaseName + '.log')
     Write-Host "Running $($project.BaseName)"
-    & dotnet @args 2>&1 | Tee-Object -FilePath $log
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Some tests intentionally write their expected diagnostics to stderr; capture it without turning a passing process into a PowerShell error.
+        $ErrorActionPreference = 'Continue'
+        & $testExecutable.FullName --progress off --minimum-expected-tests 1 2>&1 | Tee-Object -FilePath $log
+    }
+    finally { $ErrorActionPreference = $previousErrorActionPreference }
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
         Write-Error "Test project failed: $($project.BaseName) (exit code $exitCode)"

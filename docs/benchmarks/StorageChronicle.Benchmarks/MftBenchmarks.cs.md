@@ -1,10 +1,10 @@
 # MftBenchmarks.cs
 
-The MFT benchmark uses one measured iteration with no warmup over the configured capability volume; a missing capability remains fail-closed in the matrix wrapper.
+The MFT benchmark uses one measured iteration with no warmup over the configured capability volume; a missing capability remains fail-closed in the matrix wrapper. The measured matrix includes 10K, 100K, and 1M public enumeration plus unchanged zero-candidate and small-candidate metadata-query gates.
 
 ## Role
 
-Measures public Windows NTFS MFT enumeration and reconciliation import against a supplied dedicated volume.
+Measures public Windows NTFS MFT enumeration and reconciliation import against a supplied dedicated volume labeled `SC_TEST_MFT_VOLUME` with a user-approved marker.
 
 ## Public types and responsibilities
 
@@ -12,7 +12,7 @@ Measures public Windows NTFS MFT enumeration and reconciliation import against a
 
 ## Inputs and outputs
 
-It reads only metadata returned by the public NTFS enumeration API and the `STORAGE_CHRONICLE_MFT_VOLUME` device-path environment variable. It writes BenchmarkDotNet output under the caller-selected artifact directory and never reads file contents.
+It reads only metadata returned by the public NTFS enumeration API and the `STORAGE_CHRONICLE_MFT_VOLUME`, `STORAGE_CHRONICLE_MFT_VOLUME_LABEL`, and `STORAGE_CHRONICLE_MFT_MARKER_PATH` environment variables. It writes BenchmarkDotNet output under the caller-selected artifact directory and never reads file contents.
 
 ## Dependencies
 
@@ -40,4 +40,4 @@ Requires Windows 10 22H2 or Windows 11 and a disposable/dedicated NTFS volume wi
 
 ## Change-sensitive contracts
 
-The environment variable, one-million-entry threshold, public-API boundary, and metadata-only behavior are release contracts.
+The environment variables, dedicated-volume marker/label, 10K/100K/1M methods, one-million-entry setup threshold, public-API boundary, and metadata-only behavior are release contracts.

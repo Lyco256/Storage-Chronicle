@@ -306,6 +306,11 @@ try {
     Set-ProcessEnvironment 'STORAGE_CHRONICLE_ACCEPTANCE_WAIT_FOR_MEDIA' $(if ($WaitForMediaChange) { '1' } else { '0' })
 
     if (-not (Test-Path -LiteralPath $testProject -PathType Leaf)) { throw "Acceptance test project is missing: $testProject" }
+    & dotnet build $testProject --configuration $Configuration --no-restore --nologo 2>&1 | Tee-Object -FilePath (Join-Path $artifactRoot "windows-privileged-$runId.build.log")
+    if ($LASTEXITCODE -ne 0) { throw "Acceptance test project build failed with exit code $LASTEXITCODE." }
+    $testAssembly = Get-ChildItem (Join-Path (Split-Path -Parent $testProject) "bin\$Configuration") -Recurse -File -Filter (([IO.Path]::GetFileNameWithoutExtension($testProject)) + '.exe') |
+        Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+    if ($null -eq $testAssembly) { throw 'The MTP privileged test executable was not produced.' }
     foreach ($capability in $capabilities) {
         if (-not $capability.Ready) {
             Add-NotExecuted $capability.Name $capability.Reason
@@ -314,8 +319,8 @@ try {
 
         Write-Host "RUNNING [$($capability.Name)]" -ForegroundColor Cyan
         $started = [DateTime]::UtcNow
-        $testArgs = @('test', $testProject, '--configuration', $Configuration, '--', '--filter-trait', "Capability=$($capability.Name)")
-        $result = Invoke-Captured 'dotnet' $testArgs
+        $testArgs = @('--progress', 'off', '--minimum-expected-tests', '1', '--filter-trait', "Capability=$($capability.Name)")
+        $result = Invoke-Captured $testAssembly.FullName $testArgs
         if ($null -eq $result) { throw "The test runner returned no result for capability $($capability.Name)." }
         $testOutput = [string]$result.Output
         $testError = [string]$result.Error

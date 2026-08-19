@@ -1,6 +1,6 @@
 # NamedPipeAgentServer
 
-Hosts the local four-byte little-endian/source-generated JSON IPC endpoint. It applies the 8 MiB and protocol-major gates, DACLs SYSTEM/Administrators and authenticated users, validates client SID/session/admin identity, requires a verified Desktop UI or published Session Agent role hello, dispatches projection/diff/health/settings/clipboard messages, and returns explicit rejection errors. Session Agent connections are limited to ClipboardCandidate messages. Authentication and Windows pipe failures are isolated and fail closed for mutating endpoints; malformed or disconnected clients do not stop the Agent or prevent the next connection.
+Hosts the local four-byte little-endian/source-generated JSON IPC endpoint. It applies the 8 MiB and protocol-major gates, DACLs SYSTEM/Administrators and authenticated users, validates client SID/session/admin identity, requires a verified Desktop UI or published Session Agent role hello, dispatches projection/diff/health/settings/clipboard messages, and invokes the selected-volume confirmed reconciliation runner only after an explicit Execute decision. Session Agent connections are limited to ClipboardCandidate messages. Authentication and Windows pipe failures are isolated and fail closed for mutating endpoints; malformed or disconnected clients do not stop the Agent or prevent the next connection.
 
 ## Role
 

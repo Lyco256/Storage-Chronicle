@@ -60,9 +60,20 @@ public static class Program
         builder.Services.AddSingleton<IMediaMirrorSessionCoordinator>(services => services.GetRequiredService<ExternalMediaMirrorCoordinator>());
         builder.Services.AddSingleton<ICanonicalEventSink>(services => services.GetRequiredService<ExternalMediaMirrorCoordinator>());
         builder.Services.AddSingleton<IExternalMediaChangeSource, WindowsExternalMediaChangeSource>();
+        builder.Services.AddSingleton<WindowsVolumeSnapshotReader>(services => new WindowsVolumeSnapshotReader(
+            services.GetRequiredService<WindowsExclusionPolicy>(),
+            new WindowsFileSystemOptions
+            {
+                StorageChronicleDataRoot = productRoot,
+                UserExcludedRoots = initialMachineSettings.ExcludedPaths,
+                MonitoredRoots = initialMachineSettings.MonitoringPaths
+            }));
+        builder.Services.AddSingleton<WindowsFileMetadataReader>();
+        builder.Services.AddSingleton<IConfirmedReconciliationRunner, ConfirmedReconciliationRunner>();
         builder.Services.AddSingleton<ISourceEventCollector>(services => new WindowsFileSystemCollector(
             services.GetRequiredService<IVolumeEnumerator>(),
             exclusionPolicy: services.GetRequiredService<WindowsExclusionPolicy>(),
+            snapshotReader: services.GetRequiredService<WindowsVolumeSnapshotReader>(),
             options: new WindowsFileSystemOptions
             {
                 StorageChronicleDataRoot = productRoot,
@@ -73,7 +84,7 @@ public static class Program
             services.GetRequiredService<IVolumeEnumerator>(),
             services.GetRequiredService<INtfsApi>(),
             exclusionPolicy: services.GetRequiredService<WindowsExclusionPolicy>(),
-            initialSnapshotReader: new WindowsVolumeSnapshotReader(services.GetRequiredService<WindowsExclusionPolicy>())));
+            initialSnapshotReader: services.GetRequiredService<WindowsVolumeSnapshotReader>()));
         builder.Services.AddSingleton<ISourceEventCollector, WindowsEtwFileIoCollector>();
         builder.Services.AddSingleton<ISourceEventCollector, WindowsShareCollector>();
         builder.Services.AddSingleton<ISourceEventCollector>(services => new WindowsExternalMediaCollector(

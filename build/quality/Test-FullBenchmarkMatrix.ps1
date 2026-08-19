@@ -68,6 +68,16 @@ if ($IncludeMft) {
     if ([string]::IsNullOrWhiteSpace($mftVolume)) {
         Write-NotExecuted 'The full matrix requires STORAGE_CHRONICLE_MFT_VOLUME to identify a dedicated NTFS capability volume.'
     }
+    if (-not [string]::Equals([Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_VOLUME_LABEL'), 'SC_TEST_MFT_VOLUME', [StringComparison]::Ordinal)) {
+        Write-NotExecuted 'The full matrix requires STORAGE_CHRONICLE_MFT_VOLUME_LABEL=SC_TEST_MFT_VOLUME; host/system volumes are not accepted.'
+    }
+    $mftMarker = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_MARKER_PATH')
+    if ([string]::IsNullOrWhiteSpace($mftMarker) -or -not (Test-Path -LiteralPath $mftMarker -PathType Leaf)) {
+        Write-NotExecuted 'The full matrix requires an existing STORAGE_CHRONICLE_MFT_MARKER_PATH from the dedicated TestLab data volume.'
+    }
+    if ($mftVolume -match '(?i)(^|[\\:])C:') {
+        Write-NotExecuted 'The full matrix refuses C: and host/system MFT device paths.'
+    }
 }
 
 $suites = @(
@@ -107,7 +117,7 @@ if ($IncludeMft) {
     $suites += [ordered]@{
         Name = 'WindowsMft'
         Filter = '*WindowsMftBenchmarks*'
-        ExpectedMethods = @('MftEnumerationImport1M')
+        ExpectedMethods = @('MftEnumerationImport10K', 'MftEnumerationImport100K', 'MftEnumerationImport1M', 'MftCandidateMetadataQueriesZero1M', 'MftCandidateMetadataQueriesSmall1M')
     }
 }
 
@@ -200,6 +210,8 @@ finally {
             OperatingSystem = [Environment]::OSVersion.VersionString
             DotnetVersion = (& dotnet --version 2>$null)
             MftVolumeConfigured = -not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_VOLUME'))
+            MftVolumeLabel = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_VOLUME_LABEL')
+            MftMarkerPath = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_MARKER_PATH')
         }
         Suites = @($suiteResults)
         Failure = $failure

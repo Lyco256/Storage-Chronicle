@@ -2,6 +2,8 @@
 
 The repository is not yet ready for `main`. The top-agent merge sequence remains `feat/*` review -> `devenv` with `--no-ff` -> final gates -> `main` with `--no-ff`.
 
+The branch/ref audit for this continuation is recorded in `docs/release/branch-audit-2026-08-19.md`; local `devenv` and `main` exist, while the remote currently exposes only `origin/feat/benchmark-performance`.
+
 ## Verified on 2026-08-03
 
 - `dotnet build StorageChronicle.slnx --no-restore -v:minimal`: 0 warnings, 0 errors.
@@ -21,9 +23,20 @@ The repository is not yet ready for `main`. The top-agent merge sequence remains
 
 ## Additional implementation blockers found in the 2026-08-04 audit
 
-- The UI prompt and decline path for a continuity gap are present, but the confirmed Execute path currently only restarts monitoring. A selected-volume NTFS MFT or non-NTFS directory reconciliation runner is still required.
-- The NTFS startup path now captures a pre-scan USN boundary and routes initial standard metadata through the production directory snapshot reader. Candidate-only detailed metadata for reconciliation, scoped `SeBackupPrivilege` enablement, and OS low-priority I/O for reconciliation are still not implemented.
+- The confirmed Execute path, selected-volume NTFS/public-MFT route, non-NTFS directory route, candidate-only metadata reads, durable Source/Canonical/State ordering, cancellation/failure gaps, scoped `SeBackupPrivilege`, and low-priority I/O telemetry are now implemented on the feature branch and covered by 20 Agent tests. They still require the real Windows TestLab capability matrix before acceptance can be marked verified.
+- The Windows TestLab scripts and real metadata-only file-mutation workload are now present with fail-closed root/VM/VHDX/marker checks. The current host preflight remains blocking: Windows 11 Home, no Hyper-V PowerShell module/VMMS, and no approved local ISO/TestLab root.
 - R-17 IPC role separation is now implemented and tested: `--diagnostic` skips service registration/recovery configuration, both clients send a versioned role/session hello, the Agent verifies the authenticated process/session, limits Session Agent connections to ClipboardCandidate, and rejects an unpublished Session Agent role.
 - The shared build language-version override and release-signing procedure gaps were corrected in the current feature branch; Native AOT configuration is now opt-in and remains non-acceptance diagnostic work.
 
 No release document may say these items are verified until the corresponding acceptance artifacts exist. History retention, no-driver MVP, no-content/no-hash, and no-synthetic-descendant invariants remain mandatory in every acceptance run.
+
+## Requirements 21–31 audit
+
+The final-acceptance requirements are now represented by executable orchestration and evidence contracts, but none of the environment-bound rows below is claimed as passed without its measured artifact:
+
+- confirmed reconciliation execution: implementation tests passed; real NTFS/non-NTFS TestLab run pending;
+- privileged Windows matrix and Windows 10 22H2: not executed on this host;
+- formal 600-second dual-process resource gate with independent quiet-period evidence: not executed;
+- dedicated `SC_TEST_MFT_VOLUME` 10K/100K/1M matrix: harness expanded, volume/marker run pending;
+- physical installer and real Agent/Explorer correlation: not executed;
+- `devenv`/`main` integration: intentionally pending until every blocking gate has an eligible artifact.

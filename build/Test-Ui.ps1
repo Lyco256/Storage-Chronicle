@@ -4,10 +4,10 @@ $projects = Get-ChildItem (Join-Path $root 'tests') -Recurse -Filter '*Ui*.Tests
 foreach ($project in $projects) {
     dotnet build $project.FullName --no-restore --nologo
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    $assembly = Get-ChildItem (Join-Path $project.Directory.FullName 'bin\Debug') -Recurse -File -Filter ($project.BaseName + '.dll') |
+    $testExecutable = Get-ChildItem (Join-Path $project.Directory.FullName 'bin\Debug') -Recurse -File -Filter ($project.BaseName + '.exe') |
         Sort-Object LastWriteTimeUtc -Descending |
         Select-Object -First 1
-    if ($null -eq $assembly) { Write-Error "Test assembly was not produced: $($project.BaseName)"; exit 6 }
-    dotnet test $assembly.FullName.Substring($root.Length + 1) --no-restore
+    if ($null -eq $testExecutable) { Write-Error "MTP test executable was not produced: $($project.BaseName)"; exit 6 }
+    & $testExecutable.FullName --progress off --minimum-expected-tests 1
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }

@@ -10,7 +10,7 @@ foreach ($project in $projects) {
     $assembly = [IO.Path]::GetFileNameWithoutExtension($project.FullName)
     $exe = Get-ChildItem (Join-Path $project.DirectoryName 'bin') -Recurse -Filter "$assembly.exe" | Where-Object { $_.FullName -match "\\$Configuration\\" } | Select-Object -First 1
     if ($null -eq $exe) { Write-Error "Test executable not found: $assembly.exe" }
-    & $exe.FullName -noLogo -automated sync -trait 'Category=WindowsPrivileged' -xml (Join-Path $artifact "$assembly.xml")
+    & $exe.FullName --progress off --minimum-expected-tests 1 --filter-trait 'Category=WindowsPrivileged' --report-junit --report-junit-filename (Join-Path $artifact "$assembly.xml")
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 exit 0
