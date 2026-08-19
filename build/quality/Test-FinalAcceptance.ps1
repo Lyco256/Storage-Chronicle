@@ -40,10 +40,14 @@ function Assert-GroupEvidence {
         }
         'ConfirmedReconciliation' {
             if ($schema -ne 'StorageChronicle.ConfirmedReconciliationAcceptance.v1') { throw 'Confirmed reconciliation evidence has an unexpected schema.' }
-            foreach ($field in @('RunId', 'VolumeId', 'FileSystem', 'SourceEventCount', 'CanonicalEventCount', 'FinalStateCount', 'Status')) {
+            foreach ($field in @('RunId', 'VolumeId', 'FileSystem', 'SourceEventCount', 'CanonicalEventCount', 'FinalStateCount', 'LightweightEntryCount', 'CandidateCount', 'DetailedMetadataQueryCount', 'DetailedQueryCandidateRatio', 'PrivilegeEnableSuccessCount', 'PrivilegeEnableFailureCount', 'AclFallbackCount', 'BackgroundModeEnabled', 'IoHintAttempts', 'IoHintSuccesses', 'IoHintFailures', 'ElapsedMilliseconds', 'Status')) {
                 if ($null -eq $Value.PSObject.Properties[$field]) { throw "Confirmed reconciliation evidence is missing $field." }
             }
             if ([string]$Value.Status -ne 'PASSED') { throw "Confirmed reconciliation evidence status is not PASSED: $($Value.Status)" }
+            if ([int64]$Value.CandidateCount -eq 0 -and [int64]$Value.DetailedMetadataQueryCount -ne 0) { throw 'Confirmed reconciliation performed detailed metadata queries without candidates.' }
+            $expectedRatio = if ([int64]$Value.CandidateCount -eq 0) { 0d } else { [double]$Value.DetailedMetadataQueryCount / [double]$Value.CandidateCount }
+            if ([math]::Abs([double]$Value.DetailedQueryCandidateRatio - $expectedRatio) -gt 0.000001) { throw 'Confirmed reconciliation detailed-query ratio does not match its counters.' }
+            if ([double]$Value.ElapsedMilliseconds -lt 0) { throw 'Confirmed reconciliation elapsed time is negative.' }
         }
         'WindowsPrivileged' {
             if ($schema -ne 'StorageChronicle.WindowsPrivilegedAcceptance.v2') { throw 'Windows privileged evidence has an unexpected schema.' }

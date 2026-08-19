@@ -65,6 +65,8 @@ public sealed class ConfirmedReconciliationRunnerTests
             Assert.True(summary.Completed, summary.FailureReason ?? summary.Status);
             Assert.True(summary.CandidateCount >= 1);
             Assert.True(summary.DetailedMetadataQueryCount >= 1);
+            Assert.True(summary.DetailedQueryCandidateRatio > 0d);
+            Assert.True(summary.ElapsedMilliseconds >= 0d);
             Assert.True(events.Count > 0, $"Canonical events={events.Count}; durable={summary.DurableEventCount}");
             Assert.Contains(events, value => value.Origin == EventOrigin.DirectoryReconciliation && value.Operation == CanonicalOperation.ReconciliationDiscovered && value.Quality == EventQuality.Reconciled && value.ProcessQuality == ProcessAttributionQuality.Unknown);
             Assert.DoesNotContain(events, value => value.Origin == EventOrigin.DirectoryReconciliation && value.Properties.ContainsKey("fileContents"));
@@ -210,6 +212,52 @@ public sealed class ConfirmedReconciliationRunnerTests
     }
 
     [Fact]
+    public async Task AccessDeniedCandidateRecordsAclFallbackQualityAndCounter()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.ReconciliationHistory", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var volume = new VolumeDescriptor(VolumeId.Create("acl-fallback-volume"), "NTFS", [root], false, false, false, true, true);
+            var fileId = FileId.Create("0001000000000001");
+            var parentId = FileId.Create("0000000000000005");
+            await using var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(root) { FlushInterval = TimeSpan.FromMinutes(1) });
+            var normalizer = new EventNormalizer();
+            var seedMetadata = new FileMetadata(volume.Id, fileId, parentId, "stable.txt", FileKind.File, null, null, null, null, null, null, FileAttributes.Normal, null, null, EventQuality.Exact, true, false);
+            var seed = new SourceEvent(EventId.New(), EventSchemaVersion.Current, EventOrigin.InitialSnapshot, volume.Id, fileId, parentId, "stable.txt", null, CanonicalOperation.Create,
+                seedMetadata,
+                new EventTime(DateTimeOffset.UtcNow, TimeSpan.Zero, null, DateTimeOffset.UtcNow, new SourceSequence(7), new MountSequence(7)),
+                EventQuality.Exact, null, ProcessAttributionQuality.Unknown, null, null, ImmutableDictionary<string, string>.Empty);
+            var canonical = normalizer.Normalize(seed)!;
+            await storage.AppendSourceAsync(seed);
+            await storage.AppendCanonicalAsync(canonical);
+            await storage.ApplyAsync(canonical);
+
+            var runner = new ConfirmedReconciliationRunner(
+                new FakeVolumes(volume),
+                new StableNtfsApi(),
+                new WindowsVolumeSnapshotReader(new AccessDeniedMetadataNative()),
+                new WindowsFileMetadataReader(new AccessDeniedMetadataNative()),
+                storage,
+                normalizer,
+                new AgentHealthState());
+
+            var summary = await runner.ExecuteAsync(new PendingReconciliationRequest("acl-fallback-gap", volume.Id, "ACL fallback test", 7, DateTimeOffset.UtcNow.AddMinutes(-1), FileSystem: "NTFS"));
+
+            Assert.True(summary.Completed, summary.FailureReason ?? summary.Status);
+            Assert.Equal(1, summary.CandidateCount);
+            Assert.Equal(1, summary.DetailedMetadataQueryCount);
+            Assert.Equal(1d, summary.DetailedQueryCandidateRatio);
+            Assert.Equal(1, summary.AclFallbackCount);
+            Assert.Contains(await storage.ReadCanonicalPageAsync(0, 512), value => value.Metadata?.Quality == EventQuality.ExistenceOnly);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task UnchangedNonNtfsSnapshotDoesNotQueryDetailedMetadata()
     {
         var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.Reconciliation", Guid.NewGuid().ToString("N"));
@@ -238,6 +286,7 @@ public sealed class ConfirmedReconciliationRunnerTests
 
             Assert.True(summary.Completed);
             Assert.Equal(0, summary.DetailedMetadataQueryCount);
+            Assert.Equal(0d, summary.DetailedQueryCandidateRatio);
             Assert.Equal(0, summary.DurableEventCount);
         }
         finally
@@ -365,6 +414,75 @@ public sealed class ConfirmedReconciliationRunnerTests
             nameBytes.CopyTo(record[64..]);
             return buffer;
         }
+    }
+
+    private sealed class StableNtfsApi : StorageChronicle.Platform.Windows.Ntfs.INtfsApi
+    {
+        private readonly byte[] enumBuffer = CreateEnumBuffer();
+
+        public SafeFileHandle OpenVolume(string devicePath) => new(new nint(1), ownsHandle: false);
+
+        public NtfsApiCallResult QueryUsnJournal(SafeFileHandle volumeHandle, out UsnJournalData? data)
+        {
+            data = new UsnJournalData(1, 1, 7, 1, 100, 4096, 4096, 2, 3);
+            return new NtfsApiCallResult(NtfsApiStatus.Success, 56, 0);
+        }
+
+        public NtfsApiCallResult ReadUsnJournal(SafeFileHandle volumeHandle, ReadUsnJournalRequest request, byte[] outputBuffer, out int bytesReturned)
+        {
+            bytesReturned = 0;
+            return new NtfsApiCallResult(NtfsApiStatus.Success, 0, 0);
+        }
+
+        public NtfsApiCallResult EnumerateUsnData(SafeFileHandle volumeHandle, EnumUsnDataRequest request, byte[] outputBuffer, out int bytesReturned)
+        {
+            enumBuffer.CopyTo(outputBuffer, 0);
+            bytesReturned = enumBuffer.Length;
+            return new NtfsApiCallResult(NtfsApiStatus.Success, bytesReturned, 0);
+        }
+
+        private static byte[] CreateEnumBuffer()
+        {
+            const long fileId = 0x0001_0000_0000_0001;
+            const long parentId = 0x0000_0000_0000_0005;
+            const long usn = 8;
+            var nameBytes = Encoding.Unicode.GetBytes("stable.txt");
+            var recordLength = 64 + nameBytes.Length;
+            var buffer = new byte[sizeof(ulong) + recordLength];
+            BinaryPrimitives.WriteUInt64LittleEndian(buffer.AsSpan(0, sizeof(ulong)), 0);
+            var record = buffer.AsSpan(sizeof(ulong));
+            BinaryPrimitives.WriteInt32LittleEndian(record, recordLength);
+            BinaryPrimitives.WriteInt16LittleEndian(record[4..], 2);
+            BinaryPrimitives.WriteInt64LittleEndian(record[8..], fileId);
+            BinaryPrimitives.WriteInt64LittleEndian(record[16..], parentId);
+            BinaryPrimitives.WriteInt64LittleEndian(record[24..], usn);
+            BinaryPrimitives.WriteUInt32LittleEndian(record[52..], 0);
+            BinaryPrimitives.WriteUInt16LittleEndian(record[56..], (ushort)nameBytes.Length);
+            BinaryPrimitives.WriteUInt16LittleEndian(record[58..], 64);
+            nameBytes.CopyTo(record[64..]);
+            return buffer;
+        }
+    }
+
+    private sealed class AccessDeniedMetadataNative : IWindowsFileMetadataNative
+    {
+        public NativeFileMetadataRecord ReadMetadata(string path, string? parentPath = null) => new(
+            FileId.Create("0001000000000001"),
+            FileId.Create("0000000000000005"),
+            "stable.txt",
+            FileKind.File,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            FileAttributes.Normal,
+            null,
+            true,
+            true);
+
+        public SafeFileHandle OpenDirectory(string path) => new(new IntPtr(-1), ownsHandle: false);
     }
 
     private sealed class FakeMetadataNative : IWindowsFileMetadataNative

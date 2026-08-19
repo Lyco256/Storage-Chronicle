@@ -83,7 +83,7 @@
 | V-155 | C# language version uses the .NET 10 SDK default | `Directory.Build.props`, Release build | fixed in the current feature branch; `LangVersion=preview` was removed |
 | V-156 | Native AOT compatibility publication configuration exists for Agent and Session Agent | `build/Test-AotCompatibility.ps1`, conditional common properties | configuration present; publication is opt-in and not an MVP acceptance gate |
 | V-157 | Unsigned development and signed release procedures are separate without SmartScreen weakening | `docs/installer/signing-procedure.md` | documented; actual release signing remains an external release operation |
-| V-158 | Scoped backup privilege and OS low-priority reconciliation I/O | `WindowsReconciliationInfrastructure`, confirmed runner tests, and requirement 13 | implemented with synchronous candidate-only thread scope, fallback telemetry, and no event dropping; real privileged matrix evidence remains pending |
+| V-158 | Scoped backup privilege and OS low-priority reconciliation I/O | `WindowsReconciliationInfrastructure`, `ConfirmedReconciliationRunner`, confirmed runner tests, and requirement 24 artifact gate | implemented with a dedicated reconciliation task, synchronous candidate-only thread scope, explicit privilege/ACL fallback and low-priority/I/O-hint/elapsed telemetry, and no event dropping; real privileged matrix evidence remains pending |
 | V-159 | Agent diagnostic mode and Session Agent Clipboard-only IPC role | Agent entry point, named-pipe server identity, `NamedPipeServerTests`, and requirement 17 | verified in current feature branch; diagnostic mode is explicit, role/session hello is source-generated and validated, Session Agent is ClipboardCandidate-only, and an unpublished Session Agent process is rejected |
 
 ## Explicit measured or environment-bound items
@@ -100,7 +100,7 @@ No row grants permission to weaken source quality, retain contents/hashes, delet
 |---|---|---|---|
 | V-160 | Final acceptance orchestration and evidence order | `Requirements/21_FINAL_ACCEPTANCE_ORCHESTRATION.md`, `tools/TestEnvironment/Invoke-WindowsTestLab.ps1` | harness present; all environment groups not yet eligible |
 | V-161 | Safe Hyper-V TestLab and disposable data VHDX | `tools/TestEnvironment/*.ps1`, read-only preflight | fail-closed scripts present; current Windows Home/no Hyper-V host is blocking |
-| V-162 | Confirmed reconciliation execution | `ConfirmedReconciliationRunner`, IPC Execute path, bounded post-commit live-event buffer, 29 non-privileged Agent tests plus environment-gated NTFS/ACL-denied/non-NTFS acceptance tests | implementation and privileged test wiring verified; real NTFS/non-NTFS run pending |
+| V-162 | Confirmed reconciliation execution | `ConfirmedReconciliationRunner`, IPC Execute path, bounded post-commit live-event buffer, 30 non-privileged Agent tests plus environment-gated NTFS/ACL-denied/non-NTFS acceptance tests | implementation and privileged test wiring verified; real NTFS/non-NTFS run pending |
 | V-163 | NTFS candidate metadata, scoped privilege, low I/O | `WindowsReconciliationInfrastructure`, runner telemetry | implementation verified; elevated Windows execution pending |
 | V-164 | Windows privileged capability matrix | `build/Test-Privileged.ps1`, `build/Test-WindowsPrivileged.ps1` | NOT_EXECUTED on current host |
 | V-165 | Windows 10 22H2 compatibility | `Requirements/26_WINDOWS10_22H2_ACCEPTANCE.md` and TestLab definitions | NOT_EXECUTED |

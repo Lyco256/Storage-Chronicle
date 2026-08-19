@@ -12,7 +12,7 @@ Input is one selected `PendingReconciliationRequest`; output is a bounded `Recon
 
 ## Public types and responsibilities
 
-`IConfirmedReconciliationRunner` is the Agent-owned execution seam and `ReconciliationExecutionSummary` is the bounded evidence summary. The runner coordinates platform acquisition and durable persistence; it does not expose manual UI commands or generate descendant events.
+`IConfirmedReconciliationRunner` is the Agent-owned execution seam and `ReconciliationExecutionSummary` is the bounded evidence summary. The summary exposes lightweight entry count, candidate count, detailed-query count and ratio, privilege success/failure, ACL fallback, low-priority/I/O-hint telemetry, and elapsed time. The runner coordinates platform acquisition and durable persistence; it does not expose manual UI commands or generate descendant events.
 
 ## Invariants
 
@@ -24,7 +24,7 @@ The runner depends on the volume, NTFS, production snapshot, metadata, normaliza
 
 ## Threading and lifetime
 
-The runner is asynchronous and bounded by the caller cancellation token. Native privilege and priority scopes are created and disposed around each synchronous candidate metadata operation, so thread token state does not cross an await. The live-event capture is bounded and closes before replay.
+The runner schedules the confirmed operation on a dedicated long-running background task so the IPC request path and ordinary live collector are not the reconciliation worker. Native privilege and priority scopes are created and disposed around each synchronous candidate metadata operation, so thread token state does not cross an await. The live-event capture is bounded and closes before replay.
 
 ## Failure behavior
 

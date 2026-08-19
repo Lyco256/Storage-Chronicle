@@ -135,7 +135,7 @@ public sealed class NamedPipeServerTests
         {
             Request = request;
             var now = DateTimeOffset.UtcNow;
-            return ValueTask.FromResult(new ReconciliationExecutionSummary("test-run", request.VolumeId!.Value, "FAT32", true, "Completed", 0, 0, 0, 0, 0, 0, new ReconciliationPriorityResult(false, null, null, 0, 0, 0), now, now, null));
+            return ValueTask.FromResult(new ReconciliationExecutionSummary("test-run", request.VolumeId!.Value, "FAT32", true, "Completed", 0, 0, 0, 0, 0, 0, 0, new ReconciliationPriorityResult(false, null, null, 0, 0, 0), now, now, null));
         }
     }
 }

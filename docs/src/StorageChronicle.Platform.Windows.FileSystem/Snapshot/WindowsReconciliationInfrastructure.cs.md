@@ -16,7 +16,7 @@ It accepts a path or native metadata handle and returns metadata or telemetry-on
 
 ## Dependencies
 
-The implementation depends on the Windows native metadata interop boundary and Win32 token/thread/file-information APIs. Platform-neutral contracts are not changed.
+The implementation depends on the Windows native metadata interop boundary and Win32 token/thread/file-information APIs. Platform-neutral contracts are not changed. Access-denied metadata is surfaced as an explicit ACL fallback signal for the Agent reconciliation summary.
 
 ## Invariants
 

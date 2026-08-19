@@ -22,10 +22,21 @@ public sealed record ReconciliationExecutionSummary(
     int DurableEventCount,
     int PrivilegeEnableSuccessCount,
     int PrivilegeFallbackCount,
+    int AclFallbackCount,
     ReconciliationPriorityResult Priority,
     DateTimeOffset StartedUtc,
     DateTimeOffset FinishedUtc,
-    string? FailureReason);
+    string? FailureReason)
+{
+    /// <summary>Gets the explicit detailed-query to candidate ratio for this run.</summary>
+    public double DetailedQueryCandidateRatio => CandidateCount == 0 ? 0d : (double)DetailedMetadataQueryCount / CandidateCount;
+
+    /// <summary>Gets the privilege-enable failures represented by the fallback count.</summary>
+    public int PrivilegeEnableFailureCount => PrivilegeFallbackCount;
+
+    /// <summary>Gets the elapsed wall-clock duration measured by the run boundaries.</summary>
+    public double ElapsedMilliseconds => Math.Max(0d, (FinishedUtc - StartedUtc).TotalMilliseconds);
+}
 
 /// <summary>Runs the real selected-volume reconciliation requested by the UI.</summary>
 public interface IConfirmedReconciliationRunner
@@ -76,6 +87,16 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
             throw new InvalidOperationException("A confirmed reconciliation must identify one volume.");
         }
 
+        return await Task.Factory.StartNew(
+            () => ExecuteOnWorkerAsync(request, requestedVolume, cancellationToken).AsTask(),
+            CancellationToken.None,
+            TaskCreationOptions.DenyChildAttach | TaskCreationOptions.LongRunning,
+            TaskScheduler.Default).Unwrap().ConfigureAwait(false);
+    }
+
+    private async ValueTask<ReconciliationExecutionSummary> ExecuteOnWorkerAsync(PendingReconciliationRequest request, VolumeId requestedVolume, CancellationToken cancellationToken)
+    {
+
         var started = DateTimeOffset.UtcNow;
         var runId = Guid.NewGuid().ToString("N");
         var descriptor = (VolumeDescriptor?)null;
@@ -108,13 +129,13 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
         {
             var finished = DateTimeOffset.UtcNow;
             await AppendFailureAsync(failureDescriptor, runId, uncertainFrom, finished, sourceSequence, "Interrupted", exception.Message, CancellationToken.None).ConfigureAwait(false);
-            return new ReconciliationExecutionSummary(runId, requestedVolume, failureDescriptor.FileSystem, false, "Interrupted", 0, 0, 0, 0, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.Priority, started, finished, exception.Message);
+            return new ReconciliationExecutionSummary(runId, requestedVolume, failureDescriptor.FileSystem, false, "Interrupted", 0, 0, 0, 0, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.AclFallbackCount, metrics.Priority, started, finished, exception.Message);
         }
         catch (Exception exception)
         {
             var finished = DateTimeOffset.UtcNow;
             await AppendFailureAsync(failureDescriptor, runId, uncertainFrom, finished, sourceSequence, "Failed", exception.Message, CancellationToken.None).ConfigureAwait(false);
-            return new ReconciliationExecutionSummary(runId, requestedVolume, failureDescriptor.FileSystem, false, "Failed", 0, 0, 0, 0, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.Priority, started, finished, exception.Message);
+            return new ReconciliationExecutionSummary(runId, requestedVolume, failureDescriptor.FileSystem, false, "Failed", 0, 0, 0, 0, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.AclFallbackCount, metrics.Priority, started, finished, exception.Message);
         }
     }
 
@@ -197,10 +218,10 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
         {
             const string reason = "The NTFS journal boundary could not be established after the reconciliation scan.";
             await AppendFailureAsync(volume, runId, uncertainFrom, DateTimeOffset.UtcNow, sequence, "Failed", reason, CancellationToken.None).ConfigureAwait(false);
-            return new ReconciliationExecutionSummary(runId, volume.Id, volume.FileSystem, false, "Failed", current.Count, candidates.Length + saved.Values.Count(value => value.Exists && !current.ContainsKey(value.FileId)), metadataQueries, durableCount, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.Priority, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, reason);
+            return new ReconciliationExecutionSummary(runId, volume.Id, volume.FileSystem, false, "Failed", current.Count, candidates.Length + saved.Values.Count(value => value.Exists && !current.ContainsKey(value.FileId)), metadataQueries, durableCount, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.AclFallbackCount, metrics.Priority, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, reason);
         }
 
-        return new ReconciliationExecutionSummary(runId, volume.Id, volume.FileSystem, true, "Completed", current.Count, candidates.Length + saved.Values.Count(value => value.Exists && !current.ContainsKey(value.FileId)), metadataQueries, durableCount, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.Priority, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, null);
+        return new ReconciliationExecutionSummary(runId, volume.Id, volume.FileSystem, true, "Completed", current.Count, candidates.Length + saved.Values.Count(value => value.Exists && !current.ContainsKey(value.FileId)), metadataQueries, durableCount, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.AclFallbackCount, metrics.Priority, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, null);
     }
 
     private async ValueTask<ReconciliationExecutionSummary> ExecuteDirectoryAsync(
@@ -247,7 +268,7 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
             durableCount++;
         }
 
-        return new ReconciliationExecutionSummary(runId, volume.Id, volume.FileSystem, true, "Completed", current.Count, changes.Count, changes.Count(value => value.Metadata is not null), durableCount, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.Priority, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, null);
+        return new ReconciliationExecutionSummary(runId, volume.Id, volume.FileSystem, true, "Completed", current.Count, changes.Count, changes.Count(value => value.Metadata is not null), durableCount, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.AclFallbackCount, metrics.Priority, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, null);
     }
 
     private async ValueTask<IReadOnlyDictionary<FileId, SavedEntry>> ReadSavedEntriesAsync(VolumeId volume, CancellationToken cancellationToken)
@@ -316,22 +337,22 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
 
                 var value = metadataReader.Read(path, Path.GetDirectoryName(path));
                 quality = value.IsAccessDenied ? EventQuality.ExistenceOnly : EventQuality.Reconciled;
-                result = new CandidateMetadataResult(new FileMetadata(volume.Id, value.FileId, value.ParentFileId ?? entry.ToParentFileId(), value.Name, value.Kind, value.LogicalSize, value.AllocatedSize, value.CreatedUtc, value.LastAccessUtc, value.LastWriteUtc, value.FileSystemChangeUtc, value.Attributes, value.ReparsePointKind, null, quality, value.Exists, false), quality);
+                result = new CandidateMetadataResult(new FileMetadata(volume.Id, value.FileId, value.ParentFileId ?? entry.ToParentFileId(), value.Name, value.Kind, value.LogicalSize, value.AllocatedSize, value.CreatedUtc, value.LastAccessUtc, value.LastWriteUtc, value.FileSystemChangeUtc, value.Attributes, value.ReparsePointKind, null, quality, value.Exists, false), quality, value.IsAccessDenied);
             }
             catch (UnauthorizedAccessException)
             {
                 quality = EventQuality.Unknown;
-                result = new CandidateMetadataResult(new FileMetadata(volume.Id, entry.ToFileId(), entry.ToParentFileId(), entry.Name, entry.IsDirectory ? FileKind.Directory : FileKind.File, null, null, null, null, null, null, (FileAttributes)entry.FileAttributes, null, null, quality, true, false), quality);
+                result = new CandidateMetadataResult(new FileMetadata(volume.Id, entry.ToFileId(), entry.ToParentFileId(), entry.Name, entry.IsDirectory ? FileKind.Directory : FileKind.File, null, null, null, null, null, null, (FileAttributes)entry.FileAttributes, null, null, quality, true, false), quality, true);
             }
-            catch (IOException)
+            catch (IOException exception)
             {
                 quality = EventQuality.Unknown;
-                result = new CandidateMetadataResult(new FileMetadata(volume.Id, entry.ToFileId(), entry.ToParentFileId(), entry.Name, entry.IsDirectory ? FileKind.Directory : FileKind.File, null, null, null, null, null, null, (FileAttributes)entry.FileAttributes, null, null, quality, true, false), quality);
+                result = new CandidateMetadataResult(new FileMetadata(volume.Id, entry.ToFileId(), entry.ToParentFileId(), entry.Name, entry.IsDirectory ? FileKind.Directory : FileKind.File, null, null, null, null, null, null, (FileAttributes)entry.FileAttributes, null, null, quality, true, false), quality, IsAccessDenied(exception));
             }
-            catch (System.ComponentModel.Win32Exception)
+            catch (System.ComponentModel.Win32Exception exception)
             {
                 quality = EventQuality.Unknown;
-                result = new CandidateMetadataResult(new FileMetadata(volume.Id, entry.ToFileId(), entry.ToParentFileId(), entry.Name, entry.IsDirectory ? FileKind.Directory : FileKind.File, null, null, null, null, null, null, (FileAttributes)entry.FileAttributes, null, null, quality, true, false), quality);
+                result = new CandidateMetadataResult(new FileMetadata(volume.Id, entry.ToFileId(), entry.ToParentFileId(), entry.Name, entry.IsDirectory ? FileKind.Directory : FileKind.File, null, null, null, null, null, null, (FileAttributes)entry.FileAttributes, null, null, quality, true, false), quality, exception.NativeErrorCode == 5);
             }
         }
         finally
@@ -340,10 +361,12 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
             priority.Dispose();
         }
 
-        metrics.Record(privilege.Result, priority.Result);
+        metrics.Record(privilege.Result, priority.Result, result.UsedAclFallback);
         quality = result.Quality;
         return result.Metadata;
     }
+
+    private static bool IsAccessDenied(IOException exception) => (exception.HResult & 0xFFFF) == 5;
 
     private static bool IsCandidate(MftEntry entry, IReadOnlyDictionary<FileId, SavedEntry> saved)
     {
@@ -417,7 +440,7 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
 
     private sealed record SavedEntry(FileId FileId, FileId? Parent, string Name, bool Exists, FileMetadata? Metadata, long SourceSequence);
 
-    private sealed record CandidateMetadataResult(FileMetadata? Metadata, EventQuality Quality);
+    private sealed record CandidateMetadataResult(FileMetadata? Metadata, EventQuality Quality, bool UsedAclFallback);
 
     private sealed class ReconciliationScopeMetrics
     {
@@ -426,14 +449,16 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
 
         public int PrivilegeEnableSuccessCount { get; private set; }
         public int PrivilegeFallbackCount { get; private set; }
+        public int AclFallbackCount { get; private set; }
         public ReconciliationPriorityResult Priority { get { lock (gate) return priority; } }
 
-        public void Record(ReconciliationPrivilegeResult privilege, ReconciliationPriorityResult priorityResult)
+        public void Record(ReconciliationPrivilegeResult privilege, ReconciliationPriorityResult priorityResult, bool aclFallback)
         {
             lock (gate)
             {
                 if (privilege.Enabled) PrivilegeEnableSuccessCount++;
                 else PrivilegeFallbackCount++;
+                if (aclFallback) AclFallbackCount++;
                 priority = new(
                     priority.BackgroundModeEnabled || priorityResult.BackgroundModeEnabled,
                     priority.BackgroundStartError ?? priorityResult.BackgroundStartError,

@@ -86,10 +86,20 @@ public sealed class WindowsReconciliationAcceptanceTests
                     DurableEventCount = summary.DurableEventCount,
                     CandidateCount = summary.CandidateCount,
                     DetailedMetadataQueryCount = summary.DetailedMetadataQueryCount,
+                    DetailedQueryCandidateRatio = summary.DetailedQueryCandidateRatio,
                     PrivilegeEnableSuccessCount = summary.PrivilegeEnableSuccessCount,
+                    PrivilegeEnableFailureCount = summary.PrivilegeEnableFailureCount,
                     PrivilegeFallbackCount = summary.PrivilegeFallbackCount,
+                    AclFallbackCount = summary.AclFallbackCount,
+                    BackgroundModeEnabled = summary.Priority.BackgroundModeEnabled,
+                    BackgroundStartError = summary.Priority.BackgroundStartError,
+                    BackgroundEndError = summary.Priority.BackgroundEndError,
+                    IoHintAttempts = summary.Priority.IoHintAttempts,
+                    IoHintSuccesses = summary.Priority.IoHintSuccesses,
+                    IoHintFailures = summary.Priority.IoHintFailures,
                     StartedUtc = summary.StartedUtc,
                     FinishedUtc = summary.FinishedUtc,
+                    ElapsedMilliseconds = summary.ElapsedMilliseconds,
                     FailureReason = summary.FailureReason
                 });
             }
@@ -110,8 +120,20 @@ public sealed class WindowsReconciliationAcceptanceTests
                 DurableEventCount = summary?.DurableEventCount ?? 0,
                 CandidateCount = summary?.CandidateCount ?? 0,
                 DetailedMetadataQueryCount = summary?.DetailedMetadataQueryCount ?? 0,
+                DetailedQueryCandidateRatio = summary?.DetailedQueryCandidateRatio ?? 0d,
                 PrivilegeEnableSuccessCount = summary?.PrivilegeEnableSuccessCount ?? 0,
+                PrivilegeEnableFailureCount = summary?.PrivilegeEnableFailureCount ?? 0,
                 PrivilegeFallbackCount = summary?.PrivilegeFallbackCount ?? 0,
+                AclFallbackCount = summary?.AclFallbackCount ?? 0,
+                BackgroundModeEnabled = summary?.Priority.BackgroundModeEnabled ?? false,
+                BackgroundStartError = summary?.Priority.BackgroundStartError,
+                BackgroundEndError = summary?.Priority.BackgroundEndError,
+                IoHintAttempts = summary?.Priority.IoHintAttempts ?? 0,
+                IoHintSuccesses = summary?.Priority.IoHintSuccesses ?? 0,
+                IoHintFailures = summary?.Priority.IoHintFailures ?? 0,
+                StartedUtc = summary?.StartedUtc,
+                FinishedUtc = summary?.FinishedUtc,
+                ElapsedMilliseconds = summary?.ElapsedMilliseconds ?? 0d,
                 FailureReason = exception.ToString()
             });
             throw;
