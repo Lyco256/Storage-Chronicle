@@ -117,6 +117,7 @@ function Assert-GroupEvidence {
         }
         'WindowsPrivileged' {
             if ($schema -ne 'StorageChronicle.WindowsPrivilegedAcceptance.v2') { throw 'Windows privileged evidence has an unexpected schema.' }
+            if ([string]$Value.Configuration -ne 'Release') { throw 'Windows privileged evidence was not produced by the Release configuration.' }
             $required = @($Value.RequiredCapabilities)
             $tests = @($Value.Tests)
             if ($required.Count -ne $requiredWindowsPrivilegedCapabilities.Count -or
@@ -165,6 +166,7 @@ function Assert-GroupEvidence {
         'IdleResource' {
             if ($schema -ne 'StorageChronicle.ResourceBudgetAcceptanceEvidence.v1') { throw 'Resource evidence has an unexpected schema.' }
             if ([string]$Value.ExecutionStatus -ne 'passed' -or
+                [string]$Value.Configuration -ne 'Release' -or
                 $null -eq $Value.PSObject.Properties['Environment'] -or
                 [string]$Value.Environment.ProductName -notmatch 'Windows 11' -or
                 [string]$Value.Environment.Architecture -ne 'x64' -or
@@ -177,7 +179,7 @@ function Assert-GroupEvidence {
         }
         'MftPerformance' {
             if ($schema -ne 'StorageChronicle.FullBenchmarkMatrixEvidence.v1') { throw 'MFT performance evidence has an unexpected schema.' }
-            if (-not [bool]$Value.IncludeMft -or $null -eq $Value.MftEvidence) { throw 'MFT performance evidence is missing the connected MFT correctness artifact.' }
+            if (-not [bool]$Value.IncludeMft -or [string]$Value.Configuration -ne 'Release' -or $null -eq $Value.MftEvidence) { throw 'MFT performance evidence is missing the connected Release MFT correctness artifact.' }
             if ([string]$Value.ExecutionStatus -ne 'completed' -or [string]$Value.MftEvidence.Schema -ne 'StorageChronicle.MftBenchmarkEvidence.v1' -or [string]$Value.MftEvidence.Status -ne 'PASSED' -or -not [bool]$Value.MftEvidence.AcceptanceEligible) { throw 'MFT performance evidence is not a completed eligible real matrix.' }
             if ([string]$Value.Host.MftVolumeLabel -ne 'SC_TEST_MFT_VOLUME' -or
                 [string]::IsNullOrWhiteSpace([string]$Value.Host.MftMarkerPath) -or

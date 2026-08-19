@@ -109,7 +109,7 @@ function Assert-Privileged {
     param([Parameter(Mandatory = $true)]$Artifact)
 
     $value = $Artifact.Value
-    if ([string]$value.Schema -ne 'StorageChronicle.WindowsPrivilegedAcceptance.v2' -or [string]$value.Status -ne 'PASSED' -or -not [bool]$value.AcceptanceEligible) { throw 'Windows 10 privileged evidence is not eligible.' }
+    if ([string]$value.Schema -ne 'StorageChronicle.WindowsPrivilegedAcceptance.v2' -or [string]$value.Configuration -ne 'Release' -or [string]$value.Status -ne 'PASSED' -or -not [bool]$value.AcceptanceEligible) { throw 'Windows 10 privileged evidence is not an eligible Release result.' }
     if ([string]$value.Environment.ProductName -notmatch 'Windows 10' -or
         ([string]$value.Environment.DisplayVersion -ne '22H2' -and [string]$value.Environment.Build -ne '19045') -or
         [string]$value.Environment.Architecture -ne 'x64') { throw 'Privileged evidence does not prove Windows 10 22H2 x64.' }

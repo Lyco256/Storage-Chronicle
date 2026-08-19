@@ -114,6 +114,7 @@ public sealed class InstallerManifestTests
         Assert.Contains("Assert-Windows11HyperVInstallerPrerequisite", finalGate, StringComparison.Ordinal);
         Assert.Contains("AgentIntegration-Windows11", finalGate, StringComparison.Ordinal);
         Assert.Contains("IsPhysicalMachine", finalGate, StringComparison.Ordinal);
+        Assert.Contains("Configuration -ne 'Release'", finalGate, StringComparison.Ordinal);
         Assert.Contains("SC_TEST_MFT_VOLUME", finalGate, StringComparison.Ordinal);
         Assert.Contains("Windows 11 x64 physical release machine", resource, StringComparison.Ordinal);
         Assert.Contains("STORAGE_CHRONICLE_MFT_VOLUME_LABEL", mft, StringComparison.Ordinal);

@@ -322,6 +322,7 @@ try {
         AcceptanceEligible = $null -eq $failure -and -not $Diagnostic
         ExistingScript = $existingScript
         ExistingScriptExitCode = $runnerExitCode
+        Configuration = $Configuration
         ResultPath = $resultPath
         QuietPeriodEvidencePath = $QuietPeriodEvidencePath
         Environment = $resourceEnvironment
@@ -347,6 +348,7 @@ catch {
         AcceptanceEligible = $false
         ExistingScript = $existingScript
         ExistingScriptExitCode = $runnerExitCode
+        Configuration = $Configuration
         Environment = $resourceEnvironment
         InitialProcesses = $initialIdentities
         LifecycleHealthy = $lifecycleHealthy
