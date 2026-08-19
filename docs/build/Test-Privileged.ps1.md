@@ -2,13 +2,13 @@
 
 ## Role
 
-Provides the fail-closed Windows acceptance harness for VHDX/USN/MFT, directory notifications, ETW, SMB, service, interactive-session, and removable-media capabilities. The v2 manifest also carries the complete required-capability list and writes a per-run evidence directory under `artifacts/acceptance/windows-privileged/<run-id>/`.
+Provides the fail-closed Windows acceptance harness for VHDX/USN/MFT, real Agent reconciliation, directory notifications, ETW, SMB, service, interactive-session, and removable-media capabilities. The v2 manifest also carries the complete required-capability list and writes a per-run evidence directory under `artifacts/acceptance/windows-privileged/<run-id>/`.
 
 Volume discovery first uses `Get-Volume -Path` and falls back to the existing drive root when provider-backed paths such as OneDrive do not support path lookup. The fallback is read-only and does not broaden the validated acceptance directory.
 
 ## Public types and responsibilities
 
-The script validates safe disposable targets, prepares only explicitly requested VHDX resources, refuses journal creation or resizing, emits a capability manifest, runs the isolated Windows integration project with the capability-trait filter passed to the test runner, and returns a non-zero status when required capabilities were not executed. Product oracle summaries remain explicitly `NOT_EXECUTED` until a real Agent/TestLab workload populates them.
+The script validates safe disposable targets, prepares only explicitly requested VHDX resources, refuses journal creation or resizing, emits a capability manifest, builds the platform integration and Agent test projects, dispatches the `Reconciliation` capability to the production Agent acceptance test, and dispatches the remaining wired capabilities to the platform integration test project. It returns a non-zero status when required capabilities were not executed. Product oracle summaries remain explicitly `NOT_EXECUTED` until a real Agent/TestLab workload populates them.
 
 ## Inputs and outputs
 
@@ -16,7 +16,7 @@ Inputs are explicit acceptance paths, an approved `TestLabRoot` (or process `SC_
 
 ## Dependencies
 
-Requires Windows, the Windows integration test project, and caller-provided disposable VHDX/media/SMB/service/session resources.
+Requires Windows, the Windows integration and Agent test projects, and caller-provided disposable VHDX/media/SMB/service/session resources.
 
 ## Invariants
 
@@ -32,7 +32,7 @@ Missing prerequisites, unsafe paths, capability setup failure, skipped capabilit
 
 ## Tests
 
-Validated by `tests/StorageChronicle.Platform.Windows.Integration.Tests` and the wrapper `build/Test-WindowsPrivileged.ps1`.
+Validated by `tests/StorageChronicle.Platform.Windows.Integration.Tests`, the real reconciliation test in `tests/StorageChronicle.Agent.Tests`, and the wrapper `build/Test-WindowsPrivileged.ps1`. The reconciliation test is skipped unless an elevated non-system NTFS acceptance root is explicitly supplied.
 
 ## OS constraints
 

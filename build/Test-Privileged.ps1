@@ -18,7 +18,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$testProject = Join-Path $root 'tests/StorageChronicle.Platform.Windows.Integration.Tests/StorageChronicle.Platform.Windows.Integration.Tests.csproj'
+$platformTestProject = Join-Path $root 'tests/StorageChronicle.Platform.Windows.Integration.Tests/StorageChronicle.Platform.Windows.Integration.Tests.csproj'
+$agentTestProject = Join-Path $root 'tests/StorageChronicle.Agent.Tests/StorageChronicle.Agent.Tests.csproj'
+$testProjects = @($platformTestProject, $agentTestProject)
 $artifactRoot = Join-Path $root 'artifacts/acceptance'
 $runId = Get-Date -Format 'yyyyMMdd-HHmmss'
 $manifestPath = Join-Path $artifactRoot "windows-privileged-$runId.json"
@@ -318,7 +320,7 @@ try {
         Add-Capability 'UsnQuery' ($usnReady -and $deviceReady) $usnReason
         Add-Capability 'UsnRead' ($usnReady -and $deviceReady) 'The real USN query/read test must run against the existing journal without changing journal configuration.'
         Add-Capability 'Mft' ($usnReady -and $deviceReady) $usnReason
-        Add-Capability 'Reconciliation' $false 'The real selected-volume reconciliation and durable source/canonical/state oracle must be executed by the Agent in TestLab; this harness has no fixture substitute.'
+        Add-Capability 'Reconciliation' ($rootReady -and $isNtfs -and $admin) $(if ($rootReady -and $isNtfs -and $admin) { 'The real Agent reconciliation acceptance test is wired to the selected NTFS volume and requires elevation for the production MFT/metadata path.' } else { 'A real Agent reconciliation run requires an elevated Windows guest with a selected NTFS acceptance volume.' })
         Add-Capability 'Etw' $false 'The existing smoke test observes file I/O only; full session start/stop and process correlation are not acceptance-complete.'
         Add-Capability 'ReadDirectoryChangesW' $false 'The existing smoke test does not cover the required create/rename/delete and bounded-gap matrix.'
         Add-Capability 'BufferGap' $false 'A bounded buffer-overflow test with fail-closed gap evidence is not wired into this acceptance runner.'
@@ -340,12 +342,17 @@ try {
     Set-ProcessEnvironment 'STORAGE_CHRONICLE_ACCEPTANCE_SERVICE' $ServiceName
     Set-ProcessEnvironment 'STORAGE_CHRONICLE_ACCEPTANCE_WAIT_FOR_MEDIA' $(if ($WaitForMediaChange) { '1' } else { '0' })
 
-    if (-not (Test-Path -LiteralPath $testProject -PathType Leaf)) { throw "Acceptance test project is missing: $testProject" }
-    & dotnet build $testProject --configuration $Configuration --no-restore --nologo 2>&1 | Tee-Object -FilePath (Join-Path $artifactRoot "windows-privileged-$runId.build.log")
-    if ($LASTEXITCODE -ne 0) { throw "Acceptance test project build failed with exit code $LASTEXITCODE." }
-    $testAssembly = Get-ChildItem (Join-Path (Split-Path -Parent $testProject) "bin\$Configuration") -Recurse -File -Filter (([IO.Path]::GetFileNameWithoutExtension($testProject)) + '.exe') |
-        Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
-    if ($null -eq $testAssembly) { throw 'The MTP privileged test executable was not produced.' }
+    $testAssemblies = @{}
+    foreach ($project in $testProjects) {
+        if (-not (Test-Path -LiteralPath $project -PathType Leaf)) { throw "Acceptance test project is missing: $project" }
+        $projectSlug = [IO.Path]::GetFileNameWithoutExtension($project)
+        & dotnet build $project --configuration $Configuration --no-restore --nologo 2>&1 | Tee-Object -FilePath (Join-Path $artifactRoot "windows-privileged-$runId.$projectSlug.build.log")
+        if ($LASTEXITCODE -ne 0) { throw "Acceptance test project build failed with exit code ${LASTEXITCODE}: $project" }
+        $testAssembly = Get-ChildItem (Join-Path (Split-Path -Parent $project) "bin\$Configuration") -Recurse -File -Filter ($projectSlug + '.exe') |
+            Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+        if ($null -eq $testAssembly) { throw "The MTP privileged test executable was not produced: $projectSlug" }
+        $testAssemblies[[IO.Path]::GetFullPath($project)] = $testAssembly.FullName
+    }
     foreach ($capability in $capabilities) {
         if (-not $capability.Ready) {
             Add-NotExecuted $capability.Name $capability.Reason
@@ -355,7 +362,10 @@ try {
         Write-Host "RUNNING [$($capability.Name)]" -ForegroundColor Cyan
         $started = [DateTime]::UtcNow
         $testArgs = @('--progress', 'off', '--minimum-expected-tests', '1', '--filter-trait', "Capability=$($capability.Name)")
-        $result = Invoke-Captured $testAssembly.FullName $testArgs
+        $projectForCapability = if ($capability.Name -eq 'Reconciliation') { $agentTestProject } else { $platformTestProject }
+        $testAssemblyPath = $testAssemblies[[IO.Path]::GetFullPath($projectForCapability)]
+        if ([string]::IsNullOrWhiteSpace($testAssemblyPath)) { throw "No test executable is registered for capability $($capability.Name)." }
+        $result = Invoke-Captured $testAssemblyPath $testArgs
         if ($null -eq $result) { throw "The test runner returned no result for capability $($capability.Name)." }
         $testOutput = [string]$result.Output
         $testError = [string]$result.Error

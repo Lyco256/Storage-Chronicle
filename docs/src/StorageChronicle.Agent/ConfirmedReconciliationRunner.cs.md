@@ -32,7 +32,7 @@ Cancellation, unavailable media, snapshot continuity gaps, access failures, and 
 
 ## Tests
 
-`tests/StorageChronicle.Agent.Tests/ConfirmedReconciliationRunnerTests.cs` covers candidate-only metadata, unchanged snapshots, durable reconciliation quality, cancellation, and no-content invariants. Windows TestLab covers real MFT, NTFS, and non-NTFS execution.
+`tests/StorageChronicle.Agent.Tests/ConfirmedReconciliationRunnerTests.cs` covers candidate-only metadata, unchanged snapshots, durable reconciliation quality, cancellation, and no-content invariants. `tests/StorageChronicle.Agent.Tests/WindowsReconciliationAcceptanceTests.cs` is the real environment-gated acceptance path; Windows TestLab must execute it to cover real MFT, NTFS, and non-NTFS execution.
 
 ## OS constraints
 

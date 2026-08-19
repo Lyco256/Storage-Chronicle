@@ -100,7 +100,7 @@ No row grants permission to weaken source quality, retain contents/hashes, delet
 |---|---|---|---|
 | V-160 | Final acceptance orchestration and evidence order | `Requirements/21_FINAL_ACCEPTANCE_ORCHESTRATION.md`, `tools/TestEnvironment/Invoke-WindowsTestLab.ps1` | harness present; all environment groups not yet eligible |
 | V-161 | Safe Hyper-V TestLab and disposable data VHDX | `tools/TestEnvironment/*.ps1`, read-only preflight | fail-closed scripts present; current Windows Home/no Hyper-V host is blocking |
-| V-162 | Confirmed reconciliation execution | `ConfirmedReconciliationRunner`, IPC Execute path, bounded post-commit live-event buffer, 26 Agent tests | implementation verified; real NTFS/non-NTFS run pending |
+| V-162 | Confirmed reconciliation execution | `ConfirmedReconciliationRunner`, IPC Execute path, bounded post-commit live-event buffer, 26 non-privileged Agent tests plus one privileged reconciliation acceptance test | implementation and privileged test wiring verified; real NTFS/non-NTFS run pending |
 | V-163 | NTFS candidate metadata, scoped privilege, low I/O | `WindowsReconciliationInfrastructure`, runner telemetry | implementation verified; elevated Windows execution pending |
 | V-164 | Windows privileged capability matrix | `build/Test-Privileged.ps1`, `build/Test-WindowsPrivileged.ps1` | NOT_EXECUTED on current host |
 | V-165 | Windows 10 22H2 compatibility | `Requirements/26_WINDOWS10_22H2_ACCEPTANCE.md` and TestLab definitions | NOT_EXECUTED |

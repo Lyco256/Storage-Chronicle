@@ -55,8 +55,8 @@ function Invoke-GuestCommand {
 function Get-GuestDataDefinition {
     switch ($DataRole) {
         'Mft' { return [ordered]@{ Label = 'SC_TEST_MFT_VOLUME'; FileSystem = 'NTFS'; Scenario = 'mft' } }
-        'NonNtfs' { return [ordered]@{ Label = 'SC_TEST_NONNTFS_VOLUME'; FileSystem = 'exFAT'; Scenario = 'basic' } }
-        default { return [ordered]@{ Label = 'SC_TEST_VOLUME'; FileSystem = 'NTFS'; Scenario = 'basic' } }
+        'NonNtfs' { return [ordered]@{ Label = 'SC_TEST_NONNTFS_VOLUME'; FileSystem = 'exFAT'; Scenario = 'full' } }
+        default { return [ordered]@{ Label = 'SC_TEST_VOLUME'; FileSystem = 'NTFS'; Scenario = 'full' } }
     }
 }
 
@@ -142,6 +142,7 @@ try {
     Add-Stage 'preflight' 'PASSED' 'Hyper-V and VMMS were available on the elevated host.'
     $guestWorkloadDestination = 'C:\StorageChronicleTest\StorageChronicle.FileMutationWorkload.exe'
     $definitionData = Get-GuestDataDefinition
+    $manifest.Scenario = $definitionData.Scenario
 
     foreach ($guest in $guests) {
         $definition = Get-TestLabVmDefinition -Guest $guest
