@@ -9,7 +9,9 @@ Updated 2026-08-20. This handoff records the top-agent changes on `feat/benchmar
 - The physical runner verifies the target ProductName/DisplayVersion/build, x64, administrator token, a dedicated TestLab data root containing `.storage-chronicle-testlab-marker.json`, free space, payload hashes, and an exact `YES` confirmation before invoking `msiexec`.
 - Installer assertions inspect the actual MSI registration, default install/data paths, LocalSystem automatic service, exact 5,000/15,000/60,000 ms recovery delays, Session Agent logon registration/startup, non-admin launch/ACL denial, safe service stop before update, intentional failed-update rejection followed by a real rollback MSI, uninstall, and history retention. The runner refuses a dirty Program Files/ProgramData/product/service target. No history deletion behavior was added.
 - Cleanup requires elevation, `-ConfirmCleanup`, and `ShouldProcess`; only explicitly marked VHDX files are dismounted/removed, and ProgramData history is never removed.
-- Added mirrored documentation for every new source script and synchronized the release readiness/requirements verification records.
+- Added `tools/TestEnvironment/Compose-Windows10StageA.ps1`, which composes the Windows 10 Stage A contract only from real TestLab Agent/Oracle evidence, the Windows 10 privileged matrix, the Hyper-V eleven-case installer artifact, and independent Cloud Files/no-driver checks. Missing or diagnostic inputs remain `NOT_EXECUTED`.
+- Added `tools/PhysicalAcceptance/Finalize-Windows10PhysicalAcceptance.ps1` and corrected the physical bundle instructions to consume `results/windows10-preflight.json` from `Verify-Windows10PhysicalAcceptance.ps1`, not the installer's separate `RealMachineInstallerPreflight` artifact.
+- Strengthened all final acceptance paths to require the defined eleven installer case IDs, not only a count of eleven passed rows. The privileged manifest now records ProductName, DisplayVersion, Build, and architecture for Windows 10 evidence binding. Added a regression contract test and mirrored documentation for every new source script; synchronized release readiness and requirements verification records.
 
 ## Validation commands and results
 
@@ -20,6 +22,12 @@ Updated 2026-08-20. This handoff records the top-agent changes on `feat/benchmar
 - `Run-RealMachineInstallerAcceptance.ps1` on the same host: exited 2 with `StorageChronicle.RealMachineInstallerFailure.v1` / `WRONG_ENVIRONMENT`; it did not invoke the installer matrix.
 - `Collect-PhysicalAcceptanceResults.ps1` on the preparation bundle: exited 0 and retained `AcceptanceEligible=false`.
 - `git diff --check`: passed.
+- `Compose-Windows10StageA.ps1` with no inputs: exited 2 and wrote `StorageChronicle.Windows10StageAAcceptance.v1` with `AcceptanceEligible=false`.
+- `Finalize-Windows10PhysicalAcceptance.ps1` with no inputs: exited 2 and wrote `StorageChronicle.Windows10PhysicalAcceptance.v1` with `AcceptanceEligible=false`.
+- PowerShell parser over `build/` and `tools/`: 0 errors; `Test-DocMirror.ps1`: passed.
+- `build/Test-Fast.ps1 -NoRestore`: exit code 0; 22 non-privileged projects passed. Agent: 30 passed, 3 expected environment-gated skips. Installer contract tests: 3 passed.
+- `dotnet build StorageChronicle.slnx --no-restore --nologo -v:minimal`: 0 warnings, 0 errors.
+- `build/quality/Test-FinalAcceptance.ps1` with no artifacts: exit code 2; all nine blocking groups remained `NOT_EXECUTED` and `AcceptanceEligible=false`.
 
 The repository-wide Build, Fast, quality, UI, and coverage validation passed on 2026-08-20 via `powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1` with exit code 0. This remains non-privileged validation; the script intentionally isolates the privileged Windows acceptance lane, which remains pending.
 
@@ -34,5 +42,6 @@ The repository-wide Build, Fast, quality, UI, and coverage validation passed on 
 - The MFT gate now requires the Requirement 28 per-run correctness oracle (dataset/enumerated/candidate/detail-query/generated-canonical/dropped counts plus environment), and `WindowsMftBenchmarks` now emits that artifact from its real public-API enumeration/comparer methods. The dedicated labeled-volume/TestLab run remains blocking; the live correlation wrapper still has no real Agent/Explorer capture of its own. Neither is represented as a pass.
 - The MFT candidate-small method now executes the production Windows metadata reader, scoped `SeBackupPrivilege`/low-I/O scopes, and production normalizer for each actual candidate instead of emitting zero-detail-query placeholder counters. This is implementation coverage, not a durable TestLab MFT acceptance artifact. The formal resource gate now has a separate `New-ResourceQuietWitness.ps1` producer and rejects legacy hand-written quiet JSON unless it is a passed witness schema artifact.
 - The no-input gate audit corrected three harness contracts: localized WMI x64 output is evaluated through the host OS API, and the privileged, MFT matrix, and installer planning paths now emit `NOT_EXECUTED` evidence with exit code 2 when their user-approved environments are absent. No acceptance status is promoted by these changes.
+- The Windows 10 Stage A composer deliberately requires independent `StorageChronicle.Windows10StageACheck.v1` artifacts for Cloud Files capability and no-driver confirmation; no producer has run on this host, so those checks remain an explicit environment-bound item rather than a source-code-only claim.
 - Reconciliation failure handling now records a failed gap even when the selected volume disappears before descriptor resolution, and catches unexpected execution exceptions without returning completed success. A regression test covers the detached-volume path.
 - `devenv` and `main` must remain unmerged until all required artifacts are eligible and the ordered `--no-ff` integration gates pass.
