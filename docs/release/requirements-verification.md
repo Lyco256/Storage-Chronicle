@@ -109,3 +109,4 @@ No row grants permission to weaken source quality, retain contents/hashes, delet
 | V-168 | Physical installer acceptance | installer build/test scripts and requirement 29 | physical install/repair/update/rollback not executed |
 | V-169 | Real Agent/Explorer correlation | `build/quality/Test-CorrelationMetrics.ps1`, TestLab evidence contract | deterministic fixture only; live correlation not executed |
 | V-170 | Safe `devenv`/`main` integration | `Requirements/31_DEVENV_MAIN_INTEGRATION.md`, branch audit | pending all acceptance artifacts and remote branch/default-branch confirmation |
+| V-171 | Final fail-closed acceptance aggregation | `build/quality/Test-FinalAcceptance.ps1`, `docs/build/quality/Test-FinalAcceptance.ps1.md` | verified as a fail-closed gate; current invocation is blocked because all nine environment/integration artifacts are absent |

@@ -4,6 +4,8 @@ The repository is not yet ready for `main`. The top-agent merge sequence remains
 
 The branch/ref audit for this continuation is recorded in `docs/release/branch-audit-2026-08-19.md`; local `devenv` and `main` exist, while the remote currently exposes only `origin/feat/benchmark-performance`.
 
+`build/quality/Test-FinalAcceptance.ps1` is the final evidence aggregator. It requires nine real, eligible artifacts and exits with `2` when any artifact is missing, diagnostic, partial, failed, or `AcceptanceEligible=false`; the no-argument verification on 2026-08-19 correctly remained blocked.
+
 ## Verified on 2026-08-03
 
 - `dotnet build StorageChronicle.slnx --no-restore -v:minimal`: 0 warnings, 0 errors.
