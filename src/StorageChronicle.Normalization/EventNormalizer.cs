@@ -59,6 +59,7 @@ public sealed class EventNormalizer : IEventNormalizer
             "cutCorrelationQuality", "cutCorrelationRejected", "copyScope", "explorerOperation",
             "correlationQuality", "reconciliationReason", "reconciliationRunId", "reconciliationStatus", "reconciliationRequestId", "reconciliationDecision", "userDeclined", "uncertainFromUtc", "uncertainToUtc", "metadataQuality", "scanSequence", "mountReason", "volumeChange",
             "sourceRoute", "destinationRoute", "isRootChange", "path", "oldPath", "process.name", "process.executable", "process.parentInstanceId",
+            "fileSystem",
             "media.logicalMediaId", "media.quality", "media.branch", "media.segment", "media.importedFromPc", "media.removed", "media.recovery");
 
     private readonly object gate = new();

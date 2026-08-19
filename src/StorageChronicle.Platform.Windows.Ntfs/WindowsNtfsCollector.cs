@@ -71,7 +71,9 @@ public sealed class WindowsNtfsCollector : ISourceEventCollector
             ProcessAttributionQuality.Unknown,
             null,
             null,
-            ImmutableDictionary<string, string>.Empty.Add("reconciliationReason", item.GapReason ?? "Unknown"));
+            ImmutableDictionary<string, string>.Empty
+                .Add("reconciliationReason", item.GapReason ?? "Unknown")
+                .Add("fileSystem", "NTFS"));
 
     private SourceEvent CreateSourceEvent(UsnReadResult item, DateTimeOffset now, UsnRenamePair? renamePair = null, EventQuality? qualityOverride = null)
     {

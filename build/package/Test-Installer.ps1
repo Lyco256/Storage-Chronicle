@@ -14,6 +14,8 @@ param(
     [string]$NonAdminCredentialReference,
     [string]$SessionUser,
     [string]$ServiceCredentialReference,
+    [string]$GuestCredentialReference,
+    [string]$GuestTestDataRoot = 'D:\StorageChronicleTestData',
     [string]$HistoryPath = 'C:\ProgramData\Storage Chronicle\history',
     [string]$InstallPath = 'C:\Program Files\Storage Chronicle',
     [string]$StoragePermissionPath = 'C:\ProgramData\Storage Chronicle\history',
@@ -54,6 +56,8 @@ $NonAdminUser = Get-EnvironmentFallback $NonAdminUser 'STORAGE_CHRONICLE_INSTALL
 $NonAdminCredentialReference = Get-EnvironmentFallback $NonAdminCredentialReference 'STORAGE_CHRONICLE_INSTALLER_NONADMIN_CREDENTIAL_REF'
 $SessionUser = Get-EnvironmentFallback $SessionUser 'STORAGE_CHRONICLE_INSTALLER_SESSION_USER'
 $ServiceCredentialReference = Get-EnvironmentFallback $ServiceCredentialReference 'STORAGE_CHRONICLE_INSTALLER_SERVICE_CREDENTIAL_REF'
+$GuestCredentialReference = Get-EnvironmentFallback $GuestCredentialReference 'STORAGE_CHRONICLE_INSTALLER_GUEST_CREDENTIAL_REF'
+$GuestTestDataRoot = Get-EnvironmentFallback $GuestTestDataRoot 'STORAGE_CHRONICLE_INSTALLER_GUEST_TEST_DATA_ROOT'
 $HistoryPath = Get-EnvironmentFallback $HistoryPath 'STORAGE_CHRONICLE_INSTALLER_HISTORY_PATH'
 $InstallPath = Get-EnvironmentFallback $InstallPath 'STORAGE_CHRONICLE_INSTALLER_INSTALL_PATH'
 $StoragePermissionPath = Get-EnvironmentFallback $StoragePermissionPath 'STORAGE_CHRONICLE_INSTALLER_STORAGE_PERMISSION_PATH'
@@ -112,12 +116,14 @@ $script:Manifest = [ordered]@{
         ServiceName = $ServiceName
         NonAdminUser = $NonAdminUser
         SessionUser = $SessionUser
+        GuestTestDataRoot = $GuestTestDataRoot
         HistoryPath = $HistoryPath
         InstallPath = $InstallPath
         StoragePermissionPath = $StoragePermissionPath
         CredentialReferences = [ordered]@{
             NonAdmin = $NonAdminCredentialReference
             Service = $ServiceCredentialReference
+            Guest = $GuestCredentialReference
         }
     }
     Preconditions = @()
@@ -372,6 +378,8 @@ function Get-DriverInvocation {
         '-NonAdminCredentialReference', $NonAdminCredentialReference,
         '-SessionUser', $SessionUser,
         '-ServiceCredentialReference', $ServiceCredentialReference,
+        '-GuestCredentialReference', $GuestCredentialReference,
+        '-GuestTestDataRoot', $GuestTestDataRoot,
         '-HistoryPath', $HistoryPath,
         '-InstallPath', $InstallPath,
         '-StoragePermissionPath', $StoragePermissionPath,
@@ -626,7 +634,9 @@ try {
     Add-Precondition 'NonAdminUser' (-not [string]::IsNullOrWhiteSpace($NonAdminUser)) 'An existing non-administrator account is required for the non-admin UI case.'
     Add-Precondition 'NonAdminCredentialReference' (-not [string]::IsNullOrWhiteSpace($NonAdminCredentialReference)) 'A non-admin credential reference is required; plaintext passwords are not accepted by this harness.'
     Add-Precondition 'SessionUser' (-not [string]::IsNullOrWhiteSpace($SessionUser)) 'An interactive session user is required for Session Agent startup verification.'
-    Add-Precondition 'ServiceCredentialReference' (-not [string]::IsNullOrWhiteSpace($ServiceCredentialReference) -or ($validMode -and $ExecutionMode -eq 'Local' -and $isAdministrator)) 'A service-capable credential reference is required for VM runs, or the current administrator must be used for an explicitly isolated local run.'
+    Add-Precondition 'ServiceCredentialReference' (-not [string]::IsNullOrWhiteSpace($ServiceCredentialReference) -or ($validMode -and $ExecutionMode -eq 'VM' -and -not [string]::IsNullOrWhiteSpace($GuestCredentialReference)) -or ($validMode -and $ExecutionMode -eq 'Local' -and $isAdministrator)) 'A service-capable credential reference is required for VM runs, or the PowerShell Direct guest credential/current administrator must be available for an explicitly isolated run.'
+    Add-Precondition 'GuestCredentialReference' (-not [string]::IsNullOrWhiteSpace($GuestCredentialReference) -or -not ($validMode -and $ExecutionMode -eq 'VM')) 'A DPAPI-protected host credential reference for PowerShell Direct is required for VM runs.'
+    Add-Precondition 'GuestTestDataRoot' (-not [string]::IsNullOrWhiteSpace($GuestTestDataRoot)) 'A guest TestLab data root is required for VM runs.'
     Add-Precondition 'HostAdministrator' $isAdministrator 'Administrator/service privileges are required to control MSI installation, SCM, ACL, and VM acceptance operations.'
     Add-Precondition 'MsiPath' (Test-MsiFile $MsiPath) 'The base MSI path must point to an existing .msi file.'
     Add-Precondition 'UpdatedMsiPath' (Test-MsiFile $UpdatedMsiPath) 'The updated MSI path must point to an existing .msi file for update and rollback.'

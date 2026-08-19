@@ -14,6 +14,8 @@ param(
     [string]$NonAdminCredentialReference,
     [string]$SessionUser,
     [string]$ServiceCredentialReference,
+    [string]$GuestCredentialReference,
+    [string]$GuestTestDataRoot,
     [string]$HistoryPath = 'C:\ProgramData\Storage Chronicle\history',
     [string]$InstallPath = 'C:\Program Files\Storage Chronicle',
     [string]$StoragePermissionPath = 'C:\ProgramData\Storage Chronicle\history',
@@ -247,7 +249,9 @@ function Assert-StoragePermission {
 try {
     $result.Target.IsAdministrator = Test-Administrator
     if (-not $result.Target.IsAdministrator) { throw 'The installer driver requires an elevated process.' }
-    if ($TargetKind -ne 'PhysicalMachine' -or $ExecutionMode -ne 'Local') { throw 'This physical-machine driver requires TargetKind=PhysicalMachine and ExecutionMode=Local.' }
+    $isPhysicalLocal = $TargetKind -eq 'PhysicalMachine' -and $ExecutionMode -eq 'Local'
+    $isHyperVGuest = $TargetKind -eq 'HyperVVm' -and $ExecutionMode -eq 'VM'
+    if (-not $isPhysicalLocal -and -not $isHyperVGuest) { throw 'This installer case driver requires PhysicalMachine/Local or HyperVVm/VM.' }
     $acceptanceRoot = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_ACCEPTANCE_TEST_ROOT', 'Process')
     if ([string]::IsNullOrWhiteSpace($acceptanceRoot) -or -not (Test-Path -LiteralPath $acceptanceRoot -PathType Container)) { throw 'The driver was not given an existing approved acceptance root.' }
     $acceptanceRoot = [IO.Path]::GetFullPath($acceptanceRoot).TrimEnd('\\')

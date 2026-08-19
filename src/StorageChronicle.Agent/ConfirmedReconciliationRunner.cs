@@ -79,7 +79,7 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
         var started = DateTimeOffset.UtcNow;
         var runId = Guid.NewGuid().ToString("N");
         var descriptor = (await volumes.EnumerateAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(value => value.Id == requestedVolume);
-        if (descriptor is null) throw new IOException($"The requested volume is no longer available: {requestedVolume.Value}.");
+        var failureDescriptor = descriptor ?? new VolumeDescriptor(requestedVolume, request.FileSystem, [], false, true, false, false, false);
 
         var metrics = new ReconciliationScopeMetrics();
         var sourceSequence = Math.Max(storage.Status.LastSourceSequence + 1, request.SourceSequence.GetValueOrDefault() + 1);
@@ -87,6 +87,11 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
         using var liveSession = liveEvents.Begin(requestedVolume, request.SourceSequence.GetValueOrDefault());
         try
         {
+            if (descriptor is null)
+            {
+                throw new IOException($"The requested volume is no longer available: {requestedVolume.Value}.");
+            }
+
             var saved = await ReadSavedEntriesAsync(requestedVolume, cancellationToken).ConfigureAwait(false);
             if (string.Equals(descriptor.FileSystem, "NTFS", StringComparison.OrdinalIgnoreCase) && descriptor.SupportsUsn)
             {
@@ -100,14 +105,14 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
         catch (OperationCanceledException exception) when (cancellationToken.IsCancellationRequested)
         {
             var finished = DateTimeOffset.UtcNow;
-            await AppendFailureAsync(descriptor, runId, uncertainFrom, finished, sourceSequence, "Interrupted", exception.Message, CancellationToken.None).ConfigureAwait(false);
-            return new ReconciliationExecutionSummary(runId, requestedVolume, descriptor.FileSystem, false, "Interrupted", 0, 0, 0, 0, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.Priority, started, finished, exception.Message);
+            await AppendFailureAsync(failureDescriptor, runId, uncertainFrom, finished, sourceSequence, "Interrupted", exception.Message, CancellationToken.None).ConfigureAwait(false);
+            return new ReconciliationExecutionSummary(runId, requestedVolume, failureDescriptor.FileSystem, false, "Interrupted", 0, 0, 0, 0, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.Priority, started, finished, exception.Message);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        catch (Exception exception)
         {
             var finished = DateTimeOffset.UtcNow;
-            await AppendFailureAsync(descriptor, runId, uncertainFrom, finished, sourceSequence, "Failed", exception.Message, CancellationToken.None).ConfigureAwait(false);
-            return new ReconciliationExecutionSummary(runId, requestedVolume, descriptor.FileSystem, false, "Failed", 0, 0, 0, 0, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.Priority, started, finished, exception.Message);
+            await AppendFailureAsync(failureDescriptor, runId, uncertainFrom, finished, sourceSequence, "Failed", exception.Message, CancellationToken.None).ConfigureAwait(false);
+            return new ReconciliationExecutionSummary(runId, requestedVolume, failureDescriptor.FileSystem, false, "Failed", 0, 0, 0, 0, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.Priority, started, finished, exception.Message);
         }
     }
 

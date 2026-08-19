@@ -235,8 +235,14 @@ try {
             }
             else {
                 $quiet = Get-Content -Raw -Encoding UTF8 -LiteralPath $QuietPeriodEvidencePath | ConvertFrom-Json
+                if ([string]$quiet.Schema -ne 'StorageChronicle.ResourceQuietWitness.v1' -or
+                    [string]$quiet.Status -ne 'PASSED' -or
+                    -not [bool]$quiet.AcceptanceEligible) {
+                    throw 'Quiet-period evidence must be a passed StorageChronicle.ResourceQuietWitness.v1 artifact.'
+                }
                 $quietSeconds = [double]$quiet.QuietPeriodSeconds
                 $bulkEvents = [int]$quiet.BulkEventCount
+                $queueOverruns = [int]$quiet.QueueOverrunCount
                 $quietStartedUtc = [DateTimeOffset]::Parse($quiet.QuietPeriodStartedUtc)
                 $quietCompletedUtc = [DateTimeOffset]::Parse($quiet.QuietPeriodCompletedUtc)
                 $boundaryStartedUtc = [DateTimeOffset]::Parse($boundary.StartedUtc)
@@ -249,11 +255,16 @@ try {
                 $evidenceChecks.BulkEventCount = $bulkEvents
                 $evidenceChecks.QuietPeriodStartedUtc = $quietStartedUtc
                 $evidenceChecks.QuietPeriodCompletedUtc = $quietCompletedUtc
+                $evidenceChecks.QueueOverrunCount = $queueOverruns
+                $evidenceChecks.QueueOverrunCountIsZero = $queueOverruns -eq 0
+                $evidenceChecks.ReconciliationActiveTimeSeconds = [double]$quiet.ReconciliationActiveTimeSeconds
+                $evidenceChecks.BenchmarkWorkloadProcessesAbsent = [bool]$quiet.BenchmarkWorkloadProcessesAbsent
+                $evidenceChecks.BuildTestProcessesAbsent = [bool]$quiet.BuildTestProcessesAbsent
                 $evidenceChecks.QuietPeriodMeasuredSeconds = $quietSpanSeconds
                 $evidenceChecks.QuietPeriodDurationMatches = [Math]::Abs($quietSpanSeconds - $quietSeconds) -le [Math]::Max(2, 2 * $IntervalMilliseconds / 1000.0)
                 $evidenceChecks.QuietPeriodWindowValid = $quietWindowValid
                 $evidenceChecks.QuietPeriodEndedNearMeasurement = $quietEndedNearMeasurement
-                $evidenceChecks.QuietPeriodValid = $quietSeconds -ge 300 -and $bulkEvents -eq 0 -and $evidenceChecks.QuietPeriodDurationMatches -and $quietWindowValid -and $quietEndedNearMeasurement
+                $evidenceChecks.QuietPeriodValid = $quietSeconds -ge 300 -and $bulkEvents -eq 0 -and $queueOverruns -eq 0 -and $evidenceChecks.BenchmarkWorkloadProcessesAbsent -and $evidenceChecks.BuildTestProcessesAbsent -and $evidenceChecks.QuietPeriodDurationMatches -and $quietWindowValid -and $quietEndedNearMeasurement
             }
         }
 

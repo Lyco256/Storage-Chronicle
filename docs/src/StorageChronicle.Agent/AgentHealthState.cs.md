@@ -1,6 +1,6 @@
 # AgentHealthState
 
-Aggregates bounded UI health, volume continuity, and one-time reconciliation prompts. On the first Agent run it rehydrates unresolved gaps and reconciled state from canonical history so a service restart cannot silently discard a prompt that was recorded while the UI was disconnected. User-declined gaps are not recreated as prompts, and a later durable reconciliation resolves older pending prompts for that volume.
+Aggregates bounded UI health, volume continuity, and one-time reconciliation prompts. On the first Agent run it rehydrates unresolved gaps and reconciled state from canonical history so a service restart cannot silently discard a prompt that was recorded while the UI was disconnected. Pending prompts retain the declared filesystem and last continuous boundary for the fixed confirmation dialog. User-declined gaps are not recreated as prompts, and a later durable reconciliation resolves older pending prompts for that volume.
 
 The rehydration reads only canonical event metadata already in the immutable history; it does not read file contents or create synthetic descendant events. `RestoreFromHistoryAsync` is idempotent per process, cancellable, and reports storage failures through the Agent quality state.
 

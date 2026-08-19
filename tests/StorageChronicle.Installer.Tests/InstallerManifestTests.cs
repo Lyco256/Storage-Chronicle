@@ -25,6 +25,26 @@ public sealed class InstallerManifestTests
         Assert.DoesNotContain("Driver", wix, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void HyperVInstallerDriverIsExplicitAndFailClosed()
+    {
+        var root = FindRoot();
+        var genericHarness = File.ReadAllText(Path.Combine(root, "build", "package", "Test-Installer.ps1"));
+        var driver = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Invoke-HyperVInstallerCase.ps1"));
+        var orchestrator = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Run-HyperVInstallerAcceptance.ps1"));
+
+        Assert.Contains("GuestCredentialReference", genericHarness, StringComparison.Ordinal);
+        Assert.Contains("'PhysicalMachine', 'HyperVVm'", genericHarness, StringComparison.Ordinal);
+        Assert.Contains("New-PSSession -VMName", driver, StringComparison.Ordinal);
+        Assert.Contains("Copy-Item", driver, StringComparison.Ordinal);
+        Assert.Contains("-ToSession $Session", driver, StringComparison.Ordinal);
+        Assert.Contains("Copy-Item -FromSession $Session", driver, StringComparison.Ordinal);
+        Assert.Contains("Status = 'FAILED'", driver, StringComparison.Ordinal);
+        Assert.Contains("SC-CLEAN-BASELINE", orchestrator, StringComparison.Ordinal);
+        Assert.Contains("-Apply", orchestrator, StringComparison.Ordinal);
+        Assert.Contains("AcceptanceEligible", orchestrator, StringComparison.Ordinal);
+    }
+
     private static string FindRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

@@ -12,6 +12,8 @@
     <ProjectReference Include="..\..\src\StorageChronicle.Storage\StorageChronicle.Storage.csproj" />
     <ProjectReference Include="..\..\src\StorageChronicle.ExternalMedia\StorageChronicle.ExternalMedia.csproj" />
     <ProjectReference Include="..\..\src\StorageChronicle.Platform.Windows.Ntfs\StorageChronicle.Platform.Windows.Ntfs.csproj" Condition="'$(OS)' == 'Windows_NT'" />
+    <ProjectReference Include="..\..\src\StorageChronicle.Platform.Windows.FileSystem\StorageChronicle.Platform.Windows.FileSystem.csproj" Condition="'$(OS)' == 'Windows_NT'" />
+    <ProjectReference Include="..\..\src\StorageChronicle.Normalization\StorageChronicle.Normalization.csproj" Condition="'$(OS)' == 'Windows_NT'" />
     <PackageReference Include="BenchmarkDotNet" />
   </ItemGroup>
   <ItemGroup Condition="'$(OS)' != 'Windows_NT'">

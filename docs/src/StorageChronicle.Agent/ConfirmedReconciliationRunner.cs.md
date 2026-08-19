@@ -1,6 +1,6 @@
 # ConfirmedReconciliationRunner.cs
 
-Runs the actual selected-volume reconciliation after the UI has confirmed a pending continuity gap. NTFS uses a pre-scan USN boundary, public lightweight MFT enumeration, candidate comparison against durable canonical state, candidate-only standard metadata reads, and durable Source/Canonical/State updates. Candidate metadata uses `SeBackupPrivilege` and Windows background/low-I/O priority only around the synchronous native call, then restores the thread token before asynchronous work continues; enable/fallback and priority telemetry are aggregated into the result. Non-NTFS uses the production directory snapshot reader and compares the current metadata-only tree with the saved state. Every emitted fact carries a reconciliation run ID, uncertain interval, unknown process attribution, and reconciliation quality. Cancellation, access, media, or storage failures append an explicit failed/interrupted gap without deleting already durable history.
+Runs the actual selected-volume reconciliation after the UI has confirmed a pending continuity gap. NTFS uses a pre-scan USN boundary, public lightweight MFT enumeration, candidate comparison against durable canonical state, candidate-only standard metadata reads, and durable Source/Canonical/State updates. Candidate metadata uses `SeBackupPrivilege` and Windows background/low-I/O priority only around the synchronous native call, then restores the thread token before asynchronous work continues; enable/fallback and priority telemetry are aggregated into the result. Non-NTFS uses the production directory snapshot reader and compares the current metadata-only tree with the saved state. Every emitted fact carries a reconciliation run ID, uncertain interval, unknown process attribution, and reconciliation quality. Cancellation, access, media, storage, and unexpected execution failures append an explicit failed/interrupted gap without deleting already durable history. If the selected volume disappears before enumeration completes, the request's declared filesystem is used only to record that failed gap; no scan is attempted.
 
 ## Role
 
@@ -20,7 +20,7 @@ Only the requested volume is scanned. NTFS detailed metadata is requested only f
 
 ## Dependencies
 
-The runner depends on the volume, NTFS, production snapshot, metadata, normalization, health, append storage, and bounded live-event buffer boundaries. Tests cover candidate selection, metadata-query bounds, durable reconciliation quality, deletion, cancellation/failure records, live-event capture, and role-triggered execution; Windows TestLab supplies the real-I/O acceptance evidence.
+The runner depends on the volume, NTFS, production snapshot, metadata, normalization, health, append storage, and bounded live-event buffer boundaries. Tests cover candidate selection, metadata-query bounds, durable reconciliation quality, deletion, cancellation/failure records, detached-volume failure recording, live-event capture, and role-triggered execution; Windows TestLab supplies the real-I/O acceptance evidence.
 
 ## Threading and lifetime
 
@@ -28,11 +28,11 @@ The runner is asynchronous and bounded by the caller cancellation token. Native 
 
 ## Failure behavior
 
-Cancellation, unavailable media, snapshot continuity gaps, access failures, and storage failures do not return completed success; the runner appends an explicit gap and exposes the failure status.
+Cancellation, unavailable media, snapshot continuity gaps, access failures, storage failures, and unexpected execution failures do not return completed success; the runner appends an explicit gap and exposes the failure status.
 
 ## Tests
 
-`tests/StorageChronicle.Agent.Tests/ConfirmedReconciliationRunnerTests.cs` covers candidate-only metadata, unchanged snapshots, durable reconciliation quality, cancellation, and no-content invariants. `tests/StorageChronicle.Agent.Tests/WindowsReconciliationAcceptanceTests.cs` is the real environment-gated acceptance path; Windows TestLab must execute it to cover real MFT, NTFS, and non-NTFS execution.
+`tests/StorageChronicle.Agent.Tests/ConfirmedReconciliationRunnerTests.cs` covers candidate-only metadata, unchanged snapshots, durable reconciliation quality, cancellation, detached-volume failure recording, and no-content invariants. `tests/StorageChronicle.Agent.Tests/WindowsReconciliationAcceptanceTests.cs` is the real environment-gated acceptance path; Windows TestLab must execute it to cover real MFT, NTFS, and non-NTFS execution.
 
 ## OS constraints
 

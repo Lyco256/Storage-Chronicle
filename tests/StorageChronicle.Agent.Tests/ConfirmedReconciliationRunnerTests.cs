@@ -97,6 +97,40 @@ public sealed class ConfirmedReconciliationRunnerTests
     }
 
     [Fact]
+    public async Task MissingVolumeIsRecordedAsFailedGapInsteadOfEscapingBeforeFailureHandling()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.ReconciliationHistory", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var volumeId = VolumeId.Create("detached-volume");
+            await using var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(root) { FlushInterval = TimeSpan.FromMinutes(1) });
+            var runner = new ConfirmedReconciliationRunner(
+                new FakeVolumes(),
+                new UnsupportedNtfsApi(),
+                new WindowsVolumeSnapshotReader(new FakeMetadataNative()),
+                new WindowsFileMetadataReader(new FakeMetadataNative()),
+                storage,
+                new EventNormalizer(),
+                new AgentHealthState());
+
+            var summary = await runner.ExecuteAsync(new PendingReconciliationRequest("detached-gap", volumeId, "volume detached", 1, DateTimeOffset.UtcNow.AddMinutes(-1), FileSystem: "NTFS"));
+            var events = new List<CanonicalEvent>();
+            var page = await storage.ReadCanonicalPageAsync(0, 512);
+            events.AddRange(page);
+
+            Assert.False(summary.Completed);
+            Assert.Equal("Failed", summary.Status);
+            Assert.Equal("NTFS", summary.FileSystem);
+            Assert.Contains(events, value => value.Operation == CanonicalOperation.UnverifiedGap && value.Quality == EventQuality.UnverifiedGap);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task UnchangedNonNtfsSnapshotDoesNotQueryDetailedMetadata()
     {
         var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.Reconciliation", Guid.NewGuid().ToString("N"));
@@ -175,9 +209,9 @@ public sealed class ConfirmedReconciliationRunnerTests
             new FileMetadata(volume, metadata.FileId, metadata.ParentFileId, metadata.Name, metadata.Kind, metadata.LogicalSize, metadata.AllocatedSize, metadata.CreatedUtc, metadata.LastAccessUtc, metadata.LastWriteUtc, metadata.FileSystemChangeUtc, metadata.Attributes, metadata.ReparsePointKind, null, EventQuality.Exact, true, false),
             new EventTime(DateTimeOffset.UtcNow, TimeSpan.Zero, null, DateTimeOffset.UtcNow, new SourceSequence(sequence), new MountSequence(sequence)), EventQuality.Exact, null, ProcessAttributionQuality.Unknown, null, null, ImmutableDictionary<string, string>.Empty);
 
-    private sealed class FakeVolumes(VolumeDescriptor volume) : IVolumeEnumerator
+    private sealed class FakeVolumes(VolumeDescriptor? volume = null) : IVolumeEnumerator
     {
-        public ValueTask<IReadOnlyList<VolumeDescriptor>> EnumerateAsync(CancellationToken cancellationToken = default) => ValueTask.FromResult<IReadOnlyList<VolumeDescriptor>>([volume]);
+        public ValueTask<IReadOnlyList<VolumeDescriptor>> EnumerateAsync(CancellationToken cancellationToken = default) => ValueTask.FromResult<IReadOnlyList<VolumeDescriptor>>(volume is null ? [] : [volume]);
     }
 
     private sealed class UnsupportedNtfsApi : StorageChronicle.Platform.Windows.Ntfs.INtfsApi

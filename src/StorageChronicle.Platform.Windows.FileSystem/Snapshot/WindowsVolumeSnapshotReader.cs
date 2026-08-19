@@ -33,7 +33,7 @@ public sealed class WindowsVolumeSnapshotReader : IVolumeSnapshotReader
         var sequence = 0L;
         if (!volume.IsDirectoryReadable)
         {
-            yield return WindowsSourceEventFactory.Gap(volume.Id, "Volume cannot be enumerated as a directory", sequence++);
+            yield return WindowsSourceEventFactory.Gap(volume.Id, "Volume cannot be enumerated as a directory", sequence++, volume.FileSystem);
             yield break;
         }
 
@@ -100,7 +100,7 @@ public sealed class WindowsVolumeSnapshotReader : IVolumeSnapshotReader
 
         if (enumerationError is not null)
         {
-            entries.Add(WindowsSourceEventFactory.Gap(volume.Id, enumerationError, sequence++));
+            entries.Add(WindowsSourceEventFactory.Gap(volume.Id, enumerationError, sequence++, volume.FileSystem));
         }
 
         if (entries.Count > 0) yield return new SnapshotDirectoryBatch(entries, sequence);

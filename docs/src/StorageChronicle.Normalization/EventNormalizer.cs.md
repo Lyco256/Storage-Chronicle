@@ -6,7 +6,7 @@ This file is the single source-to-canonical operation and quality mapping for St
 
 ## Role
 
-`EventNormalizer` is the platform-neutral boundary between `SourceEvent` and `CanonicalEvent`. It references only Domain contracts and the event-normalizer port; it does not access Windows APIs, storage, UI, paths on disk, file contents, or content hashes.
+`EventNormalizer` is the platform-neutral boundary between `SourceEvent` and `CanonicalEvent`. It preserves the declared filesystem property used by reconciliation prompts, references only Domain contracts and the event-normalizer port, and does not access Windows APIs, storage, UI, paths on disk, file contents, or content hashes.
 
 ## Public types
 

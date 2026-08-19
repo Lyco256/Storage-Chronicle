@@ -13,6 +13,7 @@ public sealed class AgentHealthState
     private const int PendingCapacity = 256;
     private readonly ConcurrentDictionary<string, VolumeHealth> volumes = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, PendingReconciliationRequest> pending = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, DateTimeOffset> lastContinuousObservedUtc = new(StringComparer.OrdinalIgnoreCase);
     private string? failureReason;
     private int queueDepth;
     private int historyRestored;
@@ -33,6 +34,7 @@ public sealed class AgentHealthState
         var reason = GetProperty(source.Properties, "reconciliationReason") ?? GetProperty(source.Properties, "reason");
         if (source.VolumeId is { } volume)
         {
+            if (!isGap) lastContinuousObservedUtc[volume.Value] = source.Time.RecordedUtc;
             if (!isGap && volumes.TryGetValue(volume.Value, out var previous) && previous.Continuity == MonitoringContinuity.UnverifiedGap &&
                 source.Origin is not (EventOrigin.MftReconciliation or EventOrigin.DirectoryReconciliation or EventOrigin.RecoveredUsn))
             {
@@ -49,7 +51,10 @@ public sealed class AgentHealthState
                     volume,
                     string.IsNullOrWhiteSpace(reason) ? "Monitoring continuity was not confirmed." : reason,
                     source.Time.SourceSequence.Value,
-                    source.Time.RecordedUtc));
+                    source.Time.RecordedUtc,
+                    Presented: false,
+                    FileSystem: FileSystem(source),
+                    GapStartUtc: lastContinuousObservedUtc.TryGetValue(volume.Value, out var gapStart) ? gapStart : null));
             }
         }
         else if (isGap && createPendingReconciliation && pending.Count < PendingCapacity)
@@ -60,7 +65,9 @@ public sealed class AgentHealthState
                 null,
                 string.IsNullOrWhiteSpace(reason) ? "Monitoring continuity was not confirmed." : reason,
                 source.Time.SourceSequence.Value,
-                source.Time.RecordedUtc));
+                source.Time.RecordedUtc,
+                Presented: false,
+                FileSystem: FileSystem(source)));
         }
     }
 
@@ -186,5 +193,12 @@ public sealed class AgentHealthState
         }
 
         return null;
+    }
+
+    private static string FileSystem(SourceEvent source)
+    {
+        var declared = GetProperty(source.Properties, "fileSystem");
+        if (!string.IsNullOrWhiteSpace(declared)) return declared;
+        return source.Origin is EventOrigin.LiveUsn or EventOrigin.RecoveredUsn or EventOrigin.MftReconciliation ? "NTFS" : "Unknown";
     }
 }
