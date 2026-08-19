@@ -19,6 +19,63 @@ if ([string]::IsNullOrWhiteSpace($OutputPath)) { $OutputPath = Join-Path $root (
 $artifactDirectory = Split-Path -Parent $OutputPath
 New-Item -ItemType Directory -Force -Path $artifactDirectory | Out-Null
 
+function Assert-GroupEvidence {
+    param([Parameter(Mandatory = $true)][string]$Name, [Parameter(Mandatory = $true)]$Value)
+
+    $schema = if ($null -ne $Value.PSObject.Properties['Schema']) { [string]$Value.Schema } else { '' }
+    switch ($Name) {
+        'TestLabAndRealIo' {
+            if ($schema -ne 'StorageChronicle.WindowsTestLabExecution.v2') { throw 'TestLab evidence has an unexpected schema.' }
+            if (@($Value.Stages).Count -eq 0) { throw 'TestLab evidence has no execution stages.' }
+        }
+        'ConfirmedReconciliation' {
+            if ($schema -ne 'StorageChronicle.ConfirmedReconciliationAcceptance.v1') { throw 'Confirmed reconciliation evidence has an unexpected schema.' }
+            foreach ($field in @('RunId', 'VolumeId', 'FileSystem', 'SourceEventCount', 'CanonicalEventCount', 'FinalStateCount', 'Status')) {
+                if ($null -eq $Value.PSObject.Properties[$field]) { throw "Confirmed reconciliation evidence is missing $field." }
+            }
+            if ([string]$Value.Status -ne 'PASSED') { throw "Confirmed reconciliation evidence status is not PASSED: $($Value.Status)" }
+        }
+        'WindowsPrivileged' {
+            if ($schema -ne 'StorageChronicle.WindowsPrivilegedAcceptance.v2') { throw 'Windows privileged evidence has an unexpected schema.' }
+            $required = @($Value.RequiredCapabilities)
+            $tests = @($Value.Tests)
+            if ($required.Count -lt 1) { throw 'Windows privileged evidence has no required capabilities.' }
+            foreach ($capability in $required) {
+                $matches = @($tests | Where-Object { [string]$_.Capability -eq [string]$capability })
+                if ($matches.Count -ne 1 -or [string]$matches[0].Status -ne 'PASSED') { throw "Windows privileged capability is not exactly PASSED: $capability" }
+            }
+        }
+        'Windows10_22H2' {
+            if ($schema -ne 'StorageChronicle.Windows10PhysicalAcceptance.v1') { throw 'Windows 10 evidence has an unexpected schema.' }
+            if ([string]$Value.TargetOs -ne 'Windows10-22H2') { throw 'Windows 10 evidence does not identify Windows10-22H2.' }
+        }
+        'IdleResource' {
+            if ($schema -ne 'StorageChronicle.ResourceBudgetAcceptanceEvidence.v1') { throw 'Resource evidence has an unexpected schema.' }
+            if ($null -eq $Value.PSObject.Properties['EvidenceChecks']) { throw 'Resource evidence has no supervised gate checks.' }
+        }
+        'MftPerformance' {
+            if ($schema -ne 'StorageChronicle.FullBenchmarkMatrixEvidence.v1') { throw 'MFT performance evidence has an unexpected schema.' }
+            if (-not [bool]$Value.IncludeMft -or $null -eq $Value.MftEvidence) { throw 'MFT performance evidence is missing the connected MFT correctness artifact.' }
+        }
+        'PhysicalInstaller' {
+            if ($schema -ne 'storage-chronicle.installer-acceptance.v1') { throw 'Installer evidence has an unexpected schema.' }
+            if ($null -eq $Value.PSObject.Properties['Summary'] -or [int]$Value.Summary.Total -ne 11 -or [int]$Value.Summary.Passed -ne 11) { throw 'Installer evidence does not contain all eleven passed cases.' }
+        }
+        'AgentExplorerCorrelation' {
+            if ($schema -ne 'StorageChronicle.AgentExplorerCorrelationEvidence.v1') { throw 'Agent/Explorer correlation evidence has an unexpected schema.' }
+            if ([string]$Value.LiveMachineMeasurement -ne 'PASSED') { throw 'Agent/Explorer evidence is not a live machine measurement.' }
+            if ($null -eq $Value.PSObject.Properties['FalseExactCount'] -or [int]$Value.FalseExactCount -ne 0) { throw 'Agent/Explorer evidence does not prove false Exact attribution is zero.' }
+        }
+        'BranchIntegration' {
+            if ($schema -ne 'StorageChronicle.BranchIntegrationEvidence.v1') { throw 'Branch integration evidence has an unexpected schema.' }
+            foreach ($field in @('RemoteDevenv', 'RemoteMain', 'WorktreeClean', 'MainSha')) {
+                if ($null -eq $Value.PSObject.Properties[$field]) { throw "Branch integration evidence is missing $field." }
+            }
+        }
+        default { throw "Unknown final acceptance group: $Name" }
+    }
+}
+
 $groups = @(
     [ordered]@{ Name = 'TestLabAndRealIo'; Path = $TestLabManifest },
     [ordered]@{ Name = 'ConfirmedReconciliation'; Path = $ReconciliationManifest },
@@ -50,6 +107,7 @@ foreach ($group in $groups) {
     }
     try {
         $value = Get-Content -Raw -Encoding UTF8 -LiteralPath $path | ConvertFrom-Json
+        Assert-GroupEvidence -Name $group.Name -Value $value
         $eligibleProperty = $value.PSObject.Properties['AcceptanceEligible']
         $eligible = $null -ne $eligibleProperty -and [bool]$eligibleProperty.Value
         $statusProperty = $value.PSObject.Properties['Status']

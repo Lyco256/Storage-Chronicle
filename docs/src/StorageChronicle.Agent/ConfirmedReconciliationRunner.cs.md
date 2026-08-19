@@ -28,7 +28,7 @@ The runner is asynchronous and bounded by the caller cancellation token. Native 
 
 ## Failure behavior
 
-Cancellation, unavailable media, access failures, and storage failures do not return completed success; the runner appends an explicit gap and exposes the failure status.
+Cancellation, unavailable media, snapshot continuity gaps, access failures, and storage failures do not return completed success; the runner appends an explicit gap and exposes the failure status.
 
 ## Tests
 

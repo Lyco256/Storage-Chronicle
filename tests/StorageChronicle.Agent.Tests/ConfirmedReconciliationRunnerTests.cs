@@ -134,6 +134,42 @@ public sealed class ConfirmedReconciliationRunnerTests
         }
     }
 
+    [Fact]
+    public async Task NonNtfsSnapshotGapIsFailedAndRecordedInsteadOfCompleted()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.Reconciliation", Guid.NewGuid().ToString("N"));
+        var historyRoot = Path.Combine(Path.GetTempPath(), "StorageChronicle.ReconciliationHistory", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var volume = new VolumeDescriptor(VolumeId.Create("gap-volume"), "FAT32", [root], false, true, false, false, true);
+        try
+        {
+            Directory.Delete(root);
+            await using var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(historyRoot) { FlushInterval = TimeSpan.FromMinutes(1) });
+            var runner = new ConfirmedReconciliationRunner(new FakeVolumes(volume), new UnsupportedNtfsApi(), new WindowsVolumeSnapshotReader(new FakeMetadataNative()), new WindowsFileMetadataReader(new FakeMetadataNative()), storage, new EventNormalizer(), new AgentHealthState());
+
+            var summary = await runner.ExecuteAsync(new PendingReconciliationRequest("gap-snapshot", volume.Id, "snapshot gap", 1, DateTimeOffset.UtcNow.AddMinutes(-1)));
+            var events = new List<CanonicalEvent>();
+            var offset = 0;
+            while (true)
+            {
+                var page = await storage.ReadCanonicalPageAsync(offset, 512);
+                if (page.Count == 0) break;
+                events.AddRange(page);
+                offset += page.Count;
+                if (page.Count < 512) break;
+            }
+
+            Assert.False(summary.Completed);
+            Assert.Equal("Failed", summary.Status);
+            Assert.Contains(events, value => value.Operation == CanonicalOperation.UnverifiedGap && value.Quality == EventQuality.UnverifiedGap);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            if (Directory.Exists(historyRoot)) Directory.Delete(historyRoot, recursive: true);
+        }
+    }
+
     private static SourceEvent Source(VolumeId volume, NativeFileMetadataRecord metadata, CanonicalOperation operation, long sequence, EventOrigin origin) =>
         new(EventId.New(), EventSchemaVersion.Current, origin, volume, metadata.FileId, metadata.ParentFileId, metadata.Name, null, operation,
             new FileMetadata(volume, metadata.FileId, metadata.ParentFileId, metadata.Name, metadata.Kind, metadata.LogicalSize, metadata.AllocatedSize, metadata.CreatedUtc, metadata.LastAccessUtc, metadata.LastWriteUtc, metadata.FileSystemChangeUtc, metadata.Attributes, metadata.ReparsePointKind, null, EventQuality.Exact, true, false),

@@ -166,6 +166,11 @@ public sealed class EventNormalizer : IEventNormalizer
 
     private static CanonicalOperation DetermineOperation(SourceEvent source)
     {
+        if (source.Hint == CanonicalOperation.UnverifiedGap || source.Quality == EventQuality.UnverifiedGap)
+        {
+            return CanonicalOperation.UnverifiedGap;
+        }
+
         if (source.Origin is EventOrigin.MftReconciliation or EventOrigin.DirectoryReconciliation)
         {
             return CanonicalOperation.ReconciliationDiscovered;

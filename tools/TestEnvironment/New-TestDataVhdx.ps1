@@ -15,6 +15,8 @@ $artifactDirectory = New-TestLabArtifactDirectory -RepositoryRoot $repositoryRoo
 $safeTestId = $TestId -replace '[^A-Za-z0-9_.-]', '-'
 $manifestPath = Join-Path $artifactDirectory "data-vhdx-$safeTestId.json"
 $manifest = [ordered]@{ Schema = 'StorageChronicle.TestDataVhdx.v1'; VmName = $VmName; Role = $Role; TestId = $TestId; Apply = [bool]$Apply; Status = 'NOT_EXECUTED'; StartedUtc = [DateTimeOffset]::UtcNow }
+$created = $false
+$attached = $false
 try {
     $config = Get-TestLabConfig -ConfigPath $ConfigPath
     $root = Assert-TestLabRoot -Root $config.Root
@@ -36,7 +38,9 @@ try {
     if (Test-Path -LiteralPath $path) { throw "Refusing to overwrite an existing data VHDX: $path" }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
     New-VHD -Path $path -Dynamic -SizeBytes ($SizeGiB * 1GB) | Out-Null
+    $created = $true
     Add-VMHardDiskDrive -VMName $VmName -Path $path
+    $attached = $true
     $manifest.Status = 'CREATED_AND_ATTACHED'
     $manifest.VhdxPath = $path
     $manifest.SizeGiB = $SizeGiB
@@ -48,6 +52,15 @@ try {
 catch {
     $manifest.Status = 'FAILED'
     $manifest.Error = $_.Exception.Message
+    if ($Apply -and $created) {
+        try {
+            $disk = @(Get-VMHardDiskDrive -VMName $VmName -ErrorAction SilentlyContinue | Where-Object { [IO.Path]::GetFullPath([string]$_.Path).Equals($path, [StringComparison]::OrdinalIgnoreCase) })
+            if ($disk.Count -eq 1) { Remove-VMHardDiskDrive -VMHardDiskDrive $disk[0] -Confirm:$false -ErrorAction Stop }
+        } catch { $manifest.CleanupError = "Attached VHDX rollback failed: $($_.Exception.Message)" }
+    }
+    if ($Apply -and $created -and (Test-Path -LiteralPath $path -PathType Leaf)) {
+        try { Remove-Item -LiteralPath $path -Force -ErrorAction Stop } catch { $manifest.CleanupError = "VHDX file rollback failed: $($_.Exception.Message)" }
+    }
     Write-TestLabJson -Path $manifestPath -Value $manifest
     Write-Error $_.Exception.Message
     exit 1

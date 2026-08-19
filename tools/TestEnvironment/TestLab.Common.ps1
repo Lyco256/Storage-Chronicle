@@ -14,13 +14,13 @@ function Get-TestLabConfig {
     }
 
     $config = Import-PowerShellDataFile -LiteralPath $path
-    foreach ($key in @('Root', 'Windows11Iso')) {
+    foreach ($key in @('Root')) {
         if (-not $config.ContainsKey($key) -or [string]::IsNullOrWhiteSpace([string]$config[$key])) {
             throw "TestLab configuration key '$key' is required."
         }
     }
     $config.Root = [IO.Path]::GetFullPath([string]$config.Root)
-    $config.Windows11Iso = [IO.Path]::GetFullPath([string]$config.Windows11Iso)
+    $config.Windows11Iso = if ($config.ContainsKey('Windows11Iso') -and -not [string]::IsNullOrWhiteSpace([string]$config.Windows11Iso)) { [IO.Path]::GetFullPath([string]$config.Windows11Iso) } else { $null }
     $config.Windows10Iso = if ($config.ContainsKey('Windows10Iso') -and -not [string]::IsNullOrWhiteSpace([string]$config.Windows10Iso)) { [IO.Path]::GetFullPath([string]$config.Windows10Iso) } else { $null }
     return $config
 }
@@ -49,6 +49,7 @@ function Assert-TestLabRoot {
 
 function Assert-ExistingIso {
     param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$Label)
+    if ([string]::IsNullOrWhiteSpace($Path)) { throw "$Label is required for the selected TestLab target." }
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "$Label is not an existing local ISO: $Path" }
     if ([IO.Path]::GetExtension($Path) -ine '.iso') { throw "$Label must have an .iso extension: $Path" }
 }

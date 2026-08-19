@@ -201,6 +201,12 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
         var current = new Dictionary<FileId, SourceEvent>();
         await foreach (var source in snapshotReader.ReadInitialSnapshotAsync(volume, cancellationToken).ConfigureAwait(false))
         {
+            if (source.Quality == EventQuality.UnverifiedGap || source.Hint == CanonicalOperation.UnverifiedGap)
+            {
+                var reason = source.Properties.TryGetValue("reason", out var value) ? value : "Directory snapshot reported a continuity gap.";
+                throw new IOException(reason);
+            }
+
             if (source.FileId is { } fileId) current[fileId] = source;
         }
 

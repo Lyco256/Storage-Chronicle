@@ -21,7 +21,7 @@ Updated 2026-08-20. This handoff records the top-agent changes on `feat/benchmar
 - `Collect-PhysicalAcceptanceResults.ps1` on the preparation bundle: exited 0 and retained `AcceptanceEligible=false`.
 - `git diff --check`: passed.
 
-The repository-wide Fast, quality, UI, and build validation was green at the preceding reviewed checkpoint; it must be rerun after this handoff before integration.
+The repository-wide Build, Fast, quality, UI, and coverage validation passed on 2026-08-20 via `powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1` with exit code 0. This remains non-privileged validation; the script intentionally isolates the privileged Windows acceptance lane, which remains pending.
 
 ## Known limitations and required exit evidence
 
@@ -29,5 +29,5 @@ The repository-wide Fast, quality, UI, and build validation was green at the pre
 - Updated and rollback MSI inputs are not present, so the generated bundle is intentionally a preparation bundle only.
 - Requirements 21–31 still require eligible real artifacts for the privileged capability matrix, Windows 10 22H2, formal resource quiet-period, labeled MFT matrix, physical installer, live Agent/Explorer correlation, and final branch integration gates.
 - The Agent pipeline/reconciliation boundary was hardened after this handoff: post-commit ordinary source events are captured in a bounded volume-scoped session and replayed after a scan; overflow creates a failed gap. The new privileged manifest is v2 and refuses USN journal mutation. These changes are implementation hardening, not real-environment acceptance evidence.
-- The MFT harness still lacks the Requirement 28 per-run correctness oracle (dataset/enumerated/candidate/detail-query/generated-canonical/dropped counts plus environment); the live correlation wrapper still has no real Agent/Explorer capture. Both remain blocking and are intentionally not represented as passes.
+- The MFT gate now requires the Requirement 28 per-run correctness oracle (dataset/enumerated/candidate/detail-query/generated-canonical/dropped counts plus environment), but the current BenchmarkDotNet/TestLab product connection still does not produce it; the live correlation wrapper accepts a strict real-evidence artifact but still has no real Agent/Explorer capture of its own. Both remain blocking and are intentionally not represented as passes.
 - `devenv` and `main` must remain unmerged until all required artifacts are eligible and the ordered `--no-ff` integration gates pass.

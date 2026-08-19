@@ -61,32 +61,36 @@ public static class Program
         if (string.IsNullOrWhiteSpace(root) || string.Equals(root, volumeRoot, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The workload root must not be a volume root.");
         if (string.Equals(volumeRoot, "C:", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The workload refuses the guest system volume C:. Use a marked disposable data VHDX.");
         if (root.Contains("Windows", StringComparison.OrdinalIgnoreCase) || root.Contains("Program Files", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The workload root is protected.");
-        Directory.CreateDirectory(root);
+        if (!Directory.Exists(root)) throw new InvalidDataException("The workload root must already exist on a marked TestLab volume.");
         var markerPath = Path.Combine(root, MarkerName);
-        TestLabMarker marker;
-        if (File.Exists(markerPath))
-        {
-            using var markerStream = File.OpenRead(markerPath);
-            marker = JsonSerializer.Deserialize<TestLabMarker>(markerStream) ?? throw new InvalidDataException("The data marker is invalid.");
-            if (!string.Equals(marker.Schema, "StorageChronicle.TestLabDataMarker.v1", StringComparison.Ordinal) || !string.Equals(marker.TestId, options.RunId, StringComparison.Ordinal)) throw new InvalidDataException("The data marker does not match this run.");
-        }
-        else
-        {
-            marker = new TestLabMarker("StorageChronicle.TestLabDataMarker.v1", options.RunId, options.Scenario, DateTimeOffset.UtcNow);
-            File.WriteAllText(markerPath, JsonSerializer.Serialize(marker, JsonOptions));
-        }
+        var marker = ReadAndValidateMarker(markerPath, options);
         var volumeMarkerPath = Path.Combine(root, VolumeMarkerName);
-        if (File.Exists(volumeMarkerPath))
-        {
-            using var volumeMarkerStream = File.OpenRead(volumeMarkerPath);
-            var volumeMarker = JsonSerializer.Deserialize<TestLabMarker>(volumeMarkerStream) ?? throw new InvalidDataException("The volume marker is invalid.");
-            if (!string.Equals(volumeMarker.Schema, "StorageChronicle.TestLabDataMarker.v1", StringComparison.Ordinal) || !string.Equals(volumeMarker.TestId, options.RunId, StringComparison.Ordinal)) throw new InvalidDataException("The volume marker does not match this run.");
-        }
-        else
-        {
-            File.WriteAllText(volumeMarkerPath, JsonSerializer.Serialize(marker, JsonOptions));
-        }
+        var volumeMarker = ReadAndValidateMarker(volumeMarkerPath, options);
+        if (!string.Equals(marker.Role, volumeMarker.Role, StringComparison.Ordinal) ||
+            !string.Equals(marker.VolumeLabel, volumeMarker.VolumeLabel, StringComparison.Ordinal) ||
+            !string.Equals(marker.FileSystem, volumeMarker.FileSystem, StringComparison.Ordinal)) throw new InvalidDataException("The two TestLab markers disagree about the volume role or format.");
+        var driveRoot = Path.GetPathRoot(root) ?? throw new InvalidDataException("The workload root has no volume root.");
+        var drive = new DriveInfo(driveRoot);
+        if (!drive.IsReady || !string.Equals(drive.VolumeLabel, marker.VolumeLabel, StringComparison.OrdinalIgnoreCase) || !string.Equals(drive.DriveFormat, marker.FileSystem, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("The mounted volume label or filesystem does not match the TestLab marker.");
         return root;
+    }
+
+    private static TestLabMarker ReadAndValidateMarker(string path, WorkloadOptions options)
+    {
+        if (!File.Exists(path)) throw new InvalidDataException($"The required TestLab marker is missing: {path}");
+        using var stream = File.OpenRead(path);
+        var marker = JsonSerializer.Deserialize<TestLabMarker>(stream) ?? throw new InvalidDataException($"The TestLab marker is invalid: {path}");
+        if (!string.Equals(marker.Schema, "StorageChronicle.TestLabDataMarker.v1", StringComparison.Ordinal) || !string.Equals(marker.TestId, options.RunId, StringComparison.Ordinal)) throw new InvalidDataException("The TestLab marker does not match this run.");
+        var expected = marker.Role switch
+        {
+            "Workload" => (Label: "SC_TEST_VOLUME", FileSystem: "NTFS"),
+            "Mft" => (Label: "SC_TEST_MFT_VOLUME", FileSystem: "NTFS"),
+            "NonNtfs" => (Label: "SC_TEST_NONNTFS_VOLUME", FileSystem: "exFAT"),
+            _ => throw new InvalidDataException($"The TestLab marker role is unsupported: {marker.Role}")
+        };
+        if (!string.Equals(marker.VolumeLabel, expected.Label, StringComparison.Ordinal) || !string.Equals(marker.FileSystem, expected.FileSystem, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("The TestLab marker label or filesystem is not an approved role value.");
+        if (options.Scenario == "mft" && !string.Equals(marker.Role, "Mft", StringComparison.Ordinal)) throw new InvalidDataException("The MFT scenario requires an SC_TEST_MFT_VOLUME marker.");
+        return marker;
     }
 
     private static void RunBasic(string root, int count, ICollection<OracleRecord> records, ref long sequence)
@@ -159,7 +163,7 @@ public static class Program
     }
 
     private sealed record WorkloadOptions(string Root, string OraclePath, string Scenario, string RunId, int Count);
-    private sealed record TestLabMarker(string Schema, string TestId, string Role, DateTimeOffset CreatedUtc);
+    private sealed record TestLabMarker(string Schema, string TestId, string Role, string VolumeLabel, string FileSystem, DateTimeOffset CreatedUtc);
     private sealed record OracleDocument(string Schema, string RunId, string Scenario, DateTimeOffset CompletedUtc, int RecordCount, IReadOnlyCollection<OracleRecord> Operations);
     private sealed record OracleRecord(long Sequence, string Operation, string RelativePath, string? OldRelativePath);
 }

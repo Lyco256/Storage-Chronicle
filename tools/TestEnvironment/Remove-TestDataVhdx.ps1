@@ -2,6 +2,8 @@
 param(
     [Parameter(Mandatory = $true)][ValidateSet('SC-Test-W11', 'SC-Test-W10')][string]$VmName,
     [Parameter(Mandatory = $true)][string]$VhdxPath,
+    [Parameter(Mandatory = $true)][string]$TestId,
+    [Parameter(Mandatory = $true)][ValidateSet('Workload', 'Mft', 'NonNtfs')][string]$Role,
     [string]$ConfigPath,
     [switch]$Apply
 )
@@ -17,6 +19,9 @@ try {
     $root = Assert-TestLabRoot -Root $config.Root
     $path = Assert-PathUnderRoot -Root $root -Path $VhdxPath
     if ([IO.Path]::GetExtension($path) -ine '.vhdx') { throw 'Only a .vhdx data path may be removed.' }
+    $safeTestId = $TestId -replace '[^A-Za-z0-9_.-]', '-'
+    $expectedPath = [IO.Path]::GetFullPath((Join-Path $root "data\$VmName\$safeTestId-$Role.vhdx"))
+    if (-not $path.Equals($expectedPath, [StringComparison]::OrdinalIgnoreCase)) { throw "The disposable VHDX path does not match the current TestId/Role marker contract: $path" }
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Data VHDX does not exist: $path" }
     if (-not $Apply) {
         $manifest.Status = 'READY_FOR_USER_APPLY'

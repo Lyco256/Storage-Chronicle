@@ -4,6 +4,7 @@ param(
     [string]$Configuration = 'Release',
     [string]$FixturePath,
     [string]$OutputPath,
+    [string]$LiveEvidencePath,
     [switch]$FixtureOnly
 )
 
@@ -17,6 +18,9 @@ New-Item -ItemType Directory -Force -Path $artifactDirectory | Out-Null
 if ([string]::IsNullOrWhiteSpace($FixturePath)) { $FixturePath = $defaultFixture }
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = Join-Path $artifactDirectory ('correlation-metrics-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.json')
+}
+if (-not [string]::IsNullOrWhiteSpace($LiveEvidencePath) -and $FixtureOnly) {
+    throw '-LiveEvidencePath and -FixtureOnly cannot be combined.'
 }
 $logPath = [IO.Path]::ChangeExtension($OutputPath, '.log')
 
@@ -66,6 +70,25 @@ finally {
 if ($exitCode -ne 0) {
     Write-Error "Correlation acceptance fixture failed. ExitCode=$exitCode. See $logPath"
     exit $exitCode
+}
+
+if (-not [string]::IsNullOrWhiteSpace($LiveEvidencePath)) {
+    if (-not (Test-Path -LiteralPath $LiveEvidencePath -PathType Leaf)) { Write-NotExecuted "Live correlation evidence was not found: $LiveEvidencePath" }
+    $live = Get-Content -Raw -Encoding UTF8 -LiteralPath $LiveEvidencePath | ConvertFrom-Json
+    if ([string]$live.Schema -ne 'StorageChronicle.AgentExplorerCorrelationEvidence.v1' -or
+        -not [bool]$live.AcceptanceEligible -or
+        [string]$live.LiveMachineMeasurement -ne 'PASSED' -or
+        $null -eq $live.PSObject.Properties['FalseExactCount'] -or
+        [int]$live.FalseExactCount -ne 0) {
+        Write-Error 'The supplied live correlation artifact is missing the required schema, eligibility, live measurement, or zero-false-Exact proof.'
+        exit 1
+    }
+    $live | Add-Member -NotePropertyName FixtureStatus -NotePropertyValue 'PASSED' -Force
+    $live | Add-Member -NotePropertyName Status -NotePropertyValue 'PASSED' -Force
+    $live | ConvertTo-Json -Depth 20 | Set-Content -Encoding UTF8 -LiteralPath $OutputPath
+    Write-Host "CORRELATION_METRICS live=PASSED evidence=$LiveEvidencePath" -ForegroundColor Green
+    Write-Host "Correlation report: $OutputPath" -ForegroundColor Cyan
+    exit 0
 }
 if (-not (Test-Path -LiteralPath $OutputPath -PathType Leaf)) { Write-NotExecuted "The acceptance test passed without producing its measurement report: $OutputPath" }
 

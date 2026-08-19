@@ -26,8 +26,14 @@ try {
     $config = Get-TestLabConfig -ConfigPath $ConfigPath
     $root = Assert-TestLabRoot -Root $config.Root
     $guests = if ($Target -eq 'Both') { @('Windows11', 'Windows10') } else { @($Target) }
-    if ($guests -contains 'Windows11') { Assert-ExistingIso -Path $config.Windows11Iso -Label 'Windows 11 ISO' }
-    if ($guests -contains 'Windows10') { Assert-ExistingIso -Path $config.Windows10Iso -Label 'Windows 10 22H2 ISO' }
+    if ($guests -contains 'Windows11') {
+        if ([string]::IsNullOrWhiteSpace([string]$config.Windows11Iso)) { throw 'Windows 11 ISO is required when the Windows11 target is selected.' }
+        Assert-ExistingIso -Path $config.Windows11Iso -Label 'Windows 11 ISO'
+    }
+    if ($guests -contains 'Windows10') {
+        if ([string]::IsNullOrWhiteSpace([string]$config.Windows10Iso)) { throw 'Windows 10 22H2 ISO is required when the Windows10 target is selected.' }
+        Assert-ExistingIso -Path $config.Windows10Iso -Label 'Windows 10 22H2 ISO'
+    }
 
     if (-not $Apply) {
         $manifest.Status = 'READY_FOR_USER_APPLY'

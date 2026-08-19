@@ -28,7 +28,7 @@ Parameters may be supplied directly or through process environment variables. Th
 
 `-Execute` is required to arm a run. VM mode requires a running Hyper-V VM, a Windows ISO, administrator rights, and a driver; local mode additionally requires `-AllowLocalIsolatedExecution` and a disposable host whose OS matches the requested target. The default output directory is `artifacts/installer/acceptance`.
 
-Each run writes one JSON manifest and one Markdown report named `installer-acceptance-<run-id>.*`. Driver logs and per-case result JSON files are written below the matching run directory. `-CaseTimeoutSeconds` bounds each driver invocation (1 through 7200 seconds; the default is 1800). A driver result is accepted as `PASSED` only when it names the exact case, declares the requested target and isolation, declares administrator execution, contains passing assertions, and references existing host-visible evidence files.
+Each run writes one JSON manifest and one Markdown report named `installer-acceptance-<run-id>.*`. The JSON includes `AcceptanceEligible=true` only when all eleven cases are `PASSED`; missing, diagnostic, or partial runs remain ineligible. Driver logs and per-case result JSON files are written below the matching run directory. `-CaseTimeoutSeconds` bounds each driver invocation (1 through 7200 seconds; the default is 1800). A driver result is accepted as `PASSED` only when it names the exact case, declares the requested target and isolation, declares administrator execution, contains passing assertions, and references existing host-visible evidence files.
 
 ## Dependencies
 

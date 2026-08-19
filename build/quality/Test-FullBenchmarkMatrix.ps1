@@ -4,7 +4,8 @@ param(
     [switch]$NoRestore,
     [switch]$IncludeMft,
     [switch]$PortableOnly,
-    [string]$ArtifactRoot
+    [string]$ArtifactRoot,
+    [string]$MftEvidencePath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,6 +21,58 @@ $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ', [Globalization.Cultu
 $runStartedUtc = [DateTimeOffset]::UtcNow
 $runRoot = Join-Path $ArtifactRoot ("full-matrix-" + $stamp)
 New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
+
+if ([string]::IsNullOrWhiteSpace($MftEvidencePath)) {
+    $MftEvidencePath = Join-Path (Join-Path $runRoot 'WindowsMft') 'mft-evidence.json'
+}
+$oldMftEvidencePath = $null
+
+function Assert-MftEvidence {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "The MFT correctness evidence was not produced: $Path"
+    }
+
+    $evidence = Get-Content -Raw -Encoding UTF8 -LiteralPath $Path | ConvertFrom-Json
+    if ([string]$evidence.Schema -ne 'StorageChronicle.MftBenchmarkEvidence.v1') {
+        throw "The MFT evidence schema is not supported: $Path"
+    }
+    if (-not [bool]$evidence.AcceptanceEligible) {
+        throw "The MFT evidence is present but not acceptance-eligible: $Path"
+    }
+
+    $requiredMethods = @(
+        'MftEnumerationImport10K',
+        'MftEnumerationImport100K',
+        'MftEnumerationImport1M',
+        'MftCandidateMetadataQueriesZero1M',
+        'MftCandidateMetadataQueriesSmall1M')
+    $runs = @($evidence.Runs)
+    foreach ($method in $requiredMethods) {
+        $matching = @($runs | Where-Object { [string]$_.Method -eq $method })
+        if ($matching.Count -ne 1) { throw "MFT evidence must contain exactly one run for $method; found $($matching.Count)." }
+        $run = $matching[0]
+        foreach ($field in @('DatasetEntryCount', 'EnumeratedEntryCount', 'CandidateCount', 'DetailedMetadataQueryCount', 'GeneratedCanonicalCount', 'DroppedEventCount', 'ElapsedMilliseconds', 'AllocatedBytes')) {
+            $property = $run.PSObject.Properties[$field]
+            if ($null -eq $property -or $null -eq $property.Value) { throw "MFT run $method is missing $field." }
+            if ([double]$property.Value -lt 0) { throw "MFT run $method contains a negative $field." }
+        }
+        if ([int64]$run.DroppedEventCount -ne 0) { throw "MFT run $method reports dropped events." }
+        if ([int64]$run.EnumeratedEntryCount -lt [int64]$run.DatasetEntryCount) { throw "MFT run $method enumerated fewer entries than its dataset contract." }
+        if ([string]$method -eq 'MftCandidateMetadataQueriesZero1M' -and [int64]$run.DetailedMetadataQueryCount -ne 0) { throw 'The zero-candidate MFT run performed detailed metadata queries.' }
+        if ([string]$method -eq 'MftCandidateMetadataQueriesSmall1M' -and ([int64]$run.CandidateCount -lt 1 -or [int64]$run.DetailedMetadataQueryCount -gt [int64]$run.CandidateCount)) { throw 'The small-candidate MFT run violated the candidate-only query bound.' }
+    }
+
+    $oneMillion = @($runs | Where-Object { [string]$_.Method -eq 'MftEnumerationImport1M' })[0]
+    if ([int64]$oneMillion.DatasetEntryCount -lt 1000000 -or [int64]$oneMillion.EnumeratedEntryCount -lt 1000000) { throw 'The MFT 1M dataset did not meet the one-million-entry contract.' }
+
+    foreach ($field in @('OperatingSystem', 'OsBuild', 'VmCpuCount', 'VmMemoryMiB', 'VhdxType', 'VhdxSizeGiB')) {
+        $property = $evidence.Environment.PSObject.Properties[$field]
+        if ($null -eq $property -or [string]::IsNullOrWhiteSpace([string]$property.Value)) { throw "MFT evidence environment is missing $field." }
+    }
+    return $evidence
+}
 
 function Write-NotExecuted([string]$Reason) {
     $manifest = [ordered]@{
@@ -37,6 +90,7 @@ function Write-NotExecuted([string]$Reason) {
             DotnetVersion = (& dotnet --version 2>$null)
             MftVolumeConfigured = -not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_VOLUME'))
         }
+        MftEvidencePath = $MftEvidencePath
         Suites = @()
         Failure = $Reason
         EvidenceRoot = $runRoot
@@ -78,6 +132,9 @@ if ($IncludeMft) {
     if ($mftVolume -match '(?i)(^|[\\:])C:') {
         Write-NotExecuted 'The full matrix refuses C: and host/system MFT device paths.'
     }
+
+    $oldMftEvidencePath = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_EVIDENCE_PATH', 'Process')
+    [Environment]::SetEnvironmentVariable('STORAGE_CHRONICLE_MFT_EVIDENCE_PATH', [IO.Path]::GetFullPath($MftEvidencePath), 'Process')
 }
 
 $suites = @(
@@ -123,6 +180,7 @@ if ($IncludeMft) {
 
 $suiteResults = [System.Collections.Generic.List[object]]::new()
 $failure = $null
+$mftEvidence = $null
 
 try {
     foreach ($suite in $suites) {
@@ -190,6 +248,9 @@ try {
 
         $suiteResults.Add([pscustomobject]$suiteResult)
     }
+    if ($IncludeMft) {
+        $mftEvidence = Assert-MftEvidence -Path $MftEvidencePath
+    }
 }
 catch {
     $failure = $_.Exception.Message
@@ -213,6 +274,8 @@ finally {
             MftVolumeLabel = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_VOLUME_LABEL')
             MftMarkerPath = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_MARKER_PATH')
         }
+        MftEvidencePath = $MftEvidencePath
+        MftEvidence = if ($null -ne $mftEvidence) { $mftEvidence } else { $null }
         Suites = @($suiteResults)
         Failure = $failure
         EvidenceRoot = $runRoot
@@ -220,6 +283,14 @@ finally {
     $manifestPath = Join-Path $runRoot 'full-matrix-manifest.json'
     $manifest | ConvertTo-Json -Depth 12 | Set-Content -Encoding UTF8 -LiteralPath $manifestPath
     Write-Host "Benchmark matrix evidence: $manifestPath"
+
+    if ($IncludeMft) {
+        if ($null -ne $oldMftEvidencePath) {
+            [Environment]::SetEnvironmentVariable('STORAGE_CHRONICLE_MFT_EVIDENCE_PATH', $oldMftEvidencePath, 'Process')
+        } else {
+            [Environment]::SetEnvironmentVariable('STORAGE_CHRONICLE_MFT_EVIDENCE_PATH', $null, 'Process')
+        }
+    }
 }
 
 if ($null -ne $failure) {

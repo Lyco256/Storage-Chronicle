@@ -90,6 +90,7 @@ $script:Manifest = [ordered]@{
     StartedUtc = [DateTime]::UtcNow.ToString('O')
     CompletedUtc = $null
     Status = 'RUNNING'
+    AcceptanceEligible = $false
     ExitCode = $null
     TargetOs = $TargetOs
     ExecutionMode = $ExecutionMode
@@ -676,6 +677,7 @@ try {
         NotExecuted = @($script:Manifest.Tests | Where-Object { $_.Status -eq 'NOT_EXECUTED' }).Count
     }
     $script:Manifest.Summary = $summary
+    $script:Manifest.AcceptanceEligible = $script:Manifest.Status -eq 'PASSED' -and $summary.Total -eq $summary.Passed -and $summary.Failed -eq 0 -and $summary.NotExecuted -eq 0
     $json = $script:Manifest | ConvertTo-Json -Depth 20
     Set-Content -LiteralPath $manifestPath -Value $json -Encoding UTF8
     Write-MarkdownArtifact

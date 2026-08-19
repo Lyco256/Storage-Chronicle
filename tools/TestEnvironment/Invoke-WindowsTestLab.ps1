@@ -60,6 +60,30 @@ function Get-GuestDataDefinition {
     }
 }
 
+function Assert-GuestDataMarker {
+    param([string]$VmName, [string]$Root)
+    $definition = Get-GuestDataDefinition
+    $rootLiteral = Quote-GuestLiteral $Root
+    $runIdLiteral = Quote-GuestLiteral $RunId
+    $roleLiteral = Quote-GuestLiteral $DataRole
+    $labelLiteral = Quote-GuestLiteral ([string]$definition.Label)
+    $fileSystemLiteral = Quote-GuestLiteral ([string]$definition.FileSystem)
+    $command = @"
+`$root = $rootLiteral
+`$expectedTestId = $runIdLiteral
+`$expectedRole = $roleLiteral
+`$expectedLabel = $labelLiteral
+`$expectedFileSystem = $fileSystemLiteral
+foreach (`$name in @('.storage-chronicle-testlab-marker.json', 'StorageChronicleTestVolume.json')) {
+    `$path = Join-Path `$root `$name
+    if (-not (Test-Path -LiteralPath `$path -PathType Leaf)) { throw "Required TestLab marker is missing: `$path" }
+    `$marker = Get-Content -Raw -Encoding UTF8 -LiteralPath `$path | ConvertFrom-Json
+    if ([string]`$marker.Schema -ne 'StorageChronicle.TestLabDataMarker.v1' -or [string]`$marker.TestId -ne `$expectedTestId -or [string]`$marker.Role -ne `$expectedRole -or [string]`$marker.VolumeLabel -ne `$expectedLabel -or [string]`$marker.FileSystem -ne `$expectedFileSystem) { throw "TestLab marker validation failed: `$path" }
+}
+"@
+    Invoke-GuestCommand -VmName $VmName -Command $command | Out-File -LiteralPath (Join-Path $artifactDirectory "$VmName-marker-verify.log") -Encoding UTF8
+}
+
 function Initialize-GuestDataVolume {
     param([string]$VmName, [string]$Root)
     $definition = Get-GuestDataDefinition
@@ -93,8 +117,14 @@ try {
     $config = Get-TestLabConfig -ConfigPath $ConfigPath
     $root = Assert-TestLabRoot -Root $config.Root
     $guests = if ($Target -eq 'Both') { @('Windows11', 'Windows10') } else { @($Target) }
-    if ($guests -contains 'Windows11') { Assert-ExistingIso -Path $config.Windows11Iso -Label 'Windows 11 ISO' }
-    if ($guests -contains 'Windows10') { Assert-ExistingIso -Path $config.Windows10Iso -Label 'Windows 10 22H2 ISO' }
+    if ($guests -contains 'Windows11') {
+        if ([string]::IsNullOrWhiteSpace([string]$config.Windows11Iso)) { throw 'Windows 11 ISO is required when the Windows11 target is selected.' }
+        Assert-ExistingIso -Path $config.Windows11Iso -Label 'Windows 11 ISO'
+    }
+    if ($guests -contains 'Windows10') {
+        if ([string]::IsNullOrWhiteSpace([string]$config.Windows10Iso)) { throw 'Windows 10 22H2 ISO is required when the Windows10 target is selected.' }
+        Assert-ExistingIso -Path $config.Windows10Iso -Label 'Windows 10 22H2 ISO'
+    }
     $workloadSource = [IO.Path]::GetFullPath($GuestWorkloadExecutable)
     if (-not (Test-Path -LiteralPath $workloadSource -PathType Leaf)) { throw "Guest workload executable does not exist: $GuestWorkloadExecutable" }
 
@@ -124,6 +154,7 @@ try {
         $oracleGuestPath = Join-Path $GuestDataRoot "$RunId-oracle.json"
         $oracleHostPath = Join-Path $guestArtifactDirectory 'workload-oracle.json'
         $guestCommand = "& $(Quote-GuestLiteral $guestWorkloadDestination) --root $(Quote-GuestLiteral $GuestDataRoot) --oracle $(Quote-GuestLiteral $oracleGuestPath) --scenario $(Quote-GuestLiteral $definitionData.Scenario) --count $WorkloadCount --run-id $(Quote-GuestLiteral $RunId)"
+        $markerVerified = $false
         try {
             & (Join-Path $PSScriptRoot 'Reset-TestVm.ps1') -Name $definition.Name -CheckpointName 'SC-CLEAN-BASELINE' -ConfigPath $ConfigPath -Apply | Out-File -LiteralPath (Join-Path $guestArtifactDirectory 'reset.log') -Encoding UTF8
             if ($LASTEXITCODE -ne 0) { throw "Baseline reset failed for $($definition.Name)." }
@@ -138,6 +169,8 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "Workload transfer failed for $($definition.Name)." }
             Initialize-GuestDataVolume -VmName $definition.Name -Root $GuestDataRoot
             Invoke-GuestCommand -VmName $definition.Name -Command $guestCommand | Out-File -LiteralPath (Join-Path $guestArtifactDirectory 'workload.log') -Encoding UTF8
+            Assert-GuestDataMarker -VmName $definition.Name -Root $GuestDataRoot
+            $markerVerified = $true
             & (Join-Path $PSScriptRoot 'Copy-TestResultsFromVm.ps1') -VmName $definition.Name -SourcePath $oracleGuestPath -DestinationPath $oracleHostPath -Credential $Credential -ConfigPath $ConfigPath | Out-File -LiteralPath (Join-Path $guestArtifactDirectory 'copy-oracle.log') -Encoding UTF8
             if ($LASTEXITCODE -ne 0) { throw "Oracle retrieval failed for $($definition.Name)." }
             Add-Stage $definition.Name 'PASSED' 'Real guest volume formatting, dual marker creation, workload execution, and oracle retrieval completed.' $oracleHostPath
@@ -152,12 +185,13 @@ try {
             }
             $active = @($activeVhdx | Where-Object VmName -eq $definition.Name | Select-Object -First 1)
             if ($active.Count -eq 1) {
-                try {
-                    & (Join-Path $PSScriptRoot 'Remove-TestDataVhdx.ps1') -VmName $definition.Name -VhdxPath $active[0].Path -ConfigPath $ConfigPath -Apply | Out-File -LiteralPath (Join-Path $guestArtifactDirectory 'remove-vhdx.log') -Encoding UTF8
+                if (-not $markerVerified) {
+                    [void]$cleanupFailures.Add("$($definition.Name) data VHDX cleanup refused because the guest TestLab marker was not verified for TestId=$RunId and Role=$DataRole.")
+                } else { try {
+                    & (Join-Path $PSScriptRoot 'Remove-TestDataVhdx.ps1') -VmName $definition.Name -VhdxPath $active[0].Path -TestId $RunId -Role $DataRole -ConfigPath $ConfigPath -Apply | Out-File -LiteralPath (Join-Path $guestArtifactDirectory 'remove-vhdx.log') -Encoding UTF8
                     if ($LASTEXITCODE -ne 0) { throw "Data VHDX removal returned exit code $LASTEXITCODE." }
                     [void]$activeVhdx.Remove($active[0])
-                }
-                catch { [void]$cleanupFailures.Add("$($definition.Name) data VHDX cleanup: $($_.Exception.Message)") }
+                } catch { [void]$cleanupFailures.Add("$($definition.Name) data VHDX cleanup: $($_.Exception.Message)") } }
             }
         }
     }

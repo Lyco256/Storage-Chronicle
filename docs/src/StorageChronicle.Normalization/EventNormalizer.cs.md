@@ -2,6 +2,10 @@
 
 ## Role
 
+This file is the single source-to-canonical operation and quality mapping for Storage Chronicle. It preserves explicit continuity failures before applying the reconciliation-origin mapping, so a failed or interrupted scan remains an `UnverifiedGap` instead of being displayed as a discovered reconciliation fact.
+
+## Role
+
 `EventNormalizer` is the platform-neutral boundary between `SourceEvent` and `CanonicalEvent`. It references only Domain contracts and the event-normalizer port; it does not access Windows APIs, storage, UI, paths on disk, file contents, or content hashes.
 
 ## Public types
