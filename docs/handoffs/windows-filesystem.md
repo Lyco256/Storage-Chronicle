@@ -8,7 +8,7 @@ Implemented `Requirements/08_AGENT_WINDOWS_FILESYSTEM.md` within the assigned pa
 - Volume GUID enumeration, no-drive-letter volume retention, filesystem/drive/read-only/readability/USN capability mapping, and conservative ReFS capability detection.
 - Event-driven Configuration Manager external-media arrival/removal notifications.
 - P/Invoke-isolated volume, metadata, directory-handle, ReadDirectoryChangesW, and device-notification boundaries.
-- Non-recursive initial metadata enumeration, reparse/junction/symbolic-link self-recording, access-denied `ExistenceOnly` fallback, and pre-event exclusions.
+- Non-recursive initial metadata enumeration, reparse/junction/symbolic-link self-recording, access-denied `ExistenceOnly` fallback, pre-event exclusions, and `SnapshotBatchSize`-bounded streaming within a large directory.
 - ReadDirectoryChangesW parser/monitor with rename pairing, malformed/buffer-overflow/handle-loss/removal continuity gaps, and no periodic full scan.
 - Bounded initial-scan notification buffer and a collector that isolates volume failures/cancellation.
 - Explicit-confirmation-only metadata/path reconciliation with user-declined gap reporting and no invented process/exact timestamps.
@@ -26,7 +26,7 @@ dotnet test tests/StorageChronicle.Platform.Windows.FileSystem.Tests/StorageChro
 Results:
 
 - Project build: passed, 0 warnings, 0 errors.
-- Tests: 16 passed, 0 failed, 0 skipped.
+- Tests: 17 passed, 0 failed, 0 skipped.
 
 The tests cover synthetic notification parsing and malformed buffers, buffer-overflow continuity gaps, drive-letterless volume GUIDs, ReFS fallback capability, event-driven media callbacks, exclusion boundaries, reparse non-recursion, access-denied metadata quality, user-declined/confirmed reconciliation, and cancellation.
 

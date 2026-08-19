@@ -63,6 +63,53 @@ public sealed class SnapshotTests
     }
 
     [Fact]
+    public async Task InitialSnapshotYieldsConfiguredBatchSizeDuringOneDirectory()
+    {
+        var root = Directory.CreateTempSubdirectory("storage-chronicle-snapshot-batch");
+        try
+        {
+            for (var index = 0; index < 5; index++) using (File.Create(Path.Combine(root.FullName, $"entry-{index}.txt"))) { }
+            using var cancellation = new CancellationTokenSource();
+            var calls = 0;
+            var volume = new VolumeDescriptor(VolumeId.Create("V"), "exFAT", [root.FullName], false, true, false, false, true);
+            var native = new FakeFileNative(path =>
+            {
+                var value = new NativeFileMetadataRecord(
+                    FileId.Create("id:" + path),
+                    FileId.Create("root"),
+                    Path.GetFileName(path),
+                    string.Equals(path, root.FullName, StringComparison.OrdinalIgnoreCase) ? FileKind.Directory : FileKind.File,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    FileAttributes.Normal,
+                    null,
+                    true,
+                    false);
+                if (Interlocked.Increment(ref calls) == 2) cancellation.Cancel();
+                return value;
+            });
+            var reader = new WindowsVolumeSnapshotReader(native, new WindowsExclusionPolicy(), new WindowsFileSystemOptions { SnapshotBatchSize = 2 });
+            var enumerator = reader.ReadInitialSnapshotAsync(volume, cancellation.Token).GetAsyncEnumerator(cancellation.Token);
+
+            Assert.True(await enumerator.MoveNextAsync());
+            Assert.Equal(2, calls);
+            Assert.True(await enumerator.MoveNextAsync());
+            #pragma warning disable xUnit1051
+            await Assert.ThrowsAsync<OperationCanceledException>(async () => await enumerator.MoveNextAsync());
+            #pragma warning restore xUnit1051
+            await enumerator.DisposeAsync();
+        }
+        finally
+        {
+            root.Delete(true);
+        }
+    }
+
+    [Fact]
     public async Task CancellationStopsSnapshotWithoutPartialRecoveryEvent()
     {
         var root = Directory.CreateTempSubdirectory("storage-chronicle-cancel");

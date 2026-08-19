@@ -1,6 +1,6 @@
 # WindowsVolumeSnapshotReader
 
-Performs directory-unit initial enumeration with bounded result batches. It records link/junction/reparse objects themselves and does not push reparse directories onto the traversal stack. Access-denied metadata falls back to `ExistenceOnly`; directory disappearance and enumeration I/O failures become gap events. Exclusions are evaluated before metadata acquisition. The production overload constructs the Windows metadata boundary used by the Agent's NTFS initial-state path without reading file contents. Tests cover reparse non-recursion, access fallback, cancellation, FAT/exFAT-style quality, and no content access.
+Performs directory-unit initial enumeration with bounded result batches that are yielded while a directory is being enumerated, rather than retaining the whole directory in memory. It records link/junction/reparse objects themselves and does not push reparse directories onto the traversal stack. Access-denied metadata falls back to `ExistenceOnly`; directory disappearance and enumeration I/O failures become gap events. Exclusions are evaluated before metadata acquisition. The production overload constructs the Windows metadata boundary used by the Agent's NTFS initial-state path without reading file contents. Tests cover reparse non-recursion, access fallback, cancellation, FAT/exFAT-style quality, bounded batches, and no content access.
 
 ## Role
 

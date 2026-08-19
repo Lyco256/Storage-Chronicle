@@ -48,53 +48,119 @@ public sealed class WindowsVolumeSnapshotReader : IVolumeSnapshotReader
             var (directoryPath, parentFileId) = pendingDirectories.Pop();
             if (exclusionPolicy.ShouldExclude(directoryPath)) continue;
 
-            var batch = ReadDirectoryBatch(volume, directoryPath, parentFileId, sequence, pendingDirectories, cancellationToken);
-            sequence = batch.NextSequence;
-            foreach (var sourceEvent in batch.Events)
+            await foreach (var batch in ReadDirectoryBatches(volume, directoryPath, parentFileId, sequence, pendingDirectories, cancellationToken).ConfigureAwait(false))
             {
-                yield return sourceEvent;
+                sequence = batch.NextSequence;
+                foreach (var sourceEvent in batch.Events) yield return sourceEvent;
             }
         }
     }
 
-    private SnapshotDirectoryBatch ReadDirectoryBatch(VolumeDescriptor volume, string directoryPath, FileId? parentFileId, long sequence, Stack<(string Path, FileId? ParentFileId)> pendingDirectories, CancellationToken cancellationToken)
+    private async IAsyncEnumerable<SnapshotDirectoryBatch> ReadDirectoryBatches(
+        VolumeDescriptor volume,
+        string directoryPath,
+        FileId? parentFileId,
+        long sequence,
+        Stack<(string Path, FileId? ParentFileId)> pendingDirectories,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var entries = new List<SourceEvent>(options.SnapshotBatchSize);
-        try
+        var directoryEnumerator = TryCreateDirectoryEnumerator(directoryPath, out var enumerationError);
+        var directory = ReadEntry(volume, directoryPath, parentFileId, isRoot: true);
+        entries.Add(WindowsSourceEventFactory.Snapshot(volume, directory, sequence++));
+        if (entries.Count == options.SnapshotBatchSize)
         {
-            var directory = ReadEntry(volume, directoryPath, parentFileId, isRoot: true);
-            entries.Add(WindowsSourceEventFactory.Snapshot(volume, directory, sequence++));
-            foreach (var entryPath in Directory.EnumerateFileSystemEntries(directoryPath, "*", new EnumerationOptions { RecurseSubdirectories = false, IgnoreInaccessible = false, ReturnSpecialDirectories = false, AttributesToSkip = 0 }))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (exclusionPolicy.ShouldExclude(entryPath)) continue;
-                var entry = ReadEntry(volume, entryPath, directory.FileId, isRoot: false);
-                entries.Add(WindowsSourceEventFactory.Snapshot(volume, entry, sequence++));
-                if (entry.Kind == FileKind.Directory && !WindowsExclusionPolicy.IsReparsePoint(entry.Attributes))
-                {
-                    pendingDirectories.Push((entryPath, entry.FileId));
-                }
+            yield return new SnapshotDirectoryBatch(entries, sequence);
+            entries = new List<SourceEvent>(options.SnapshotBatchSize);
+        }
 
-                if (entries.Count == options.SnapshotBatchSize)
+        if (directoryEnumerator is not null)
+        {
+            using (directoryEnumerator)
+            {
+                while (enumerationError is null && TryMoveNext(directoryEnumerator, out var entryPath, out enumerationError))
                 {
-                    // The list remains a directory-local batch; subsequent entries are included in the same ordered result.
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (entryPath is null || exclusionPolicy.ShouldExclude(entryPath)) continue;
+                    var entry = ReadEntry(volume, entryPath, directory.FileId, isRoot: false);
+                    entries.Add(WindowsSourceEventFactory.Snapshot(volume, entry, sequence++));
+                    if (entry.Kind == FileKind.Directory && !WindowsExclusionPolicy.IsReparsePoint(entry.Attributes))
+                    {
+                        pendingDirectories.Push((entryPath, entry.FileId));
+                    }
+
+                    if (entries.Count == options.SnapshotBatchSize)
+                    {
+                        yield return new SnapshotDirectoryBatch(entries, sequence);
+                        entries = new List<SourceEvent>(options.SnapshotBatchSize);
+                    }
                 }
             }
         }
+
+        if (enumerationError is not null)
+        {
+            entries.Add(WindowsSourceEventFactory.Gap(volume.Id, enumerationError, sequence++));
+        }
+
+        if (entries.Count > 0) yield return new SnapshotDirectoryBatch(entries, sequence);
+    }
+
+    private static IEnumerator<string>? TryCreateDirectoryEnumerator(string directoryPath, out string? error)
+    {
+        try
+        {
+            error = null;
+            return Directory.EnumerateFileSystemEntries(directoryPath, "*", new EnumerationOptions { RecurseSubdirectories = false, IgnoreInaccessible = false, ReturnSpecialDirectories = false, AttributesToSkip = 0 }).GetEnumerator();
+        }
         catch (UnauthorizedAccessException)
         {
-            entries.Add(WindowsSourceEventFactory.Gap(volume.Id, $"Access denied while enumerating {directoryPath}", sequence++));
+            error = $"Access denied while enumerating {directoryPath}";
         }
         catch (DirectoryNotFoundException)
         {
-            entries.Add(WindowsSourceEventFactory.Gap(volume.Id, $"Directory disappeared while enumerating {directoryPath}", sequence++));
+            error = $"Directory disappeared while enumerating {directoryPath}";
         }
         catch (IOException)
         {
-            entries.Add(WindowsSourceEventFactory.Gap(volume.Id, $"I/O failure while enumerating {directoryPath}", sequence++));
+            error = $"I/O failure while enumerating {directoryPath}";
         }
 
-        return new SnapshotDirectoryBatch(entries, sequence);
+        return null;
+    }
+
+    private static bool TryMoveNext(IEnumerator<string> directoryEnumerator, out string? path, out string? error)
+    {
+        try
+        {
+            if (!directoryEnumerator.MoveNext())
+            {
+                path = null;
+                error = null;
+                return false;
+            }
+
+            path = directoryEnumerator.Current;
+            error = null;
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            path = null;
+            error = "Access denied while enumerating a directory.";
+        }
+        catch (DirectoryNotFoundException)
+        {
+            path = null;
+            error = "A directory disappeared while enumerating a directory.";
+        }
+        catch (IOException)
+        {
+            path = null;
+            error = "I/O failure while enumerating a directory.";
+        }
+
+        return false;
     }
 
     private NativeSnapshotEntry ReadEntry(VolumeDescriptor volume, string path, FileId? parentFileId, bool isRoot)
