@@ -49,12 +49,14 @@
     <Project Path="tests/StorageChronicle.DocMirrorValidator.Tests/StorageChronicle.DocMirrorValidator.Tests.csproj" />
     <Project Path="tests/StorageChronicle.Platform.Windows.Integration.Tests/StorageChronicle.Platform.Windows.Integration.Tests.csproj" />
     <Project Path="tests/StorageChronicle.RealIoOracleValidator.Tests/StorageChronicle.RealIoOracleValidator.Tests.csproj" />
+    <Project Path="tests/StorageChronicle.LiveCorrelationValidator.Tests/StorageChronicle.LiveCorrelationValidator.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/StorageChronicle.DocMirrorValidator/StorageChronicle.DocMirrorValidator.csproj" />
     <Project Path="tools/StorageChronicle.LogInspector/StorageChronicle.LogInspector.csproj" />
     <Project Path="tools/StorageChronicle.FileMutationWorkload/StorageChronicle.FileMutationWorkload.csproj" />
     <Project Path="tools/StorageChronicle.RealIoOracleValidator/StorageChronicle.RealIoOracleValidator.csproj" />
+    <Project Path="tools/StorageChronicle.LiveCorrelationValidator/StorageChronicle.LiveCorrelationValidator.csproj" />
     <Project Path="tools/StorageChronicle.TestDataGenerator/StorageChronicle.TestDataGenerator.csproj" />
   </Folder>
 </Solution>

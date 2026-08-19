@@ -46,6 +46,9 @@ public interface IWindowsFileMetadataNative
     /// <summary>Reads identity and standard metadata for an entry.</summary>
     NativeFileMetadataRecord ReadMetadata(string path, string? parentPath = null);
 
+    /// <summary>Opens a metadata-only handle for a file or directory.</summary>
+    SafeFileHandle OpenMetadata(string path, bool directory);
+
     /// <summary>Attempts to open a directory for change monitoring.</summary>
     SafeFileHandle OpenDirectory(string path);
 }

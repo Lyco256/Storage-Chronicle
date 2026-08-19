@@ -332,6 +332,78 @@ public sealed class ConfirmedReconciliationRunnerTests
         }
     }
 
+    [Fact]
+    public async Task MissingNtfsStartBoundaryIsFailedBeforeMftEnumeration()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.ReconciliationHistory", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var volume = new VolumeDescriptor(VolumeId.Create("pre-scan-boundary-volume"), "NTFS", [root], false, false, false, true, true);
+            var api = new PreScanBoundaryFailureNtfsApi();
+            await using var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(root) { FlushInterval = TimeSpan.FromMinutes(1) });
+            var runner = new ConfirmedReconciliationRunner(new FakeVolumes(volume), api, new WindowsVolumeSnapshotReader(new FakeMetadataNative()), new WindowsFileMetadataReader(new FakeMetadataNative()), storage, new EventNormalizer(), new AgentHealthState());
+
+            var summary = await runner.ExecuteAsync(new PendingReconciliationRequest("pre-scan-boundary-gap", volume.Id, "missing start boundary", 1, DateTimeOffset.UtcNow.AddMinutes(-1), FileSystem: "NTFS"));
+            var events = await storage.ReadCanonicalPageAsync(0, 512);
+
+            Assert.False(summary.Completed);
+            Assert.Equal("Failed", summary.Status);
+            Assert.Equal(0, api.EnumerationCount);
+            Assert.Contains(events, value => value.Operation == CanonicalOperation.UnverifiedGap && value.Quality == EventQuality.UnverifiedGap);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LiveEventCoveredByNtfsCompletionBoundaryIsClassifiedAsDeduplicated()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.ReconciliationHistory", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var filePath = Path.Combine(root, "stable.txt");
+        await File.WriteAllTextAsync(filePath, "stable");
+        try
+        {
+            var volume = new VolumeDescriptor(VolumeId.Create("live-boundary-volume"), "NTFS", [root], false, false, false, true, true);
+            var fileId = FileId.Create("0001000000000001");
+            var parentId = FileId.Create("0000000000000005");
+            var metadata = new FileMetadata(volume.Id, fileId, parentId, "stable.txt", FileKind.File, null, null, null, null, null, null, FileAttributes.Normal, null, null, EventQuality.Exact, true, false);
+            var seed = new SourceEvent(EventId.New(), EventSchemaVersion.Current, EventOrigin.InitialSnapshot, volume.Id, fileId, parentId, "stable.txt", null, CanonicalOperation.Create,
+                metadata, new EventTime(DateTimeOffset.UtcNow, TimeSpan.Zero, null, DateTimeOffset.UtcNow, new SourceSequence(7), new MountSequence(7)), EventQuality.Exact, null, ProcessAttributionQuality.Unknown, null, null, ImmutableDictionary<string, string>.Empty);
+            var live = seed with
+            {
+                EventId = EventId.New(),
+                Origin = EventOrigin.LiveUsn,
+                Hint = CanonicalOperation.DataWrite,
+                Time = seed.Time with { SourceSequence = new SourceSequence(50), MountSequence = new MountSequence(50), RecordedUtc = DateTimeOffset.UtcNow }
+            };
+            var buffer = new ReconciliationLiveEventBuffer();
+            await using var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(root) { FlushInterval = TimeSpan.FromMinutes(1) });
+            var normalizer = new EventNormalizer();
+            var canonical = normalizer.Normalize(seed)!;
+            await storage.AppendSourceAsync(seed);
+            await storage.AppendCanonicalAsync(canonical);
+            await storage.ApplyAsync(canonical);
+
+            var runner = new ConfirmedReconciliationRunner(new FakeVolumes(volume), new StableNtfsApi(() => buffer.Observe(live), 100), new WindowsVolumeSnapshotReader(new FakeMetadataNative()), new WindowsFileMetadataReader(new FakeMetadataNative()), storage, normalizer, new AgentHealthState(), buffer);
+            var summary = await runner.ExecuteAsync(new PendingReconciliationRequest("live-boundary-gap", volume.Id, "live overlap", 7, DateTimeOffset.UtcNow.AddMinutes(-1), FileSystem: "NTFS"));
+
+            Assert.True(summary.Completed, summary.FailureReason ?? summary.Status);
+            Assert.Equal(1, summary.LiveEventCount);
+            Assert.Equal(1, summary.LiveEventsDeduplicated);
+            Assert.Equal(0, summary.LiveEventsAccepted);
+            Assert.NotNull(summary.StartJournalBoundary);
+            Assert.NotNull(summary.CompletionJournalBoundary);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static SourceEvent Source(VolumeId volume, NativeFileMetadataRecord metadata, CanonicalOperation operation, long sequence, EventOrigin origin) =>
         new(EventId.New(), EventSchemaVersion.Current, origin, volume, metadata.FileId, metadata.ParentFileId, metadata.Name, null, operation,
             new FileMetadata(volume, metadata.FileId, metadata.ParentFileId, metadata.Name, metadata.Kind, metadata.LogicalSize, metadata.AllocatedSize, metadata.CreatedUtc, metadata.LastAccessUtc, metadata.LastWriteUtc, metadata.FileSystemChangeUtc, metadata.Attributes, metadata.ReparsePointKind, null, EventQuality.Exact, true, false),
@@ -357,6 +429,31 @@ public sealed class ConfirmedReconciliationRunnerTests
         public NtfsApiCallResult QueryUsnJournal(SafeFileHandle volumeHandle, out UsnJournalData? data) { data = null; throw new PlatformNotSupportedException(); }
         public NtfsApiCallResult ReadUsnJournal(SafeFileHandle volumeHandle, ReadUsnJournalRequest request, byte[] outputBuffer, out int bytesReturned) { bytesReturned = 0; throw new PlatformNotSupportedException(); }
         public NtfsApiCallResult EnumerateUsnData(SafeFileHandle volumeHandle, EnumUsnDataRequest request, byte[] outputBuffer, out int bytesReturned) { bytesReturned = 0; throw new PlatformNotSupportedException(); }
+    }
+
+    private sealed class PreScanBoundaryFailureNtfsApi : StorageChronicle.Platform.Windows.Ntfs.INtfsApi
+    {
+        public int EnumerationCount { get; private set; }
+
+        public SafeFileHandle OpenVolume(string devicePath) => new(new nint(1), ownsHandle: false);
+
+        public NtfsApiCallResult QueryUsnJournal(SafeFileHandle volumeHandle, out UsnJournalData? data)
+        {
+            data = null;
+            return new NtfsApiCallResult(NtfsApiStatus.AccessDenied, 0, 5);
+        }
+
+        public NtfsApiCallResult ReadUsnJournal(SafeFileHandle volumeHandle, ReadUsnJournalRequest request, byte[] outputBuffer, out int bytesReturned)
+        {
+            bytesReturned = 0;
+            return new NtfsApiCallResult(NtfsApiStatus.AccessDenied, 0, 5);
+        }
+
+        public NtfsApiCallResult EnumerateUsnData(SafeFileHandle volumeHandle, EnumUsnDataRequest request, byte[] outputBuffer, out int bytesReturned)
+        {
+            EnumerationCount++;
+            throw new InvalidOperationException("MFT enumeration must not start without a journal boundary.");
+        }
     }
 
     private sealed class PostScanBoundaryFailureNtfsApi : StorageChronicle.Platform.Windows.Ntfs.INtfsApi
@@ -419,12 +516,20 @@ public sealed class ConfirmedReconciliationRunnerTests
     private sealed class StableNtfsApi : StorageChronicle.Platform.Windows.Ntfs.INtfsApi
     {
         private readonly byte[] enumBuffer = CreateEnumBuffer();
+        private readonly Action? onEnumeration;
+        private readonly long nextUsn;
+
+        public StableNtfsApi(Action? onEnumeration = null, long nextUsn = 7)
+        {
+            this.onEnumeration = onEnumeration;
+            this.nextUsn = nextUsn;
+        }
 
         public SafeFileHandle OpenVolume(string devicePath) => new(new nint(1), ownsHandle: false);
 
         public NtfsApiCallResult QueryUsnJournal(SafeFileHandle volumeHandle, out UsnJournalData? data)
         {
-            data = new UsnJournalData(1, 1, 7, 1, 100, 4096, 4096, 2, 3);
+            data = new UsnJournalData(1, 1, nextUsn, 1, 100, 4096, 4096, 2, 3);
             return new NtfsApiCallResult(NtfsApiStatus.Success, 56, 0);
         }
 
@@ -436,6 +541,7 @@ public sealed class ConfirmedReconciliationRunnerTests
 
         public NtfsApiCallResult EnumerateUsnData(SafeFileHandle volumeHandle, EnumUsnDataRequest request, byte[] outputBuffer, out int bytesReturned)
         {
+            onEnumeration?.Invoke();
             enumBuffer.CopyTo(outputBuffer, 0);
             bytesReturned = enumBuffer.Length;
             return new NtfsApiCallResult(NtfsApiStatus.Success, bytesReturned, 0);
@@ -482,6 +588,8 @@ public sealed class ConfirmedReconciliationRunnerTests
             true,
             true);
 
+        public SafeFileHandle OpenMetadata(string path, bool directory) => new(new IntPtr(-1), ownsHandle: false);
+
         public SafeFileHandle OpenDirectory(string path) => new(new IntPtr(-1), ownsHandle: false);
     }
 
@@ -494,6 +602,8 @@ public sealed class ConfirmedReconciliationRunnerTests
             var kind = (attributes & FileAttributes.Directory) != 0 ? FileKind.Directory : FileKind.File;
             return new NativeFileMetadataRecord(FileId.Create("fake:" + Path.GetFullPath(path)), string.IsNullOrWhiteSpace(parentPath) ? null : FileId.Create("fake:" + Path.GetFullPath(parentPath)), info.Name, kind, kind == FileKind.Directory ? null : info.Length, null, info.CreationTimeUtc, info.LastAccessTimeUtc, info.LastWriteTimeUtc, info.LastWriteTimeUtc, attributes, null, true, false);
         }
+
+        public SafeFileHandle OpenMetadata(string path, bool directory) => new(new IntPtr(-1), ownsHandle: false);
 
         public SafeFileHandle OpenDirectory(string path) => new(new IntPtr(-1), ownsHandle: false);
     }

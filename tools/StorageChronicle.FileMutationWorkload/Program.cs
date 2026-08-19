@@ -349,8 +349,39 @@ public static class Program
         if (string.IsNullOrWhiteSpace(parent)) throw new InvalidOperationException("The oracle path must have a parent directory.");
         Directory.CreateDirectory(parent);
         using var process = Process.GetCurrentProcess();
-        var processEvidence = new ProcessEvidence(process.Id, process.StartTime.ToUniversalTime(), Environment.ProcessPath ?? "unknown");
-        var document = new OracleDocument("StorageChronicle.FileMutationWorkload.v2", options.RunId, options.Scenario, DateTimeOffset.UtcNow, processEvidence, records.Count, records);
+        var processEvidence = new ProcessEvidence(process.Id, process.StartTime.ToUniversalTime(), Environment.ProcessPath ?? "unknown", options.Scenario);
+        var processes = new Dictionary<(int Id, DateTime StartTimeUtc), ProcessEvidence>
+        {
+            [(processEvidence.ProcessId, processEvidence.StartTimeUtc)] = processEvidence
+        };
+        var parallelRoot = Path.Combine(Path.GetFullPath(options.Root), "parallel");
+        if (Directory.Exists(parallelRoot))
+        {
+            foreach (var childOraclePath in Directory.EnumerateFiles(parallelRoot, "child-*.json", SearchOption.TopDirectoryOnly))
+            {
+                try
+                {
+                    var child = JsonSerializer.Deserialize<OracleDocument>(File.ReadAllText(childOraclePath), JsonOptions);
+                    if (child is null) continue;
+                    foreach (var childProcess in child.Processes ?? [child.Process])
+                    {
+                        processes.TryAdd((childProcess.ProcessId, childProcess.StartTimeUtc), childProcess);
+                    }
+                }
+                catch (JsonException)
+                {
+                    // A partial child oracle is not evidence of a complete
+                    // parallel run; the live correlation gate will reject it.
+                }
+                catch (IOException)
+                {
+                    // Keep the parent oracle metadata-only; missing child
+                    // process evidence remains an acceptance failure.
+                }
+            }
+        }
+
+        var document = new OracleDocument("StorageChronicle.FileMutationWorkload.v2", options.RunId, options.Scenario, DateTimeOffset.UtcNow, processEvidence, processes.Values.ToArray(), records.Count, records);
         File.WriteAllText(fullPath, JsonSerializer.Serialize(document, JsonOptions));
     }
 
@@ -371,7 +402,7 @@ public static class Program
 
     private sealed record WorkloadOptions(string Root, string OraclePath, string Scenario, string RunId, int Count);
     private sealed record TestLabMarker(string Schema, string TestId, string Role, string VolumeLabel, string FileSystem, DateTimeOffset CreatedUtc);
-    private sealed record OracleDocument(string Schema, string RunId, string Scenario, DateTimeOffset CompletedUtc, ProcessEvidence Process, int RecordCount, IReadOnlyCollection<OracleRecord> Operations);
-    private sealed record ProcessEvidence(int ProcessId, DateTime StartTimeUtc, string ExecutablePath);
+    private sealed record OracleDocument(string Schema, string RunId, string Scenario, DateTimeOffset CompletedUtc, ProcessEvidence Process, IReadOnlyCollection<ProcessEvidence> Processes, int RecordCount, IReadOnlyCollection<OracleRecord> Operations);
+    private sealed record ProcessEvidence(int ProcessId, DateTime StartTimeUtc, string ExecutablePath, string ScenarioId);
     private sealed record OracleRecord(long Sequence, string Operation, string RelativePath, string? OldRelativePath, DateTimeOffset StartedUtc, DateTimeOffset CompletedUtc);
 }

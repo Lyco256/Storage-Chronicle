@@ -1,6 +1,6 @@
 # WindowsReconciliationInfrastructure.cs
 
-Provides the production metadata reader and bounded Windows-only scopes used by confirmed reconciliation. `WindowsSeBackupPrivilegeScope` duplicates and impersonates a thread token only for `SeBackupPrivilege`, reports enablement failure without crashing the scan, and always reverts the thread. `WindowsReconciliationPriorityScope` enters and exits thread background I/O mode and exposes optional low file-I/O priority hints without dropping events. No scope is used by normal monitoring, UI, or Session Agent paths.
+Provides the production metadata reader and bounded Windows-only scopes used by confirmed reconciliation. `WindowsFileMetadataReader` can open a metadata-only handle for either a file or directory so each candidate can receive an I/O-priority hint attempt. `WindowsSeBackupPrivilegeScope` duplicates and impersonates a thread token only for `SeBackupPrivilege`, reports enablement failure without crashing the scan, and always reverts the thread. `WindowsReconciliationPriorityScope` enters and exits thread background I/O mode and exposes optional low file-I/O priority hints without dropping events. No scope is used by normal monitoring, UI, or Session Agent paths.
 
 ## Role
 

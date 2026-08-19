@@ -32,6 +32,13 @@ public sealed class WindowsFileMetadataReader
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         return native.OpenDirectory(path);
     }
+
+    /// <summary>Opens a metadata-only handle for a candidate file or directory.</summary>
+    public SafeFileHandle OpenMetadataHandle(string path, bool directory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        return native.OpenMetadata(path, directory);
+    }
 }
 
 /// <summary>Reports one scoped SeBackupPrivilege attempt without changing the process token permanently.</summary>

@@ -130,6 +130,25 @@ public sealed class InstallerManifestTests
     }
 
     [Fact]
+    public void FinalAcceptanceCorrelationRequiresLiveTestLabRowsAndArtifacts()
+    {
+        var root = FindRoot();
+        var finalGate = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-FinalAcceptance.ps1"));
+        var wrapper = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-CorrelationMetrics.ps1"));
+
+        Assert.Contains("SC-Test-W11", finalGate, StringComparison.Ordinal);
+        Assert.Contains("AgentHistoryPath", finalGate, StringComparison.Ordinal);
+        Assert.Contains("WorkloadExecutablePath", finalGate, StringComparison.Ordinal);
+        Assert.Contains("FalseAttributionCount", finalGate, StringComparison.Ordinal);
+        Assert.Contains("DroppedEventCount", finalGate, StringComparison.Ordinal);
+        Assert.Contains("ProcessAttribution.Rows", finalGate, StringComparison.Ordinal);
+        Assert.Contains("ExplorerSourceCorrelation.Rows", finalGate, StringComparison.Ordinal);
+        Assert.Contains("AgentHistoryPath", wrapper, StringComparison.Ordinal);
+        Assert.Contains("SourceCorrelatedCount", wrapper, StringComparison.Ordinal);
+        Assert.Contains("FileStateCorrectness", wrapper, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Windows10ManualBundleCarriesSharedAcceptanceContract()
     {
         var root = FindRoot();

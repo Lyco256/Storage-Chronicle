@@ -110,18 +110,29 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
 
     public SafeFileHandle OpenDirectory(string path)
     {
+        return OpenMetadata(path, directory: true, FileListDirectory);
+    }
+
+    public SafeFileHandle OpenMetadata(string path, bool directory)
+    {
+        return OpenMetadata(path, directory, FileReadAttributes);
+    }
+
+    private static SafeFileHandle OpenMetadata(string path, bool directory, uint desiredAccess)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         if (!OperatingSystem.IsWindows())
         {
-            throw new PlatformNotSupportedException("Windows directory handles are unavailable on this operating system.");
+            throw new PlatformNotSupportedException("Windows metadata handles are unavailable on this operating system.");
         }
 
-        var handle = CreateFile(path, FileListDirectory, FileShareRead | FileShareWrite | FileShareDelete, IntPtr.Zero, OpenExisting, FileFlagBackupSemantics, IntPtr.Zero);
+        var flags = directory ? FileFlagBackupSemantics : 0u;
+        var handle = CreateFile(path, desiredAccess, FileShareRead | FileShareWrite | FileShareDelete, IntPtr.Zero, OpenExisting, flags, IntPtr.Zero);
         if (handle.IsInvalid)
         {
             var error = Marshal.GetLastWin32Error();
             handle.Dispose();
-            throw new Win32Exception(error, $"The directory could not be opened: {path}");
+            throw new Win32Exception(error, $"The metadata entry could not be opened: {path}");
         }
 
         return handle;

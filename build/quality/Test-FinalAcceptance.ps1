@@ -103,18 +103,22 @@ function Assert-GroupEvidence {
         }
         'ConfirmedReconciliation' {
             if ($schema -ne 'StorageChronicle.ConfirmedReconciliationAcceptance.v1') { throw 'Confirmed reconciliation evidence has an unexpected schema.' }
-            foreach ($field in @('RunId', 'VolumeId', 'FileSystem', 'SourceEventCount', 'CanonicalEventCount', 'FinalStateCount', 'LightweightEntryCount', 'MftEntryCount', 'CandidateCount', 'DetailedMetadataQueryCount', 'DetailedQueryCandidateRatio', 'PrivilegeEnableSuccessCount', 'PrivilegeEnableFailureCount', 'AclFallbackCount', 'BackgroundModeEnabled', 'IoHintAttempts', 'IoHintSuccesses', 'IoHintFailures', 'ElapsedMilliseconds', 'Status')) {
+            foreach ($field in @('RunId', 'VolumeId', 'FileSystem', 'SourceEventCount', 'CanonicalEventCount', 'FinalStateCount', 'LightweightEntryCount', 'MftEntryCount', 'CandidateCount', 'DetailedMetadataQueryCount', 'DetailedQueryCandidateRatio', 'PrivilegeEnableSuccessCount', 'PrivilegeEnableFailureCount', 'AclFallbackCount', 'BackgroundModeEnabled', 'IoHintAttempts', 'IoHintSuccesses', 'IoHintFailures', 'StartJournalId', 'StartJournalNextUsn', 'CompletionJournalId', 'CompletionJournalNextUsn', 'ScanCompletedUtc', 'LiveEventCount', 'LiveEventsDeduplicated', 'LiveEventsAccepted', 'ElapsedMilliseconds', 'Status')) {
                 if ($null -eq $Value.PSObject.Properties[$field]) { throw "Confirmed reconciliation evidence is missing $field." }
             }
             if ([int64]$Value.MftEntryCount -ne [int64]$Value.LightweightEntryCount) { throw 'Confirmed reconciliation MFT and lightweight entry counts disagree.' }
             if ([string]$Value.Status -ne 'PASSED') { throw "Confirmed reconciliation evidence status is not PASSED: $($Value.Status)" }
-            foreach ($field in @('SourceEventCount', 'CanonicalEventCount', 'FinalStateCount', 'LightweightEntryCount', 'MftEntryCount', 'CandidateCount', 'DetailedMetadataQueryCount', 'PrivilegeEnableSuccessCount', 'PrivilegeEnableFailureCount', 'AclFallbackCount', 'IoHintAttempts', 'IoHintSuccesses', 'IoHintFailures')) {
+            if ([string]$Value.FileSystem -ne 'NTFS') { throw 'Confirmed reconciliation evidence must come from the required NTFS acceptance path.' }
+            if ([string]::IsNullOrWhiteSpace([string]$Value.StartJournalId) -or [string]::IsNullOrWhiteSpace([string]$Value.CompletionJournalId)) { throw 'Confirmed reconciliation evidence does not contain both NTFS journal boundaries.' }
+            if ([int64]$Value.StartJournalNextUsn -gt [int64]$Value.CompletionJournalNextUsn) { throw 'Confirmed reconciliation journal boundaries are reversed.' }
+            foreach ($field in @('SourceEventCount', 'CanonicalEventCount', 'FinalStateCount', 'LightweightEntryCount', 'MftEntryCount', 'CandidateCount', 'DetailedMetadataQueryCount', 'PrivilegeEnableSuccessCount', 'PrivilegeEnableFailureCount', 'AclFallbackCount', 'IoHintAttempts', 'IoHintSuccesses', 'IoHintFailures', 'LiveEventCount', 'LiveEventsDeduplicated', 'LiveEventsAccepted')) {
                 if ([int64]$Value.$field -lt 0) { throw "Confirmed reconciliation contains a negative $field." }
             }
             if (-not [bool]$Value.BackgroundModeEnabled) { throw 'Confirmed reconciliation did not prove background mode was enabled.' }
             if ([int64]$Value.DetailedMetadataQueryCount -gt [int64]$Value.CandidateCount) { throw 'Confirmed reconciliation performed more detailed queries than candidates.' }
             if ([int64]$Value.IoHintSuccesses + [int64]$Value.IoHintFailures -gt [int64]$Value.IoHintAttempts) { throw 'Confirmed reconciliation I/O hint counters are inconsistent.' }
             if ([int64]$Value.CandidateCount -eq 0 -and [int64]$Value.DetailedMetadataQueryCount -ne 0) { throw 'Confirmed reconciliation performed detailed metadata queries without candidates.' }
+            if ([int64]$Value.LiveEventsDeduplicated + [int64]$Value.LiveEventsAccepted -ne [int64]$Value.LiveEventCount) { throw 'Confirmed reconciliation live-event boundary counters are inconsistent.' }
             $expectedRatio = if ([int64]$Value.CandidateCount -eq 0) { 0d } else { [double]$Value.DetailedMetadataQueryCount / [double]$Value.CandidateCount }
             if ([math]::Abs([double]$Value.DetailedQueryCandidateRatio - $expectedRatio) -gt 0.000001) { throw 'Confirmed reconciliation detailed-query ratio does not match its counters.' }
             if ([double]$Value.ElapsedMilliseconds -lt 0) { throw 'Confirmed reconciliation elapsed time is negative.' }
@@ -224,9 +228,44 @@ function Assert-GroupEvidence {
         }
         'AgentExplorerCorrelation' {
             if ($schema -ne 'StorageChronicle.AgentExplorerCorrelationEvidence.v1') { throw 'Agent/Explorer correlation evidence has an unexpected schema.' }
-            if ([string]$Value.LiveMachineMeasurement -ne 'PASSED') { throw 'Agent/Explorer evidence is not a live machine measurement.' }
+            if ([string]$Value.Status -ne 'PASSED' -or [string]$Value.LiveMachineMeasurement -ne 'PASSED') { throw 'Agent/Explorer evidence is not a live machine measurement.' }
             if ($null -eq $Value.PSObject.Properties['FalseExactCount'] -or [int]$Value.FalseExactCount -ne 0) { throw 'Agent/Explorer evidence does not prove false Exact attribution is zero.' }
             foreach ($field in @('ProcessAttribution', 'ExplorerSourceCorrelation', 'FileStateCorrectness', 'WorkloadOraclePath', 'Environment')) { if ($null -eq $Value.PSObject.Properties[$field]) { throw "Agent/Explorer evidence is missing $field." } }
+            if ([string]$Value.Environment.TargetOs -ne 'Windows11' -or
+                [string]$Value.Environment.VmName -ne 'SC-Test-W11' -or
+                [string]$Value.Environment.ExecutionMode -ne 'TestLab' -or
+                [string]$Value.Environment.AgentHostMode -ne 'TestLab' -or
+                [bool]$Value.Environment.Diagnostic) { throw 'Agent/Explorer evidence does not prove a non-diagnostic Windows 11 TestLab Agent run.' }
+            foreach ($path in @([string]$Value.WorkloadOraclePath, [string]$Value.Environment.AgentExecutablePath, [string]$Value.Environment.WorkloadExecutablePath, [string]$Value.Environment.ExplorerEvidencePath)) {
+                if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Agent/Explorer evidence references a missing real artifact: $path" }
+            }
+            if ([string]::IsNullOrWhiteSpace([string]$Value.Environment.AgentHistoryPath) -or -not (Test-Path -LiteralPath ([string]$Value.Environment.AgentHistoryPath) -PathType Container)) { throw "Agent/Explorer evidence references a missing Agent history directory: $($Value.Environment.AgentHistoryPath)" }
+            foreach ($field in @('Total', 'Exact', 'Correlated', 'Unknown', 'ExactRate', 'CorrelatedRate', 'UnknownRate', 'Rows')) {
+                if ($null -eq $Value.ProcessAttribution.PSObject.Properties[$field]) { throw "Agent process attribution is missing $field." }
+            }
+            if ([int]$Value.ProcessAttribution.Total -le 0 -or
+                [int]$Value.ProcessAttribution.Exact -lt 0 -or
+                [int]$Value.ProcessAttribution.Correlated -lt 0 -or
+                [int]$Value.ProcessAttribution.Unknown -lt 0 -or
+                [int]$Value.ProcessAttribution.Exact + [int]$Value.ProcessAttribution.Correlated + [int]$Value.ProcessAttribution.Unknown -ne [int]$Value.ProcessAttribution.Total -or
+                @($Value.ProcessAttribution.Rows).Count -ne [int]$Value.ProcessAttribution.Total) { throw 'Agent process attribution counts or rows are inconsistent.' }
+            foreach ($field in @('CopyIntentCount', 'SourceCorrelatedCount', 'SourceUnknownCount', 'NotIdentifiedCount', 'FalseAttributionCount', 'Rows')) {
+                if ($null -eq $Value.ExplorerSourceCorrelation.PSObject.Properties[$field]) { throw "Explorer correlation is missing $field." }
+            }
+            if ([int]$Value.ExplorerSourceCorrelation.CopyIntentCount -le 0 -or
+                [int]$Value.ExplorerSourceCorrelation.SourceCorrelatedCount -lt 0 -or
+                [int]$Value.ExplorerSourceCorrelation.SourceUnknownCount -lt 0 -or
+                [int]$Value.ExplorerSourceCorrelation.NotIdentifiedCount -lt 0 -or
+                [int]$Value.ExplorerSourceCorrelation.FalseAttributionCount -ne 0 -or
+                [int]$Value.ExplorerSourceCorrelation.SourceCorrelatedCount + [int]$Value.ExplorerSourceCorrelation.SourceUnknownCount + [int]$Value.ExplorerSourceCorrelation.NotIdentifiedCount -ne [int]$Value.ExplorerSourceCorrelation.CopyIntentCount -or
+                @($Value.ExplorerSourceCorrelation.Rows).Count -ne [int]$Value.ExplorerSourceCorrelation.CopyIntentCount) { throw 'Explorer correlation counts or rows are inconsistent.' }
+            foreach ($field in @('ExpectedCount', 'VerifiedCount', 'MissingCount', 'DroppedEventCount')) {
+                if ($null -eq $Value.FileStateCorrectness.PSObject.Properties[$field]) { throw "File/state correctness is missing $field." }
+            }
+            if ([int]$Value.FileStateCorrectness.ExpectedCount -le 0 -or
+                [int]$Value.FileStateCorrectness.VerifiedCount -ne [int]$Value.FileStateCorrectness.ExpectedCount -or
+                [int]$Value.FileStateCorrectness.MissingCount -ne 0 -or
+                [int]$Value.FileStateCorrectness.DroppedEventCount -ne 0) { throw 'File/state correctness is not complete.' }
         }
         'BranchIntegration' {
             if ($schema -ne 'StorageChronicle.BranchIntegrationEvidence.v1') { throw 'Branch integration evidence has an unexpected schema.' }

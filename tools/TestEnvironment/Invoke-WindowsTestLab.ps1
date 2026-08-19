@@ -9,6 +9,7 @@ param(
     [ValidateSet('Workload', 'Mft', 'NonNtfs', 'AclDenied')][string]$DataRole = 'Workload',
     [ValidateRange(1, 1000000)][int]$WorkloadCount = 10000,
     [string]$ExplorerEvidencePath,
+    [string]$CorrelationEvidencePath,
     [pscredential]$Credential,
     [switch]$Apply
 )
@@ -38,6 +39,8 @@ $manifest = [ordered]@{
 }
 $activeVhdx = [System.Collections.Generic.List[object]]::new()
 $cleanupFailures = [System.Collections.Generic.List[string]]::new()
+$windows11OracleHostPath = $null
+$windows11HistoryHostRoot = $null
 
 function Add-Stage([string]$Name, [string]$Status, [string]$Reason, $Evidence = $null) {
     $manifest.Stages += [ordered]@{ Name = $Name; Status = $Status; Reason = $Reason; Evidence = $Evidence }
@@ -201,6 +204,10 @@ try {
         $historyHostZip = Join-Path $guestArtifactDirectory 'agent-history.zip'
         $historyHostRoot = Join-Path $guestArtifactDirectory 'agent-history'
         $realIoEvidencePath = Join-Path $guestArtifactDirectory 'real-io-evidence.json'
+        if ($guest -eq 'Windows11') {
+            $windows11OracleHostPath = $oracleHostPath
+            $windows11HistoryHostRoot = $historyHostRoot
+        }
         $agentGuestCommand = @"
 `$ErrorActionPreference = 'Stop'
 `$agent = $null
@@ -284,8 +291,38 @@ Compress-Archive -Path (Join-Path `$historyRoot '*') -DestinationPath `$historyZ
         }
     }
 
-    if ($ExplorerEvidencePath -and (Test-Path -LiteralPath $ExplorerEvidencePath -PathType Leaf)) { Add-Stage 'explorer-correlation' 'REQUIRES_REVIEW' 'An evidence file was supplied; correlation must be checked for false Exact=0 and Unknown/Create correctness.' ([IO.Path]::GetFullPath($ExplorerEvidencePath)) }
-    else { Add-Stage 'explorer-correlation' 'NOT_EXECUTED' 'No independent human-assisted Explorer evidence was supplied.' }
+    if ($ExplorerEvidencePath -and (Test-Path -LiteralPath $ExplorerEvidencePath -PathType Leaf)) {
+        $correlationOutput = if ([string]::IsNullOrWhiteSpace($CorrelationEvidencePath)) { Join-Path $artifactDirectory 'agent-explorer-correlation.json' } else { [IO.Path]::GetFullPath($CorrelationEvidencePath) }
+        if ($null -ne $agentSource -and $null -ne $windows11OracleHostPath -and $null -ne $windows11HistoryHostRoot -and (Test-Path -LiteralPath $windows11OracleHostPath -PathType Leaf) -and (Test-Path -LiteralPath $windows11HistoryHostRoot -PathType Container)) {
+            $correlationEnvironmentPath = Join-Path $artifactDirectory 'correlation-environment.json'
+            $correlationEnvironment = [ordered]@{
+                TargetOs = 'Windows11'
+                VmName = 'SC-Test-W11'
+                ExecutionMode = 'TestLab'
+                AgentHostMode = 'TestLab'
+                Diagnostic = $false
+                AgentHistoryPath = [IO.Path]::GetFullPath($windows11HistoryHostRoot)
+                AgentExecutablePath = [IO.Path]::GetFullPath($agentSource)
+                WorkloadExecutablePath = [IO.Path]::GetFullPath($workloadSource)
+                WorkloadOraclePath = [IO.Path]::GetFullPath($windows11OracleHostPath)
+                ExplorerEvidencePath = [IO.Path]::GetFullPath($ExplorerEvidencePath)
+            }
+            $correlationEnvironment | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -LiteralPath $correlationEnvironmentPath
+            $correlationProject = Join-Path $repositoryRoot 'tools/StorageChronicle.LiveCorrelationValidator/StorageChronicle.LiveCorrelationValidator.csproj'
+            if (-not (Test-Path -LiteralPath $correlationProject -PathType Leaf)) { throw "Live correlation validator project is missing: $correlationProject" }
+            & dotnet run --project $correlationProject --configuration Release --no-restore -- --oracle $windows11OracleHostPath --history $windows11HistoryHostRoot --explorer $ExplorerEvidencePath --environment $correlationEnvironmentPath --output $correlationOutput 2>&1 | Tee-Object -FilePath (Join-Path $artifactDirectory 'agent-explorer-correlation.log')
+            $correlationExitCode = $LASTEXITCODE
+            if ($correlationExitCode -eq 0) {
+                $correlation = Get-Content -Raw -Encoding UTF8 -LiteralPath $correlationOutput | ConvertFrom-Json
+                if ([string]$correlation.Status -ne 'PASSED' -or -not [bool]$correlation.AcceptanceEligible) { throw 'Live correlation validator returned a non-eligible artifact.' }
+                Add-Stage 'explorer-correlation' 'PASSED' 'The real Windows 11 TestLab Agent history, workload oracle, and independent Explorer evidence passed the strict correlation validator.' $correlationOutput
+            } else {
+                Add-Stage 'explorer-correlation' 'FAILED' "Live correlation validator exited with code $correlationExitCode." $correlationOutput
+            }
+        } else {
+            Add-Stage 'explorer-correlation' 'REQUIRES_REVIEW' 'Explorer evidence was supplied, but a Windows 11 Agent history/oracle pair was not produced; no live correlation claim is made.' ([IO.Path]::GetFullPath($ExplorerEvidencePath))
+        }
+    } else { Add-Stage 'explorer-correlation' 'NOT_EXECUTED' 'No independent human-assisted Explorer evidence was supplied.' }
     if ($cleanupFailures.Count -gt 0) { throw ('Cleanup failed: ' + ($cleanupFailures -join '; ')) }
     $incompleteStages = @($manifest.Stages | Where-Object { $_.Name -ne 'explorer-correlation' -and $_.Status -in @('NOT_EXECUTED', 'FAILED', 'REQUIRES_REVIEW') })
     $agentStages = @($manifest.Stages | Where-Object Name -like 'AgentIntegration-*')

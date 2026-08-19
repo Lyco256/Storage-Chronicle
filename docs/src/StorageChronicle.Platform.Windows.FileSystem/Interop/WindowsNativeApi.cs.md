@@ -1,6 +1,6 @@
 # WindowsNativeApi
 
-Implements the P/Invoke thin layer. It enumerates volume GUID paths and all mount points, reads filesystem/drive/readability/USN capabilities, obtains file identity and standard metadata, opens directory handles, reads ReadDirectoryChangesW buffers, and registers event-driven Configuration Manager notifications with a correctly sized `CM_NOTIFY_FILTER` for all device-interface classes. It never reads file contents. Win32 errors are preserved for the monitor to classify as buffer loss, handle loss, removal, or access failure. Runtime guards keep non-Windows execution safe; notification registration failure is surfaced to the Agent as an unverified continuity gap rather than stopping unrelated collectors.
+Implements the P/Invoke thin layer. It enumerates volume GUID paths and all mount points, reads filesystem/drive/readability/USN capabilities, obtains file identity and standard metadata, opens metadata-only file or directory handles (including the directory-monitor handle), reads ReadDirectoryChangesW buffers, and registers event-driven Configuration Manager notifications with a correctly sized `CM_NOTIFY_FILTER` for all device-interface classes. It never reads file contents. Win32 errors are preserved for the monitor to classify as buffer loss, handle loss, removal, or access failure. Runtime guards keep non-Windows execution safe; notification registration failure is surfaced to the Agent as an unverified continuity gap rather than stopping unrelated collectors.
 
 ## Role
 

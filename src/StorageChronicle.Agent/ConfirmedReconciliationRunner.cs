@@ -39,6 +39,24 @@ public sealed record ReconciliationExecutionSummary(
 
     /// <summary>Gets the elapsed wall-clock duration measured by the run boundaries.</summary>
     public double ElapsedMilliseconds => Math.Max(0d, (FinishedUtc - StartedUtc).TotalMilliseconds);
+
+    /// <summary>Gets the NTFS journal boundary captured before the scan, when the volume is NTFS.</summary>
+    public UsnJournalState? StartJournalBoundary { get; init; }
+
+    /// <summary>Gets the NTFS journal boundary captured after the scan, when the volume is NTFS.</summary>
+    public UsnJournalState? CompletionJournalBoundary { get; init; }
+
+    /// <summary>Gets the timestamp at which the point-in-time scan completed.</summary>
+    public DateTimeOffset? ScanCompletedUtc { get; init; }
+
+    /// <summary>Gets the number of live events captured while the scan was active.</summary>
+    public int LiveEventCount { get; init; }
+
+    /// <summary>Gets the number of captured live events covered by the scan boundary and not replayed.</summary>
+    public int LiveEventsDeduplicated { get; init; }
+
+    /// <summary>Gets the number of captured live events that were already durably committed by the live pipeline.</summary>
+    public int LiveEventsAccepted { get; init; }
 }
 
 /// <summary>Runs the real selected-volume reconciliation requested by the UI.</summary>
@@ -121,12 +139,12 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
             var saved = await ReadSavedEntriesAsync(requestedVolume, cancellationToken).ConfigureAwait(false);
             if (string.Equals(descriptor.FileSystem, "NTFS", StringComparison.OrdinalIgnoreCase) && descriptor.SupportsUsn)
             {
-                var summary = await ExecuteNtfsAsync(descriptor, saved, runId, uncertainFrom, sourceSequence, metrics, cancellationToken).ConfigureAwait(false);
-                return await FinishWithLiveEventsAsync(summary with { StartedUtc = started, FinishedUtc = DateTimeOffset.UtcNow }, liveSession, descriptor, uncertainFrom, sourceSequence, cancellationToken).ConfigureAwait(false);
+                var scan = await ExecuteNtfsAsync(descriptor, saved, runId, uncertainFrom, sourceSequence, metrics, cancellationToken).ConfigureAwait(false);
+                return await FinishWithLiveEventsAsync(scan with { Summary = scan.Summary with { StartedUtc = started, FinishedUtc = DateTimeOffset.UtcNow } }, liveSession, descriptor, uncertainFrom, sourceSequence, cancellationToken).ConfigureAwait(false);
             }
 
             var nonNtfs = await ExecuteDirectoryAsync(descriptor, saved, runId, uncertainFrom, sourceSequence, metrics, cancellationToken).ConfigureAwait(false);
-            return await FinishWithLiveEventsAsync(nonNtfs with { StartedUtc = started, FinishedUtc = DateTimeOffset.UtcNow }, liveSession, descriptor, uncertainFrom, sourceSequence, cancellationToken).ConfigureAwait(false);
+            return await FinishWithLiveEventsAsync(nonNtfs with { Summary = nonNtfs.Summary with { StartedUtc = started, FinishedUtc = DateTimeOffset.UtcNow } }, liveSession, descriptor, uncertainFrom, sourceSequence, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException exception) when (cancellationToken.IsCancellationRequested)
         {
@@ -143,7 +161,7 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
     }
 
     private async ValueTask<ReconciliationExecutionSummary> FinishWithLiveEventsAsync(
-        ReconciliationExecutionSummary summary,
+        ReconciliationScan scan,
         ReconciliationLiveEventBuffer.ReconciliationLiveEventSession liveSession,
         VolumeDescriptor volume,
         DateTimeOffset uncertainFrom,
@@ -151,6 +169,12 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
         CancellationToken cancellationToken)
     {
         var batch = liveSession.Complete();
+        var summary = scan.Summary with
+        {
+            StartJournalBoundary = scan.StartJournalBoundary,
+            CompletionJournalBoundary = scan.CompletionJournalBoundary,
+            ScanCompletedUtc = scan.ScanCompletedUtc
+        };
         if (batch.Overflowed)
         {
             const string reason = "The bounded live-event reconciliation buffer overflowed; the run was not completed.";
@@ -158,17 +182,23 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
             return summary with { Completed = false, Status = "Failed", FinishedUtc = DateTimeOffset.UtcNow, FailureReason = reason };
         }
 
+        var deduplicated = 0;
+        var accepted = 0;
         foreach (var source in batch.Events)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var canonical = normalizer.Normalize(source);
-            if (canonical is not null) await storage.ApplyAsync(canonical, cancellationToken).ConfigureAwait(false);
+            // SourceCommitted is raised only after the live pipeline has appended
+            // and applied this source. Re-applying it here would mutate state twice;
+            // this pass only classifies the boundary overlap for the durable
+            // reconciliation evidence.
+            if (IsCoveredByScan(source, scan)) deduplicated++;
+            else accepted++;
         }
 
-        return summary;
+        return summary with { LiveEventCount = batch.Count, LiveEventsDeduplicated = deduplicated, LiveEventsAccepted = accepted };
     }
 
-    private async ValueTask<ReconciliationExecutionSummary> ExecuteNtfsAsync(
+    private async ValueTask<ReconciliationScan> ExecuteNtfsAsync(
         VolumeDescriptor volume,
         IReadOnlyDictionary<FileId, SavedEntry> saved,
         string runId,
@@ -178,7 +208,15 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
         CancellationToken cancellationToken)
     {
         var devicePath = volume.Id.Value.EndsWith('\\') ? volume.Id.Value : volume.Id.Value + "\\";
+        var scanStarted = DateTimeOffset.UtcNow;
         var boundary = ReadJournalBoundary(devicePath);
+        if (boundary is null)
+        {
+            const string reason = "The NTFS journal boundary could not be established before the reconciliation scan.";
+            await AppendFailureAsync(volume, runId, uncertainFrom, scanStarted, sourceSequence, "Failed", reason, CancellationToken.None).ConfigureAwait(false);
+            return new ReconciliationScan(new ReconciliationExecutionSummary(runId, volume.Id, volume.FileSystem, false, "Failed", 0, 0, 0, 0, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.AclFallbackCount, metrics.Priority, scanStarted, scanStarted, reason), [], scanStarted, null, null);
+        }
+
         var current = new Dictionary<FileId, MftEntry>();
         await foreach (var entry in new WindowsMftEnumerator(ntfsApi, devicePath).EnumerateAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -221,13 +259,16 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
         {
             const string reason = "The NTFS journal boundary could not be established after the reconciliation scan.";
             await AppendFailureAsync(volume, runId, uncertainFrom, DateTimeOffset.UtcNow, sequence, "Failed", reason, CancellationToken.None).ConfigureAwait(false);
-            return new ReconciliationExecutionSummary(runId, volume.Id, volume.FileSystem, false, "Failed", current.Count, candidates.Length + saved.Values.Count(value => value.Exists && !current.ContainsKey(value.FileId)), metadataQueries, durableCount, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.AclFallbackCount, metrics.Priority, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, reason);
+            var failed = new ReconciliationExecutionSummary(runId, volume.Id, volume.FileSystem, false, "Failed", current.Count, candidates.Length + saved.Values.Count(value => value.Exists && !current.ContainsKey(value.FileId)), metadataQueries, durableCount, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.AclFallbackCount, metrics.Priority, scanStarted, DateTimeOffset.UtcNow, reason);
+            return new ReconciliationScan(failed, changes, DateTimeOffset.UtcNow, boundary, null);
         }
 
-        return new ReconciliationExecutionSummary(runId, volume.Id, volume.FileSystem, true, "Completed", current.Count, candidates.Length + saved.Values.Count(value => value.Exists && !current.ContainsKey(value.FileId)), metadataQueries, durableCount, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.AclFallbackCount, metrics.Priority, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, null);
+        var completed = DateTimeOffset.UtcNow;
+        var summary = new ReconciliationExecutionSummary(runId, volume.Id, volume.FileSystem, true, "Completed", current.Count, candidates.Length + saved.Values.Count(value => value.Exists && !current.ContainsKey(value.FileId)), metadataQueries, durableCount, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.AclFallbackCount, metrics.Priority, scanStarted, completed, null);
+        return new ReconciliationScan(summary, changes, completed, boundary, endBoundary);
     }
 
-    private async ValueTask<ReconciliationExecutionSummary> ExecuteDirectoryAsync(
+    private async ValueTask<ReconciliationScan> ExecuteDirectoryAsync(
         VolumeDescriptor volume,
         IReadOnlyDictionary<FileId, SavedEntry> saved,
         string runId,
@@ -271,7 +312,22 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
             durableCount++;
         }
 
-        return new ReconciliationExecutionSummary(runId, volume.Id, volume.FileSystem, true, "Completed", current.Count, changes.Count, changes.Count(value => value.Metadata is not null), durableCount, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.AclFallbackCount, metrics.Priority, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, null);
+        var completed = DateTimeOffset.UtcNow;
+        var summary = new ReconciliationExecutionSummary(runId, volume.Id, volume.FileSystem, true, "Completed", current.Count, changes.Count, changes.Count(value => value.Metadata is not null), durableCount, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.AclFallbackCount, metrics.Priority, completed, completed, null);
+        return new ReconciliationScan(summary, changes, completed, null, null);
+    }
+
+    private static bool IsCoveredByScan(SourceEvent live, ReconciliationScan scan)
+    {
+        if (live.FileId is not { } fileId || scan.Sources.Count == 0) return false;
+        if (scan.CompletionJournalBoundary is { } boundary && live.Origin is EventOrigin.LiveUsn or EventOrigin.RecoveredUsn && live.Time.SourceSequence.Value >= boundary.NextUsn) return false;
+        if (scan.CompletionJournalBoundary is null && scan.ScanCompletedUtc is { } completed && live.Time.RecordedUtc > completed) return false;
+
+        return scan.Sources.Any(value => value.FileId == fileId &&
+            (string.Equals(value.Name, live.Name, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(value.OldName, live.Name, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(value.Name, live.OldName, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(value.OldName, live.OldName, StringComparison.OrdinalIgnoreCase)));
     }
 
     private async ValueTask<IReadOnlyDictionary<FileId, SavedEntry>> ReadSavedEntriesAsync(VolumeId volume, CancellationToken cancellationToken)
@@ -332,11 +388,8 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
         {
             try
             {
-                if (entry.IsDirectory)
-                {
-                    using var handle = metadataReader.OpenDirectoryHandle(path);
-                    _ = priority.TrySetLowFileIoPriority(handle);
-                }
+                using var handle = metadataReader.OpenMetadataHandle(path, entry.IsDirectory);
+                _ = priority.TrySetLowFileIoPriority(handle);
 
                 var value = metadataReader.Read(path, Path.GetDirectoryName(path));
                 quality = value.IsAccessDenied ? EventQuality.ExistenceOnly : EventQuality.Reconciled;
@@ -442,6 +495,13 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
     }
 
     private sealed record SavedEntry(FileId FileId, FileId? Parent, string Name, bool Exists, FileMetadata? Metadata, long SourceSequence);
+
+    private sealed record ReconciliationScan(
+        ReconciliationExecutionSummary Summary,
+        IReadOnlyList<SourceEvent> Sources,
+        DateTimeOffset ScanCompletedUtc,
+        UsnJournalState? StartJournalBoundary,
+        UsnJournalState? CompletionJournalBoundary);
 
     private sealed record CandidateMetadataResult(FileMetadata? Metadata, EventQuality Quality, bool UsedAclFallback);
 

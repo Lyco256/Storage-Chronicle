@@ -76,13 +76,35 @@ if (-not [string]::IsNullOrWhiteSpace($LiveEvidencePath)) {
     if (-not (Test-Path -LiteralPath $LiveEvidencePath -PathType Leaf)) { Write-NotExecuted "Live correlation evidence was not found: $LiveEvidencePath" }
     $live = Get-Content -Raw -Encoding UTF8 -LiteralPath $LiveEvidencePath | ConvertFrom-Json
     if ([string]$live.Schema -ne 'StorageChronicle.AgentExplorerCorrelationEvidence.v1' -or
+        [string]$live.Status -ne 'PASSED' -or
         -not [bool]$live.AcceptanceEligible -or
         [string]$live.LiveMachineMeasurement -ne 'PASSED' -or
         $null -eq $live.PSObject.Properties['FalseExactCount'] -or
-        [int]$live.FalseExactCount -ne 0) {
-        Write-Error 'The supplied live correlation artifact is missing the required schema, eligibility, live measurement, or zero-false-Exact proof.'
+        [int]$live.FalseExactCount -ne 0 -or
+        [string]$live.Environment.TargetOs -ne 'Windows11' -or
+        [string]$live.Environment.VmName -ne 'SC-Test-W11' -or
+        [string]$live.Environment.ExecutionMode -ne 'TestLab' -or
+        [string]$live.Environment.AgentHostMode -ne 'TestLab' -or
+        [bool]$live.Environment.Diagnostic) {
+        Write-Error 'The supplied live correlation artifact is missing the required non-diagnostic TestLab identity or zero-false-Exact proof.'
         exit 1
     }
+    foreach ($path in @([string]$live.WorkloadOraclePath, [string]$live.Environment.AgentExecutablePath, [string]$live.Environment.WorkloadExecutablePath, [string]$live.Environment.ExplorerEvidencePath)) {
+        if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { Write-Error "The supplied live correlation artifact references a missing file: $path"; exit 1 }
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$live.Environment.AgentHistoryPath) -or -not (Test-Path -LiteralPath ([string]$live.Environment.AgentHistoryPath) -PathType Container)) { Write-Error "The supplied live correlation artifact references a missing Agent history directory: $($live.Environment.AgentHistoryPath)"; exit 1 }
+    foreach ($field in @('Total', 'Exact', 'Correlated', 'Unknown', 'ExactRate', 'CorrelatedRate', 'UnknownRate', 'Rows')) {
+        if ($null -eq $live.ProcessAttribution.PSObject.Properties[$field]) { Write-Error "The supplied live correlation artifact is missing process field: $field"; exit 1 }
+    }
+    if ([int]$live.ProcessAttribution.Total -le 0 -or [int]$live.ProcessAttribution.Exact + [int]$live.ProcessAttribution.Correlated + [int]$live.ProcessAttribution.Unknown -ne [int]$live.ProcessAttribution.Total -or @($live.ProcessAttribution.Rows).Count -ne [int]$live.ProcessAttribution.Total) { Write-Error 'The supplied live process attribution rows/counts are inconsistent.'; exit 1 }
+    foreach ($field in @('CopyIntentCount', 'SourceCorrelatedCount', 'SourceUnknownCount', 'NotIdentifiedCount', 'FalseAttributionCount', 'Rows')) {
+        if ($null -eq $live.ExplorerSourceCorrelation.PSObject.Properties[$field]) { Write-Error "The supplied live correlation artifact is missing Explorer field: $field"; exit 1 }
+    }
+    if ([int]$live.ExplorerSourceCorrelation.CopyIntentCount -le 0 -or [int]$live.ExplorerSourceCorrelation.FalseAttributionCount -ne 0 -or [int]$live.ExplorerSourceCorrelation.SourceCorrelatedCount + [int]$live.ExplorerSourceCorrelation.SourceUnknownCount + [int]$live.ExplorerSourceCorrelation.NotIdentifiedCount -ne [int]$live.ExplorerSourceCorrelation.CopyIntentCount -or @($live.ExplorerSourceCorrelation.Rows).Count -ne [int]$live.ExplorerSourceCorrelation.CopyIntentCount) { Write-Error 'The supplied live Explorer attribution rows/counts are inconsistent.'; exit 1 }
+    foreach ($field in @('ExpectedCount', 'VerifiedCount', 'MissingCount', 'DroppedEventCount')) {
+        if ($null -eq $live.FileStateCorrectness.PSObject.Properties[$field]) { Write-Error "The supplied live correlation artifact is missing correctness field: $field"; exit 1 }
+    }
+    if ([int]$live.FileStateCorrectness.ExpectedCount -le 0 -or [int]$live.FileStateCorrectness.VerifiedCount -ne [int]$live.FileStateCorrectness.ExpectedCount -or [int]$live.FileStateCorrectness.MissingCount -ne 0 -or [int]$live.FileStateCorrectness.DroppedEventCount -ne 0) { Write-Error 'The supplied live file/state correctness counts are incomplete.'; exit 1 }
     $live | Add-Member -NotePropertyName FixtureStatus -NotePropertyValue 'PASSED' -Force
     $live | Add-Member -NotePropertyName Status -NotePropertyValue 'PASSED' -Force
     $live | ConvertTo-Json -Depth 20 | Set-Content -Encoding UTF8 -LiteralPath $OutputPath
