@@ -64,12 +64,21 @@ function Assert-StageA {
     param([Parameter(Mandatory = $true)]$Artifact)
 
     $value = $Artifact.Value
-    if ([string]$value.Schema -ne 'StorageChronicle.Windows10StageAAcceptance.v1') { throw "Stage A has an unexpected schema: $($Artifact.Path)" }
+    if ([string]$value.Schema -ne 'StorageChronicle.Windows10StageAAcceptance.v1' -or
+        [string]$value.TargetKind -ne 'HyperVVm' -or
+        [string]$value.VmName -ne 'SC-Test-W10' -or
+        [string]$value.ExecutionMode -ne 'VM') { throw "Stage A has an unexpected target or schema: $($Artifact.Path)" }
     if ([string]$value.TargetOs -ne 'Windows10-22H2' -or [string]$value.Status -ne 'PASSED' -or -not [bool]$value.AcceptanceEligible) { throw "Stage A is not an eligible Windows 10 22H2 acceptance artifact: $($Artifact.Path)" }
     $checks = @($value.Checks)
+    if ($checks.Count -ne $requiredStageAChecks.Count) { throw 'Stage A does not contain exactly the required check count.' }
+    $checkNames = @($checks | ForEach-Object { [string]$_.Name })
+    if (@($checkNames | Sort-Object -Unique).Count -ne $requiredStageAChecks.Count -or @($requiredStageAChecks | Where-Object { $checkNames -notcontains $_ }).Count -ne 0) { throw 'Stage A checks are missing, duplicated, or contain an unexpected name.' }
     foreach ($name in $requiredStageAChecks) {
         $matches = @($checks | Where-Object { [string]$_.Name -eq $name })
         if ($matches.Count -ne 1 -or [string]$matches[0].Status -ne 'PASSED') { throw "Stage A check is not exactly PASSED: $name" }
+        if ([string]$matches[0].Origin -ne 'real') { throw "Stage A check does not declare real evidence: $name" }
+        $evidence = @($matches[0].Evidence | ForEach-Object { [string]$_ })
+        if ($evidence.Count -eq 0 -or @($evidence | Where-Object { [string]::IsNullOrWhiteSpace($_) -or -not (Test-Path -LiteralPath $_ -PathType Leaf) }).Count -ne 0) { throw "Stage A check evidence is missing: $name" }
     }
 }
 

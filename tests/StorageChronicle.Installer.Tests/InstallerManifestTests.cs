@@ -60,6 +60,25 @@ public sealed class InstallerManifestTests
         Assert.Contains("Status = 'NOT_EXECUTED'", physical, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Windows10CapabilityChecksAreGuestRealAndFailClosed()
+    {
+        var root = FindRoot();
+        var guest = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Test-Windows10StageACapability.ps1"));
+        var host = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Invoke-Windows10StageACapabilityChecks.ps1"));
+
+        Assert.Contains("StorageChronicle.Windows10StageACheck.v1", guest, StringComparison.Ordinal);
+        Assert.Contains("LoadLibrary/GetProcAddress", guest, StringComparison.Ordinal);
+        Assert.Contains("cldapi.dll", guest, StringComparison.Ordinal);
+        Assert.Contains("pnputil.exe", guest, StringComparison.Ordinal);
+        Assert.Contains("DriverPresent", guest, StringComparison.Ordinal);
+        Assert.Contains("ApiCalled = $false", guest, StringComparison.Ordinal);
+        Assert.Contains("SC-Test-W10", host, StringComparison.Ordinal);
+        Assert.Contains("Assert-HyperVMutationPrerequisites", host, StringComparison.Ordinal);
+        Assert.Contains("if (-not $Apply)", host, StringComparison.Ordinal);
+        Assert.Contains("AcceptanceEligible = $false", host, StringComparison.Ordinal);
+    }
+
     private static string FindRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

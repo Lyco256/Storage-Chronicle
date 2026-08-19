@@ -91,10 +91,16 @@ function Assert-GroupEvidence {
             if ([string]$Value.TargetOs -ne 'Windows10-22H2') { throw 'Windows 10 evidence does not identify Windows10-22H2.' }
             foreach ($field in @('StageA', 'StageB')) { if ($null -eq $Value.PSObject.Properties[$field]) { throw "Windows 10 evidence is missing $field." } }
             $stageA = Read-ReferencedJson -Path ([string]$Value.StageA.ManifestPath) -Label 'Windows 10 Stage A manifest'
-            if ([string]$stageA.Schema -ne 'StorageChronicle.Windows10StageAAcceptance.v1' -or [string]$stageA.TargetOs -ne 'Windows10-22H2' -or [string]$stageA.Status -ne 'PASSED' -or -not [bool]$stageA.AcceptanceEligible) { throw 'Windows 10 Stage A is not an eligible real acceptance artifact.' }
+            if ([string]$stageA.Schema -ne 'StorageChronicle.Windows10StageAAcceptance.v1' -or [string]$stageA.TargetOs -ne 'Windows10-22H2' -or [string]$stageA.TargetKind -ne 'HyperVVm' -or [string]$stageA.VmName -ne 'SC-Test-W10' -or [string]$stageA.ExecutionMode -ne 'VM' -or [string]$stageA.Status -ne 'PASSED' -or -not [bool]$stageA.AcceptanceEligible) { throw 'Windows 10 Stage A is not an eligible real acceptance artifact.' }
+            if (@($stageA.Checks).Count -ne $requiredWindows10StageAChecks.Count) { throw 'Windows 10 Stage A does not contain exactly the required check count.' }
+            $stageACheckNames = @($stageA.Checks | ForEach-Object { [string]$_.Name })
+            if (@($stageACheckNames | Sort-Object -Unique).Count -ne $requiredWindows10StageAChecks.Count -or @($requiredWindows10StageAChecks | Where-Object { $stageACheckNames -notcontains $_ }).Count -ne 0) { throw 'Windows 10 Stage A checks are missing, duplicated, or contain an unexpected name.' }
             foreach ($checkName in $requiredWindows10StageAChecks) {
                 $matches = @($stageA.Checks | Where-Object { [string]$_.Name -eq $checkName })
                 if ($matches.Count -ne 1 -or [string]$matches[0].Status -ne 'PASSED') { throw "Windows 10 Stage A check is not exactly PASSED: $checkName" }
+                if ([string]$matches[0].Origin -ne 'real') { throw "Windows 10 Stage A check does not declare real evidence: $checkName" }
+                $checkEvidence = @($matches[0].Evidence | ForEach-Object { [string]$_ })
+                if ($checkEvidence.Count -eq 0 -or @($checkEvidence | Where-Object { [string]::IsNullOrWhiteSpace($_) -or -not (Test-Path -LiteralPath $_ -PathType Leaf) }).Count -ne 0) { throw "Windows 10 Stage A check evidence is missing: $checkName" }
             }
             $preflight = Read-ReferencedJson -Path ([string]$Value.StageB.PreflightPath) -Label 'Windows 10 physical preflight'
             if ([string]$preflight.Schema -ne 'StorageChronicle.Windows10PhysicalPreflight.v1' -or -not [bool]$preflight.Ready -or @($preflight.Checks | Where-Object { [string]$_.Status -ne 'PASS' }).Count -ne 0) { throw 'Windows 10 physical preflight is not fully PASS.' }
