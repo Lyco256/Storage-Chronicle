@@ -45,6 +45,21 @@ public sealed class InstallerManifestTests
         Assert.Contains("AcceptanceEligible", orchestrator, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Windows10AcceptanceComposersRequireRealEvidence()
+    {
+        var root = FindRoot();
+        var stageA = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Compose-Windows10StageA.ps1"));
+        var physical = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Finalize-Windows10PhysicalAcceptance.ps1"));
+
+        Assert.Contains("StorageChronicle.Windows10StageAAcceptance.v1", stageA, StringComparison.Ordinal);
+        Assert.Contains("COMPLETED_REAL_IO_ACCEPTANCE", stageA, StringComparison.Ordinal);
+        Assert.Contains("StorageChronicle.Windows10StageACheck.v1", stageA, StringComparison.Ordinal);
+        Assert.Contains("EvidenceOrigin -ne 'real'", stageA, StringComparison.Ordinal);
+        Assert.Contains("StorageChronicle.Windows10PhysicalAcceptance.v1", physical, StringComparison.Ordinal);
+        Assert.Contains("Status = 'NOT_EXECUTED'", physical, StringComparison.Ordinal);
+    }
+
     private static string FindRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

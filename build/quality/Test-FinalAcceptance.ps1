@@ -19,6 +19,21 @@ if ([string]::IsNullOrWhiteSpace($OutputPath)) { $OutputPath = Join-Path $root (
 $artifactDirectory = Split-Path -Parent $OutputPath
 New-Item -ItemType Directory -Force -Path $artifactDirectory | Out-Null
 
+$requiredWindows10StageAChecks = @(
+    'Application', 'AvaloniaUI', 'Agent', 'SessionAgent', 'Usn', 'Mft', 'Etw',
+    'ReadDirectoryChangesW', 'Clipboard', 'Smb', 'CloudFilesCapability',
+    'Reconciliation', 'Installer', 'HistoryRetention', 'NoDriver'
+)
+$requiredInstallerCaseIds = @('clean-install', 'repair', 'update', 'rollback', 'uninstall', 'failed-install-rollback', 'history-retention', 'service', 'session', 'non-admin', 'storage-permission')
+
+function Read-ReferencedJson {
+    param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$Label)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "$Label is missing: $Path" }
+    try { return Get-Content -Raw -Encoding UTF8 -LiteralPath $Path | ConvertFrom-Json }
+    catch { throw "$Label is not valid JSON: $Path. $($_.Exception.Message)" }
+}
+
 function Assert-GroupEvidence {
     param([Parameter(Mandatory = $true)][string]$Name, [Parameter(Mandatory = $true)]$Value)
 
@@ -45,6 +60,12 @@ function Assert-GroupEvidence {
             }
             if ([int64]$Value.MftEntryCount -ne [int64]$Value.LightweightEntryCount) { throw 'Confirmed reconciliation MFT and lightweight entry counts disagree.' }
             if ([string]$Value.Status -ne 'PASSED') { throw "Confirmed reconciliation evidence status is not PASSED: $($Value.Status)" }
+            foreach ($field in @('SourceEventCount', 'CanonicalEventCount', 'FinalStateCount', 'LightweightEntryCount', 'MftEntryCount', 'CandidateCount', 'DetailedMetadataQueryCount', 'PrivilegeEnableSuccessCount', 'PrivilegeEnableFailureCount', 'AclFallbackCount', 'IoHintAttempts', 'IoHintSuccesses', 'IoHintFailures')) {
+                if ([int64]$Value.$field -lt 0) { throw "Confirmed reconciliation contains a negative $field." }
+            }
+            if (-not [bool]$Value.BackgroundModeEnabled) { throw 'Confirmed reconciliation did not prove background mode was enabled.' }
+            if ([int64]$Value.DetailedMetadataQueryCount -gt [int64]$Value.CandidateCount) { throw 'Confirmed reconciliation performed more detailed queries than candidates.' }
+            if ([int64]$Value.IoHintSuccesses + [int64]$Value.IoHintFailures -gt [int64]$Value.IoHintAttempts) { throw 'Confirmed reconciliation I/O hint counters are inconsistent.' }
             if ([int64]$Value.CandidateCount -eq 0 -and [int64]$Value.DetailedMetadataQueryCount -ne 0) { throw 'Confirmed reconciliation performed detailed metadata queries without candidates.' }
             $expectedRatio = if ([int64]$Value.CandidateCount -eq 0) { 0d } else { [double]$Value.DetailedMetadataQueryCount / [double]$Value.CandidateCount }
             if ([math]::Abs([double]$Value.DetailedQueryCandidateRatio - $expectedRatio) -gt 0.000001) { throw 'Confirmed reconciliation detailed-query ratio does not match its counters.' }
@@ -54,33 +75,67 @@ function Assert-GroupEvidence {
             if ($schema -ne 'StorageChronicle.WindowsPrivilegedAcceptance.v2') { throw 'Windows privileged evidence has an unexpected schema.' }
             $required = @($Value.RequiredCapabilities)
             $tests = @($Value.Tests)
-            if ($required.Count -lt 1) { throw 'Windows privileged evidence has no required capabilities.' }
+            if ($required.Count -lt 1 -or (@($required | Sort-Object -Unique).Count -ne $required.Count)) { throw 'Windows privileged evidence has no unique required capability list.' }
+            if ([string]$Value.Status -ne 'PASSED') { throw 'Windows privileged evidence status is not PASSED.' }
             foreach ($capability in $required) {
                 $matches = @($tests | Where-Object { [string]$_.Capability -eq [string]$capability })
                 if ($matches.Count -ne 1 -or [string]$matches[0].Status -ne 'PASSED') { throw "Windows privileged capability is not exactly PASSED: $capability" }
+            }
+            foreach ($artifactName in @('Environment', 'Capabilities', 'Oracle', 'SourceEventSummary', 'CanonicalSummary', 'FinalStateSummary', 'ReconciliationSummary', 'ConfirmedReconciliation', 'ServiceSummary', 'Errors', 'Result')) {
+                $artifactProperty = $Value.Artifacts.PSObject.Properties[$artifactName]
+                if ($null -eq $artifactProperty -or [string]::IsNullOrWhiteSpace([string]$artifactProperty.Value) -or -not (Test-Path -LiteralPath ([string]$artifactProperty.Value) -PathType Leaf)) { throw "Windows privileged artifact is missing: $artifactName" }
             }
         }
         'Windows10_22H2' {
             if ($schema -ne 'StorageChronicle.Windows10PhysicalAcceptance.v1') { throw 'Windows 10 evidence has an unexpected schema.' }
             if ([string]$Value.TargetOs -ne 'Windows10-22H2') { throw 'Windows 10 evidence does not identify Windows10-22H2.' }
+            foreach ($field in @('StageA', 'StageB')) { if ($null -eq $Value.PSObject.Properties[$field]) { throw "Windows 10 evidence is missing $field." } }
+            $stageA = Read-ReferencedJson -Path ([string]$Value.StageA.ManifestPath) -Label 'Windows 10 Stage A manifest'
+            if ([string]$stageA.Schema -ne 'StorageChronicle.Windows10StageAAcceptance.v1' -or [string]$stageA.TargetOs -ne 'Windows10-22H2' -or [string]$stageA.Status -ne 'PASSED' -or -not [bool]$stageA.AcceptanceEligible) { throw 'Windows 10 Stage A is not an eligible real acceptance artifact.' }
+            foreach ($checkName in $requiredWindows10StageAChecks) {
+                $matches = @($stageA.Checks | Where-Object { [string]$_.Name -eq $checkName })
+                if ($matches.Count -ne 1 -or [string]$matches[0].Status -ne 'PASSED') { throw "Windows 10 Stage A check is not exactly PASSED: $checkName" }
+            }
+            $preflight = Read-ReferencedJson -Path ([string]$Value.StageB.PreflightPath) -Label 'Windows 10 physical preflight'
+            if ([string]$preflight.Schema -ne 'StorageChronicle.Windows10PhysicalPreflight.v1' -or -not [bool]$preflight.Ready -or @($preflight.Checks | Where-Object { [string]$_.Status -ne 'PASS' }).Count -ne 0) { throw 'Windows 10 physical preflight is not fully PASS.' }
+            if ([string]$preflight.Environment.ProductName -notmatch 'Windows 10' -or ([string]$preflight.Environment.DisplayVersion -ne '22H2' -and [string]$preflight.Environment.Build -ne '19045') -or [string]$preflight.Environment.Architecture -ne 'x64') { throw 'Windows 10 physical preflight does not prove Windows 10 22H2 x64.' }
+            $installer = Read-ReferencedJson -Path ([string]$Value.StageB.InstallerManifestPath) -Label 'Windows 10 physical installer manifest'
+            if ([string]$installer.Schema -ne 'storage-chronicle.installer-acceptance.v1' -or [string]$installer.Status -ne 'PASSED' -or -not [bool]$installer.AcceptanceEligible -or [string]$installer.TargetOs -ne 'Windows10-22H2' -or [string]$installer.TargetKind -ne 'PhysicalMachine' -or [string]$installer.ExecutionMode -ne 'Local') { throw 'Windows 10 physical installer artifact is not eligible.' }
+            if ($null -eq $installer.Summary -or [int]$installer.Summary.Total -ne 11 -or [int]$installer.Summary.Passed -ne 11 -or [int]$installer.Summary.Failed -ne 0 -or [int]$installer.Summary.NotExecuted -ne 0) { throw 'Windows 10 physical installer artifact does not prove all eleven cases passed.' }
+            $caseIds = @($installer.Tests | ForEach-Object { [string]$_.CaseId })
+            if (@($caseIds | Sort-Object -Unique).Count -ne $requiredInstallerCaseIds.Count -or @($requiredInstallerCaseIds | Where-Object { $caseIds -notcontains $_ }).Count -ne 0) { throw 'Windows 10 physical installer artifact does not contain the defined eleven case IDs.' }
         }
         'IdleResource' {
             if ($schema -ne 'StorageChronicle.ResourceBudgetAcceptanceEvidence.v1') { throw 'Resource evidence has an unexpected schema.' }
             if ($null -eq $Value.PSObject.Properties['EvidenceChecks']) { throw 'Resource evidence has no supervised gate checks.' }
+            foreach ($checkName in @('ResultFilePresent', 'ResultProcessIdsMatch', 'ResourceSampleCountMatches', 'ResourceSamplingComplete', 'ResourceSampleSpanComplete', 'DiskWriteCounterPresent', 'PrivateMemoryLimitNotExceeded', 'CpuLimitNotExceeded', 'QueueSamplingComplete', 'QueueSampleCountMatches', 'QueueHasNoMissedSamples', 'QueueLimitNotExceeded', 'TargetLifecycleStable', 'ExistingScriptExitCodeZero', 'AcceptanceEligible', 'BoundaryDurationIs600', 'BoundaryIsNonDiagnostic', 'BoundarySpanComplete', 'QuietPeriodEvidencePresent', 'QuietPeriodValid')) {
+                if ($null -eq $Value.EvidenceChecks.PSObject.Properties[$checkName] -or -not [bool]$Value.EvidenceChecks.$checkName) { throw "Resource acceptance check is not true: $checkName" }
+            }
         }
         'MftPerformance' {
             if ($schema -ne 'StorageChronicle.FullBenchmarkMatrixEvidence.v1') { throw 'MFT performance evidence has an unexpected schema.' }
             if (-not [bool]$Value.IncludeMft -or $null -eq $Value.MftEvidence) { throw 'MFT performance evidence is missing the connected MFT correctness artifact.' }
+            if ([string]$Value.ExecutionStatus -ne 'completed' -or [string]$Value.MftEvidence.Schema -ne 'StorageChronicle.MftBenchmarkEvidence.v1' -or [string]$Value.MftEvidence.Status -ne 'PASSED' -or -not [bool]$Value.MftEvidence.AcceptanceEligible) { throw 'MFT performance evidence is not a completed eligible real matrix.' }
+            foreach ($method in @('MftEnumerationImport10K', 'MftEnumerationImport100K', 'MftEnumerationImport1M', 'MftCandidateMetadataQueriesZero1M', 'MftCandidateMetadataQueriesSmall1M')) {
+                $matches = @($Value.MftEvidence.Runs | Where-Object { [string]$_.Method -eq $method })
+                if ($matches.Count -ne 1) { throw "MFT evidence does not contain exactly one run for $method." }
+                if ([int64]$matches[0].DroppedEventCount -ne 0 -or [int64]$matches[0].EnumeratedEntryCount -lt [int64]$matches[0].DatasetEntryCount) { throw "MFT evidence failed the count/drop oracle for $method." }
+            }
+            if ([int64](@($Value.MftEvidence.Runs | Where-Object Method -eq 'MftEnumerationImport1M')[0].DatasetEntryCount) -lt 1000000) { throw 'MFT evidence does not contain the required one-million-entry dataset.' }
         }
         'PhysicalInstaller' {
             if ($schema -ne 'storage-chronicle.installer-acceptance.v1') { throw 'Installer evidence has an unexpected schema.' }
-            if ($null -eq $Value.PSObject.Properties['Summary'] -or [int]$Value.Summary.Total -ne 11 -or [int]$Value.Summary.Passed -ne 11) { throw 'Installer evidence does not contain all eleven passed cases.' }
+            if ([string]$Value.Status -ne 'PASSED' -or $null -eq $Value.PSObject.Properties['Summary'] -or [int]$Value.Summary.Total -ne 11 -or [int]$Value.Summary.Passed -ne 11 -or [int]$Value.Summary.Failed -ne 0 -or [int]$Value.Summary.NotExecuted -ne 0) { throw 'Installer evidence does not contain all eleven passed cases.' }
             if ([string]$Value.TargetKind -ne 'PhysicalMachine' -or [string]$Value.ExecutionMode -ne 'Local') { throw 'Installer evidence is not from the required physical-machine acceptance path.' }
+            if (@($Value.Tests | Where-Object Status -ne 'PASSED').Count -ne 0 -or @($Value.Tests).Count -ne 11) { throw 'Installer evidence contains a non-passed or missing case.' }
+            $caseIds = @($Value.Tests | ForEach-Object { [string]$_.CaseId })
+            if (@($caseIds | Sort-Object -Unique).Count -ne $requiredInstallerCaseIds.Count -or @($requiredInstallerCaseIds | Where-Object { $caseIds -notcontains $_ }).Count -ne 0) { throw 'Installer evidence does not contain the defined eleven case IDs.' }
         }
         'AgentExplorerCorrelation' {
             if ($schema -ne 'StorageChronicle.AgentExplorerCorrelationEvidence.v1') { throw 'Agent/Explorer correlation evidence has an unexpected schema.' }
             if ([string]$Value.LiveMachineMeasurement -ne 'PASSED') { throw 'Agent/Explorer evidence is not a live machine measurement.' }
             if ($null -eq $Value.PSObject.Properties['FalseExactCount'] -or [int]$Value.FalseExactCount -ne 0) { throw 'Agent/Explorer evidence does not prove false Exact attribution is zero.' }
+            foreach ($field in @('ProcessAttribution', 'ExplorerSourceCorrelation', 'FileStateCorrectness', 'WorkloadOraclePath', 'Environment')) { if ($null -eq $Value.PSObject.Properties[$field]) { throw "Agent/Explorer evidence is missing $field." } }
         }
         'BranchIntegration' {
             if ($schema -ne 'StorageChronicle.BranchIntegrationEvidence.v1') { throw 'Branch integration evidence has an unexpected schema.' }

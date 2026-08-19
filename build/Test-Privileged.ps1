@@ -349,8 +349,16 @@ try {
 
     $rootReady = -not [string]::IsNullOrWhiteSpace($AcceptanceRoot) -and $null -ne $volume
     $deviceReady = -not [string]::IsNullOrWhiteSpace($device)
+    $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+    $currentVersion = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue
+    $displayVersion = if ($null -ne $os.PSObject.Properties['DisplayVersion']) { [string]$os.DisplayVersion } elseif ($null -ne $currentVersion) { [string]$currentVersion.DisplayVersion } else { '' }
+    $buildNumber = if ($null -ne $os.PSObject.Properties['BuildNumber']) { [string]$os.BuildNumber } elseif ($null -ne $currentVersion) { [string]$currentVersion.CurrentBuild } else { '' }
     $manifest.Environment = [ordered]@{
         OS = [Environment]::OSVersion.VersionString
+        ProductName = [string]$os.Caption
+        DisplayVersion = $displayVersion
+        Build = $buildNumber
+        Architecture = if ([Environment]::Is64BitOperatingSystem) { 'x64' } else { 'x86' }
         IsAdministrator = $admin
         AcceptanceRoot = $AcceptanceRoot
         NonNtfsRoot = $NonNtfsRoot

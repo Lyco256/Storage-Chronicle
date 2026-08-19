@@ -12,7 +12,7 @@ The script validates safe disposable targets and both TestLab marker files befor
 
 ## Inputs and outputs
 
-Inputs are explicit acceptance paths, an optional `NonNtfsRoot`, an approved `TestLabRoot` (or process `SC_TESTLAB_ROOT`), an explicit Session Agent executable/live Agent pipe for IPC acceptance, capability environment variables, and switches. Outputs include the manifest, log, environment, capability, oracle, source-event, canonical, final-state, reconciliation, confirmed-reconciliation, service, errors, and result JSON artifacts under `artifacts/acceptance/windows-privileged/<run-id>/`. The production Agent reconciliation test writes `confirmed-reconciliation.json` itself through `STORAGE_CHRONICLE_RECONCILIATION_EVIDENCE_PATH`; when it does not run, the harness writes an explicit `NOT_EXECUTED` artifact and never upgrades it.
+Inputs are explicit acceptance paths, an optional `NonNtfsRoot`, an approved `TestLabRoot` (or process `SC_TESTLAB_ROOT`), an explicit Session Agent executable/live Agent pipe for IPC acceptance, capability environment variables, and switches. Outputs include the manifest, log, environment, capability, oracle, source-event, canonical, final-state, reconciliation, confirmed-reconciliation, service, errors, and result JSON artifacts under `artifacts/acceptance/windows-privileged/<run-id>/`. The environment artifact records ProductName, DisplayVersion, Build, and x64/x86 architecture so the Windows 10 Stage A composer can reject evidence from the wrong OS. The production Agent reconciliation test writes `confirmed-reconciliation.json` itself through `STORAGE_CHRONICLE_RECONCILIATION_EVIDENCE_PATH`; when it does not run, the harness writes an explicit `NOT_EXECUTED` artifact and never upgrades it.
 
 ## Dependencies
 

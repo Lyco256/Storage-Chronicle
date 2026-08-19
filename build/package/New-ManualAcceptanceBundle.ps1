@@ -65,6 +65,8 @@ $commonScripts = @(
 foreach ($scriptPath in $commonScripts) { if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) { throw "Bundle source script is missing: $scriptPath" } }
 $win10Verifier = Join-Path $root 'tools/PhysicalAcceptance/Verify-Windows10PhysicalAcceptance.ps1'
 if (-not (Test-Path -LiteralPath $win10Verifier -PathType Leaf)) { throw "Windows 10 verifier is missing: $win10Verifier" }
+$win10Finalizer = Join-Path $root 'tools/PhysicalAcceptance/Finalize-Windows10PhysicalAcceptance.ps1'
+if (-not (Test-Path -LiteralPath $win10Finalizer -PathType Leaf)) { throw "Windows 10 finalizer is missing: $win10Finalizer" }
 
 function Copy-Payload {
     param([string]$Source, [string]$Destination)
@@ -109,6 +111,8 @@ function New-Bundle {
     if ($TargetOs -eq 'Windows10-22H2') {
         Copy-Item -LiteralPath $win10Verifier -Destination (Join-Path $bundle 'Verify-Windows10PhysicalAcceptance.ps1') -Force:$Force
         [void]$payloadFiles.Add('Verify-Windows10PhysicalAcceptance.ps1')
+        Copy-Item -LiteralPath $win10Finalizer -Destination (Join-Path $bundle 'Finalize-Windows10PhysicalAcceptance.ps1') -Force:$Force
+        [void]$payloadFiles.Add('Finalize-Windows10PhysicalAcceptance.ps1')
     }
 
     $hashEntries = [System.Collections.Generic.List[object]]::new()
@@ -151,7 +155,7 @@ This bundle is preparation evidence only. `AcceptanceEligible` is `false` until 
 
 The script verifies the target OS, x64, administrator token, free space, bundle hashes, and marker before asking for an exact `YES` confirmation. It does not claim success from an exit code alone.
 
-For Windows 10, run `.Verify-Windows10PhysicalAcceptance.ps1` first. Collect only the generated result files with `.Collect-PhysicalAcceptanceResults.ps1 -BundleRoot .`.
+For Windows 10, run `.Verify-Windows10PhysicalAcceptance.ps1 -BundleRoot . -TestDataRoot 'D:\SC-Acceptance'` first. After the physical installer run and after the real Windows 10 Hyper-V Stage A artifact has been copied to the target, run `.Finalize-Windows10PhysicalAcceptance.ps1 -StageAManifestPath <stage-a.json> -PhysicalPreflightPath .\results\windows10-preflight.json -PhysicalInstallerManifestPath <results\installer\installer-acceptance-*.json>`. The finalizer remains ineligible unless Stage A, all physical preflight checks, and all eleven physical installer cases pass. Collect only the generated result files with `.Collect-PhysicalAcceptanceResults.ps1 -BundleRoot .`.
 
 Cleanup requires explicit `-ConfirmCleanup`; it never removes `%ProgramData%\Storage Chronicle\history`.
 "@

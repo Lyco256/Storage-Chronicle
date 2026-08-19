@@ -75,10 +75,37 @@ try {
         '-SessionUser', $SessionUser, '-HistoryPath', 'C:\ProgramData\Storage Chronicle\history', '-InstallPath', 'C:\Program Files\Storage Chronicle',
         '-StoragePermissionPath', 'C:\ProgramData\Storage Chronicle\history', '-OutputDirectory', $OutputDirectory, '-Execute'
     )
+    $installerStartedUtc = [DateTimeOffset]::UtcNow
     & powershell.exe @arguments | Tee-Object -FilePath (Join-Path $OutputDirectory 'installer-harness.log')
     $installerExitCode = $LASTEXITCODE
-    $manifest.Stages += [ordered]@{ Name = 'installer-matrix'; Status = if ($installerExitCode -eq 0) { 'PASSED' } else { 'FAILED' }; Reason = "Generic installer matrix exit code: $installerExitCode." }
     if ($installerExitCode -ne 0) { throw "Hyper-V installer matrix failed or was not executed: exit code $installerExitCode." }
+    $installerManifests = @(Get-ChildItem -LiteralPath $OutputDirectory -Filter 'installer-acceptance-*.json' -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTimeUtc -ge $installerStartedUtc.UtcDateTime } |
+        Sort-Object LastWriteTimeUtc -Descending)
+    if ($installerManifests.Count -ne 1) { throw "Expected exactly one new generic installer acceptance manifest, found $($installerManifests.Count)." }
+    $installerManifestPath = $installerManifests[0].FullName
+    $installerManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $installerManifestPath | ConvertFrom-Json
+    if ([string]$installerManifest.Schema -ne 'storage-chronicle.installer-acceptance.v1' -or
+        [string]$installerManifest.Status -ne 'PASSED' -or
+        -not [bool]$installerManifest.AcceptanceEligible -or
+        [string]$installerManifest.TargetOs -ne [string]$manifest.TargetOs -or
+        [string]$installerManifest.TargetKind -ne 'HyperVVm' -or
+        [string]$installerManifest.ExecutionMode -ne 'VM' -or
+        $null -eq $installerManifest.Summary -or
+        [int]$installerManifest.Summary.Total -ne 11 -or
+        [int]$installerManifest.Summary.Passed -ne 11 -or
+        [int]$installerManifest.Summary.Failed -ne 0 -or
+        [int]$installerManifest.Summary.NotExecuted -ne 0 -or
+        @($installerManifest.Tests).Count -ne 11 -or
+        @($installerManifest.Tests | Where-Object { [string]$_.Status -ne 'PASSED' }).Count -ne 0) {
+        throw "The generic installer manifest is not an eligible eleven-case Hyper-V result: $installerManifestPath"
+    }
+    $requiredCaseIds = @('clean-install', 'repair', 'update', 'rollback', 'uninstall', 'failed-install-rollback', 'history-retention', 'service', 'session', 'non-admin', 'storage-permission')
+    $caseIds = @($installerManifest.Tests | ForEach-Object { [string]$_.CaseId })
+    if (@($caseIds | Sort-Object -Unique).Count -ne $requiredCaseIds.Count -or @($requiredCaseIds | Where-Object { $caseIds -notcontains $_ }).Count -ne 0) { throw "The generic installer manifest does not contain the defined eleven case IDs: $installerManifestPath" }
+    $manifest.InstallerManifestPath = $installerManifestPath
+    $manifest.InstallerSummary = $installerManifest.Summary
+    $manifest.Stages += [ordered]@{ Name = 'installer-matrix'; Status = 'PASSED'; Reason = 'The generic installer matrix produced one eligible manifest with all eleven cases passed.'; Evidence = $installerManifestPath }
     $manifest.Status = 'PASSED'
     $manifest.AcceptanceEligible = $true
     $exitCode = 0

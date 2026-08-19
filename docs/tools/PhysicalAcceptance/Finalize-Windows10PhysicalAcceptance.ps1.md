@@ -1,0 +1,7 @@
+# Finalize-Windows10PhysicalAcceptance.ps1
+
+Composes the final `StorageChronicle.Windows10PhysicalAcceptance.v1` artifact only after validating three independent real-evidence inputs: a passed Windows 10 22H2 Hyper-V Stage A manifest, the `StorageChronicle.Windows10PhysicalPreflight.v1` output from `Verify-Windows10PhysicalAcceptance.ps1` (`results/windows10-preflight.json`), and the physical-machine installer manifest with all eleven cases passed. It does not run an installer, change a machine, or infer a pass from the installer script's separate `RealMachineInstallerPreflight` artifact. Missing, malformed, diagnostic, or ineligible inputs produce a `NOT_EXECUTED` manifest and exit code 2.
+
+The Stage A manifest must contain exactly one `PASSED` result for each required application, Avalonia UI, Agent, Session Agent, USN, MFT, ETW, ReadDirectoryChangesW, Clipboard, SMB, Cloud Files capability, reconciliation, installer, history-retention, and no-driver check. The physical preflight must contain only `PASS` checks for Windows 10 22H2 x64. The installer artifact must be the real `storage-chronicle.installer-acceptance.v1` result for `Windows10-22H2`/`PhysicalMachine`/`Local` with all eleven cases passed.
+
+Tests: PowerShell parser validation and the no-input fail-closed path are host-testable. A `PASSED` result requires real artifacts from the TestLab and the human-approved physical Windows 10 run; fixtures or diagnostic runs are not eligible.
