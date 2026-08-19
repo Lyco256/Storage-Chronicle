@@ -48,7 +48,8 @@ public sealed class ConfirmedReconciliationRunnerTests
                 storage,
                 normalizer,
                 health);
-            var request = new PendingReconciliationRequest("gap", volume.Id, "test gap", 1, DateTimeOffset.UtcNow.AddMinutes(-1));
+            var gapStart = DateTimeOffset.UtcNow.AddHours(-2);
+            var request = new PendingReconciliationRequest("gap", volume.Id, "test gap", 1, DateTimeOffset.UtcNow.AddMinutes(-1), GapStartUtc: gapStart);
 
             var summary = await runner.ExecuteAsync(request);
             var events = new List<CanonicalEvent>();
@@ -68,7 +69,8 @@ public sealed class ConfirmedReconciliationRunnerTests
             Assert.True(summary.DetailedQueryCandidateRatio > 0d);
             Assert.True(summary.ElapsedMilliseconds >= 0d);
             Assert.True(events.Count > 0, $"Canonical events={events.Count}; durable={summary.DurableEventCount}");
-            Assert.Contains(events, value => value.Origin == EventOrigin.DirectoryReconciliation && value.Operation == CanonicalOperation.ReconciliationDiscovered && value.Quality == EventQuality.Reconciled && value.ProcessQuality == ProcessAttributionQuality.Unknown);
+            var reconciliation = Assert.Single(events, value => value.Origin == EventOrigin.DirectoryReconciliation && value.Operation == CanonicalOperation.ReconciliationDiscovered && value.Quality == EventQuality.Reconciled && value.ProcessQuality == ProcessAttributionQuality.Unknown && string.Equals(value.Name, "new.txt", StringComparison.OrdinalIgnoreCase));
+            Assert.Equal(gapStart.ToUniversalTime().ToString("O"), reconciliation.Properties["uncertainfromutc"]);
             Assert.DoesNotContain(events, value => value.Origin == EventOrigin.DirectoryReconciliation && value.Properties.ContainsKey("fileContents"));
         }
         finally

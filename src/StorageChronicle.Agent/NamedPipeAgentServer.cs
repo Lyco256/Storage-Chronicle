@@ -288,6 +288,8 @@ public sealed class NamedPipeAgentServer : BackgroundService
         properties["reconciliationDecision"] = "Declined";
         properties["userDeclined"] = "true";
         properties["reconciliationReason"] = request.Reason;
+        properties["uncertainFromUtc"] = (request.GapStartUtc ?? request.DiscoveredUtc).ToUniversalTime().ToString("O");
+        properties["uncertainToUtc"] = now.ToUniversalTime().ToString("O");
         var source = new SourceEvent(EventId.New(), EventSchemaVersion.Current, EventOrigin.DirectoryReconciliation,
             request.VolumeId, null, null, null, null, CanonicalOperation.UnverifiedGap, null,
             new EventTime(now, now.Offset, null, now, new SourceSequence(Math.Max(1, request.SourceSequence ?? 1)), new MountSequence(Math.Max(1, request.SourceSequence ?? 1))),

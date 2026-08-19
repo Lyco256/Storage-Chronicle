@@ -230,17 +230,19 @@ function Assert-GroupEvidence {
             if ($schema -ne 'StorageChronicle.AgentExplorerCorrelationEvidence.v1') { throw 'Agent/Explorer correlation evidence has an unexpected schema.' }
             if ([string]$Value.Status -ne 'PASSED' -or [string]$Value.LiveMachineMeasurement -ne 'PASSED') { throw 'Agent/Explorer evidence is not a live machine measurement.' }
             if ($null -eq $Value.PSObject.Properties['FalseExactCount'] -or [int]$Value.FalseExactCount -ne 0) { throw 'Agent/Explorer evidence does not prove false Exact attribution is zero.' }
-            foreach ($field in @('ProcessAttribution', 'ExplorerSourceCorrelation', 'FileStateCorrectness', 'WorkloadOraclePath', 'Environment')) { if ($null -eq $Value.PSObject.Properties[$field]) { throw "Agent/Explorer evidence is missing $field." } }
+            foreach ($field in @('ProcessAttribution', 'ExplorerSourceCorrelation', 'FileStateCorrectness', 'WorkloadOraclePath', 'Environment', 'SourceEventCount', 'CanonicalEventCount', 'FinalStateCount', 'Failures')) { if ($null -eq $Value.PSObject.Properties[$field]) { throw "Agent/Explorer evidence is missing $field." } }
             if ([string]$Value.Environment.TargetOs -ne 'Windows11' -or
                 [string]$Value.Environment.VmName -ne 'SC-Test-W11' -or
                 [string]$Value.Environment.ExecutionMode -ne 'TestLab' -or
                 [string]$Value.Environment.AgentHostMode -ne 'TestLab' -or
                 [bool]$Value.Environment.Diagnostic) { throw 'Agent/Explorer evidence does not prove a non-diagnostic Windows 11 TestLab Agent run.' }
-            foreach ($path in @([string]$Value.WorkloadOraclePath, [string]$Value.Environment.AgentExecutablePath, [string]$Value.Environment.WorkloadExecutablePath, [string]$Value.Environment.ExplorerEvidencePath)) {
+            foreach ($path in @([string]$Value.WorkloadOraclePath, [string]$Value.Environment.AgentExecutablePath, [string]$Value.Environment.WorkloadExecutablePath, [string]$Value.Environment.WorkloadOraclePath, [string]$Value.Environment.ExplorerEvidencePath)) {
                 if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Agent/Explorer evidence references a missing real artifact: $path" }
             }
             if ([string]::IsNullOrWhiteSpace([string]$Value.Environment.AgentHistoryPath) -or -not (Test-Path -LiteralPath ([string]$Value.Environment.AgentHistoryPath) -PathType Container)) { throw "Agent/Explorer evidence references a missing Agent history directory: $($Value.Environment.AgentHistoryPath)" }
-            foreach ($field in @('Total', 'Exact', 'Correlated', 'Unknown', 'ExactRate', 'CorrelatedRate', 'UnknownRate', 'Rows')) {
+            if (-not [string]::Equals([IO.Path]::GetFullPath([string]$Value.WorkloadOraclePath), [IO.Path]::GetFullPath([string]$Value.Environment.WorkloadOraclePath), [StringComparison]::OrdinalIgnoreCase)) { throw 'Agent/Explorer workload oracle paths are inconsistent.' }
+            if ([int]$Value.SourceEventCount -le 0 -or [int]$Value.CanonicalEventCount -le 0 -or [int]$Value.FinalStateCount -le 0 -or @($Value.Failures).Count -ne 0) { throw 'Agent/Explorer evidence does not contain complete durable counts or an empty failure list.' }
+            foreach ($field in @('Total', 'Exact', 'Correlated', 'Unknown', 'FalseExactCount', 'ExactRate', 'CorrelatedRate', 'UnknownRate', 'Rows')) {
                 if ($null -eq $Value.ProcessAttribution.PSObject.Properties[$field]) { throw "Agent process attribution is missing $field." }
             }
             if ([int]$Value.ProcessAttribution.Total -le 0 -or
@@ -248,6 +250,7 @@ function Assert-GroupEvidence {
                 [int]$Value.ProcessAttribution.Correlated -lt 0 -or
                 [int]$Value.ProcessAttribution.Unknown -lt 0 -or
                 [int]$Value.ProcessAttribution.Exact + [int]$Value.ProcessAttribution.Correlated + [int]$Value.ProcessAttribution.Unknown -ne [int]$Value.ProcessAttribution.Total -or
+                [int]$Value.ProcessAttribution.FalseExactCount -ne 0 -or
                 @($Value.ProcessAttribution.Rows).Count -ne [int]$Value.ProcessAttribution.Total) { throw 'Agent process attribution counts or rows are inconsistent.' }
             foreach ($field in @('CopyIntentCount', 'SourceCorrelatedCount', 'SourceUnknownCount', 'NotIdentifiedCount', 'FalseAttributionCount', 'Rows')) {
                 if ($null -eq $Value.ExplorerSourceCorrelation.PSObject.Properties[$field]) { throw "Explorer correlation is missing $field." }

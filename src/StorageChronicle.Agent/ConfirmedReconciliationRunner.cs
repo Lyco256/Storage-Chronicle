@@ -125,7 +125,7 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
 
         var metrics = new ReconciliationScopeMetrics();
         var sourceSequence = Math.Max(storage.Status.LastSourceSequence + 1, request.SourceSequence.GetValueOrDefault() + 1);
-        var uncertainFrom = request.DiscoveredUtc;
+        var uncertainFrom = request.GapStartUtc ?? request.DiscoveredUtc;
         using var liveSession = liveEvents.Begin(requestedVolume, request.SourceSequence.GetValueOrDefault());
         try
         {

@@ -89,14 +89,21 @@ if (-not [string]::IsNullOrWhiteSpace($LiveEvidencePath)) {
         Write-Error 'The supplied live correlation artifact is missing the required non-diagnostic TestLab identity or zero-false-Exact proof.'
         exit 1
     }
-    foreach ($path in @([string]$live.WorkloadOraclePath, [string]$live.Environment.AgentExecutablePath, [string]$live.Environment.WorkloadExecutablePath, [string]$live.Environment.ExplorerEvidencePath)) {
+    foreach ($path in @([string]$live.WorkloadOraclePath, [string]$live.Environment.AgentExecutablePath, [string]$live.Environment.WorkloadExecutablePath, [string]$live.Environment.WorkloadOraclePath, [string]$live.Environment.ExplorerEvidencePath)) {
         if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { Write-Error "The supplied live correlation artifact references a missing file: $path"; exit 1 }
     }
     if ([string]::IsNullOrWhiteSpace([string]$live.Environment.AgentHistoryPath) -or -not (Test-Path -LiteralPath ([string]$live.Environment.AgentHistoryPath) -PathType Container)) { Write-Error "The supplied live correlation artifact references a missing Agent history directory: $($live.Environment.AgentHistoryPath)"; exit 1 }
-    foreach ($field in @('Total', 'Exact', 'Correlated', 'Unknown', 'ExactRate', 'CorrelatedRate', 'UnknownRate', 'Rows')) {
+    foreach ($field in @('SourceEventCount', 'CanonicalEventCount', 'FinalStateCount', 'Failures')) {
+        if ($null -eq $live.PSObject.Properties[$field]) { Write-Error "The supplied live correlation artifact is missing durable evidence field: $field"; exit 1 }
+    }
+    if (-not [string]::Equals([IO.Path]::GetFullPath([string]$live.WorkloadOraclePath), [IO.Path]::GetFullPath([string]$live.Environment.WorkloadOraclePath), [StringComparison]::OrdinalIgnoreCase) -or
+        [int]$live.SourceEventCount -le 0 -or [int]$live.CanonicalEventCount -le 0 -or [int]$live.FinalStateCount -le 0 -or @($live.Failures).Count -ne 0) {
+        Write-Error 'The supplied live correlation artifact has inconsistent durable paths/counts or recorded failures.'; exit 1
+    }
+    foreach ($field in @('Total', 'Exact', 'Correlated', 'Unknown', 'FalseExactCount', 'ExactRate', 'CorrelatedRate', 'UnknownRate', 'Rows')) {
         if ($null -eq $live.ProcessAttribution.PSObject.Properties[$field]) { Write-Error "The supplied live correlation artifact is missing process field: $field"; exit 1 }
     }
-    if ([int]$live.ProcessAttribution.Total -le 0 -or [int]$live.ProcessAttribution.Exact + [int]$live.ProcessAttribution.Correlated + [int]$live.ProcessAttribution.Unknown -ne [int]$live.ProcessAttribution.Total -or @($live.ProcessAttribution.Rows).Count -ne [int]$live.ProcessAttribution.Total) { Write-Error 'The supplied live process attribution rows/counts are inconsistent.'; exit 1 }
+    if ([int]$live.ProcessAttribution.Total -le 0 -or [int]$live.ProcessAttribution.Exact + [int]$live.ProcessAttribution.Correlated + [int]$live.ProcessAttribution.Unknown -ne [int]$live.ProcessAttribution.Total -or [int]$live.ProcessAttribution.FalseExactCount -ne 0 -or @($live.ProcessAttribution.Rows).Count -ne [int]$live.ProcessAttribution.Total) { Write-Error 'The supplied live process attribution rows/counts are inconsistent.'; exit 1 }
     foreach ($field in @('CopyIntentCount', 'SourceCorrelatedCount', 'SourceUnknownCount', 'NotIdentifiedCount', 'FalseAttributionCount', 'Rows')) {
         if ($null -eq $live.ExplorerSourceCorrelation.PSObject.Properties[$field]) { Write-Error "The supplied live correlation artifact is missing Explorer field: $field"; exit 1 }
     }

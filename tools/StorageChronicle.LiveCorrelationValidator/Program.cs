@@ -150,7 +150,7 @@ public static class Program
             var stateMatches = isDelete
                 ? hasState && state!.Any(value => value.IsVirtualDeleted || !value.Metadata.Exists)
                 : hasState && state!.Any(value => !value.IsVirtualDeleted && value.Metadata.Exists);
-            var evidence = candidates.Count > 0 && (stateMatches || !isDelete);
+            var evidence = candidates.Count > 0 && stateMatches;
             if (evidence) verified++;
             else missing++;
         }
@@ -176,6 +176,7 @@ public static class Program
             else if (rowQuality == "SourceUnknown") sourceUnknown++;
             else notIdentified++;
             if (!string.IsNullOrWhiteSpace(sourceId) && rowQuality != "Correlated") falseAttribution++;
+            if (rowQuality == "Correlated" && !string.IsNullOrWhiteSpace(scenario.ExpectedSourceFileId) && !string.Equals(sourceId, scenario.ExpectedSourceFileId, StringComparison.OrdinalIgnoreCase)) falseAttribution++;
             if (!string.IsNullOrWhiteSpace(scenario.ExpectedCorrelation) && !ExpectedCorrelationMatches(scenario.ExpectedCorrelation, rowQuality)) falseAttribution++;
             rows.Add(new
             {
@@ -345,7 +346,7 @@ public static class Program
     private sealed record ProcessEvidence(int ProcessId, DateTime StartTimeUtc, string ExecutablePath, string ScenarioId);
     private sealed record OracleOperation(long Sequence, string Operation, string RelativePath, string? OldRelativePath, DateTimeOffset StartedUtc, DateTimeOffset CompletedUtc);
     private sealed record ExplorerDocument(string Schema, IReadOnlyList<ExplorerScenario> Rows);
-    private sealed record ExplorerScenario(string ScenarioId, string Operation, string DestinationRelativePath, string? SourceRelativePath, string? ExpectedCorrelation);
+    private sealed record ExplorerScenario(string ScenarioId, string Operation, string DestinationRelativePath, string? SourceRelativePath, string? ExpectedCorrelation, string? ExpectedSourceFileId);
     private sealed record CorrelationEnvironment(string? TargetOs, string? VmName, string? ExecutionMode, string? AgentHostMode, bool Diagnostic, string? AgentHistoryPath, string? AgentExecutablePath, string? WorkloadExecutablePath, string? WorkloadOraclePath, string? ExplorerEvidencePath);
     private sealed record ProcessMeasurement(int Total, int Exact, int Correlated, int Unknown, int FalseExactCount, decimal ExactRate, decimal CorrelatedRate, decimal UnknownRate, IReadOnlyList<object> Rows);
     private sealed record ExplorerMeasurement(int CopyIntentCount, int SourceCorrelatedCount, int SourceUnknownCount, int NotIdentifiedCount, int FalseAttributionCount, IReadOnlyList<object> Rows);

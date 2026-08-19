@@ -128,7 +128,46 @@ public sealed class LiveCorrelationValidatorTests
         }
     }
 
-    private static async Task CreateHistoryAsync(string historyPath, int processId, DateTime processStart)
+    [Fact]
+    public async Task MissingFinalStateCannotBecomeEligibleEvenWhenCanonicalEvidenceExists()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var processStart = DateTime.UtcNow.AddMinutes(-1);
+            var historyPath = Path.Combine(root, "history");
+            var oraclePath = Path.Combine(root, "oracle.json");
+            var explorerPath = Path.Combine(root, "explorer.json");
+            var environmentPath = Path.Combine(root, "environment.json");
+            var outputPath = Path.Combine(root, "evidence.json");
+            var agentPath = Path.Combine(root, "StorageChronicle.Agent.exe");
+            var workloadPath = Path.Combine(root, "StorageChronicle.FileMutationWorkload.exe");
+            await File.WriteAllTextAsync(agentPath, "test artifact");
+            await File.WriteAllTextAsync(workloadPath, "test artifact");
+
+            await CreateHistoryAsync(historyPath, 4321, processStart, applyFileState: false);
+            WriteOracle(oraclePath, 4321, processStart);
+            WriteExplorer(explorerPath);
+            WriteEnvironment(environmentPath, historyPath, oraclePath, explorerPath, agentPath, workloadPath);
+
+            var exitCode = await Program.Main(new[]
+            {
+                "--oracle", oraclePath, "--history", historyPath, "--explorer", explorerPath,
+                "--environment", environmentPath, "--output", outputPath
+            });
+
+            Assert.Equal(2, exitCode);
+            using var evidence = JsonDocument.Parse(await File.ReadAllTextAsync(outputPath));
+            Assert.Equal("FAILED", evidence.RootElement.GetProperty("Status").GetString());
+            Assert.Equal(1, evidence.RootElement.GetProperty("FileStateCorrectness").GetProperty("MissingCount").GetInt32());
+        }
+        finally
+        {
+            DeleteTempRoot(root);
+        }
+    }
+
+    private static async Task CreateHistoryAsync(string historyPath, int processId, DateTime processStart, bool applyFileState = true)
     {
         var volume = VolumeId.Create("test-volume");
         var parent = FileId.Create("parent");
@@ -152,7 +191,7 @@ public sealed class LiveCorrelationValidatorTests
         var fileCanonical = Canonical(fileSource, CanonicalOperation.Create, fileMetadata);
         await history.AppendSourceAsync(fileSource);
         await history.AppendCanonicalAsync(fileCanonical);
-        await history.ApplyAsync(fileCanonical);
+        if (applyFileState) await history.ApplyAsync(fileCanonical);
     }
 
     private static void WriteOracle(string path, int processId, DateTime processStart)
@@ -183,7 +222,7 @@ public sealed class LiveCorrelationValidatorTests
     private static void WriteExplorer(string path) => File.WriteAllText(path, JsonSerializer.Serialize(new
     {
         Schema = "StorageChronicle.ExplorerScenario.v1",
-        Rows = new[] { new { ScenarioId = "copy-1", Operation = "Copy", DestinationRelativePath = "folder\\copy.txt", SourceRelativePath = "source.txt", ExpectedCorrelation = "Correlated" } }
+        Rows = new[] { new { ScenarioId = "copy-1", Operation = "Copy", DestinationRelativePath = "folder\\copy.txt", SourceRelativePath = "source.txt", ExpectedCorrelation = "Correlated", ExpectedSourceFileId = "source-file" } }
     }));
 
     private static void WriteEnvironment(string path, string history, string oracle, string explorer, string agent, string workload, bool diagnostic = false) => File.WriteAllText(path, JsonSerializer.Serialize(new

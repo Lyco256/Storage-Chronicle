@@ -13,9 +13,9 @@ This executable is the fail-closed producer for the real Agent/process/Explorer 
 - Fixture or diagnostic artifacts cannot be marked acceptance-eligible.
 - The environment paths must identify the same oracle, history, and Explorer evidence supplied to the command.
 - Process attribution is exact only when the durable process instance identifier matches a PID/start-time pair in the real workload process collection.
-- Explorer correlation requires an actual Explorer process event and a correlated source file identifier; unknown or contradictory source claims remain failures.
+- Explorer correlation requires an actual Explorer process event and a correlated source file identifier; when the scenario supplies an expected source identifier, the durable identifier must match it exactly. Unknown or contradictory source claims remain failures.
 - Explorer scenario expectations accept the repository's `Correlated`/`Uncorrelated`/`ExcludedNonExplorer` vocabulary and normalize it to the evidence counters `SourceCorrelated`, `SourceUnknown`, and `NotIdentified`.
-- Workload operations must have matching canonical evidence and final state evidence. Missing rows are reported as dropped/missing rather than synthesized.
+- Workload operations must have matching canonical evidence and final state evidence, including a live or virtual-deleted final state as appropriate. Missing rows are reported as dropped/missing rather than synthesized.
 - Evidence uses metadata, identifiers, timestamps, and bounded properties only; it does not open or hash target files.
 
 ## Dependencies and failure behavior
