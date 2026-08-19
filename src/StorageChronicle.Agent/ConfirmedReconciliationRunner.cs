@@ -78,8 +78,8 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
 
         var started = DateTimeOffset.UtcNow;
         var runId = Guid.NewGuid().ToString("N");
-        var descriptor = (await volumes.EnumerateAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(value => value.Id == requestedVolume);
-        var failureDescriptor = descriptor ?? new VolumeDescriptor(requestedVolume, request.FileSystem, [], false, true, false, false, false);
+        var descriptor = (VolumeDescriptor?)null;
+        var failureDescriptor = new VolumeDescriptor(requestedVolume, request.FileSystem, [], false, true, false, false, false);
 
         var metrics = new ReconciliationScopeMetrics();
         var sourceSequence = Math.Max(storage.Status.LastSourceSequence + 1, request.SourceSequence.GetValueOrDefault() + 1);
@@ -87,6 +87,8 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
         using var liveSession = liveEvents.Begin(requestedVolume, request.SourceSequence.GetValueOrDefault());
         try
         {
+            descriptor = (await volumes.EnumerateAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(value => value.Id == requestedVolume);
+            failureDescriptor = descriptor ?? failureDescriptor;
             if (descriptor is null)
             {
                 throw new IOException($"The requested volume is no longer available: {requestedVolume.Value}.");
@@ -191,7 +193,14 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
         }
 
         var endBoundary = ReadJournalBoundary(devicePath);
-        return new ReconciliationExecutionSummary(runId, volume.Id, volume.FileSystem, true, "Completed", current.Count, candidates.Length + saved.Values.Count(value => value.Exists && !current.ContainsKey(value.FileId)), metadataQueries, durableCount, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.Priority, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, endBoundary is null ? "Journal boundary unavailable after scan." : null);
+        if (endBoundary is null)
+        {
+            const string reason = "The NTFS journal boundary could not be established after the reconciliation scan.";
+            await AppendFailureAsync(volume, runId, uncertainFrom, DateTimeOffset.UtcNow, sequence, "Failed", reason, CancellationToken.None).ConfigureAwait(false);
+            return new ReconciliationExecutionSummary(runId, volume.Id, volume.FileSystem, false, "Failed", current.Count, candidates.Length + saved.Values.Count(value => value.Exists && !current.ContainsKey(value.FileId)), metadataQueries, durableCount, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.Priority, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, reason);
+        }
+
+        return new ReconciliationExecutionSummary(runId, volume.Id, volume.FileSystem, true, "Completed", current.Count, candidates.Length + saved.Values.Count(value => value.Exists && !current.ContainsKey(value.FileId)), metadataQueries, durableCount, metrics.PrivilegeEnableSuccessCount, metrics.PrivilegeFallbackCount, metrics.Priority, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, null);
     }
 
     private async ValueTask<ReconciliationExecutionSummary> ExecuteDirectoryAsync(
@@ -315,6 +324,11 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
                 result = new CandidateMetadataResult(new FileMetadata(volume.Id, entry.ToFileId(), entry.ToParentFileId(), entry.Name, entry.IsDirectory ? FileKind.Directory : FileKind.File, null, null, null, null, null, null, (FileAttributes)entry.FileAttributes, null, null, quality, true, false), quality);
             }
             catch (IOException)
+            {
+                quality = EventQuality.Unknown;
+                result = new CandidateMetadataResult(new FileMetadata(volume.Id, entry.ToFileId(), entry.ToParentFileId(), entry.Name, entry.IsDirectory ? FileKind.Directory : FileKind.File, null, null, null, null, null, null, (FileAttributes)entry.FileAttributes, null, null, quality, true, false), quality);
+            }
+            catch (System.ComponentModel.Win32Exception)
             {
                 quality = EventQuality.Unknown;
                 result = new CandidateMetadataResult(new FileMetadata(volume.Id, entry.ToFileId(), entry.ToParentFileId(), entry.Name, entry.IsDirectory ? FileKind.Directory : FileKind.File, null, null, null, null, null, null, (FileAttributes)entry.FileAttributes, null, null, quality, true, false), quality);

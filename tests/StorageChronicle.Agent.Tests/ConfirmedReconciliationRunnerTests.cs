@@ -1,4 +1,6 @@
+using System.Buffers.Binary;
 using System.Collections.Immutable;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 using StorageChronicle.Agent;
 using StorageChronicle.Contracts;
@@ -131,6 +133,83 @@ public sealed class ConfirmedReconciliationRunnerTests
     }
 
     [Fact]
+    public async Task VolumeEnumerationFailureIsRecordedAsFailedGapInsteadOfEscaping()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.ReconciliationHistory", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var volumeId = VolumeId.Create("enumeration-failure-volume");
+            await using var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(root) { FlushInterval = TimeSpan.FromMinutes(1) });
+            var runner = new ConfirmedReconciliationRunner(
+                new ThrowingVolumes(),
+                new UnsupportedNtfsApi(),
+                new WindowsVolumeSnapshotReader(new FakeMetadataNative()),
+                new WindowsFileMetadataReader(new FakeMetadataNative()),
+                storage,
+                new EventNormalizer(),
+                new AgentHealthState());
+
+            var summary = await runner.ExecuteAsync(new PendingReconciliationRequest("enumeration-gap", volumeId, "volume enumeration failed", 1, DateTimeOffset.UtcNow.AddMinutes(-1), FileSystem: "NTFS"));
+            var events = await storage.ReadCanonicalPageAsync(0, 512);
+
+            Assert.False(summary.Completed);
+            Assert.Equal("Failed", summary.Status);
+            Assert.Contains(events, value => value.Operation == CanonicalOperation.UnverifiedGap && value.Quality == EventQuality.UnverifiedGap);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MissingNtfsCompletionBoundaryIsRecordedAsFailedGapInsteadOfCompleted()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.ReconciliationHistory", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var volume = new VolumeDescriptor(VolumeId.Create("boundary-volume"), "NTFS", [root], false, false, false, true, true);
+            var fileId = FileId.Create("0001000000000001");
+            var parentId = FileId.Create("0000000000000005");
+            var metadata = new FileMetadata(volume.Id, fileId, parentId, "stable.txt", FileKind.File, null, null, null, null, null, null, FileAttributes.Normal, null, null, EventQuality.Exact, true, false);
+            await using var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(root) { FlushInterval = TimeSpan.FromMinutes(1) });
+            var normalizer = new EventNormalizer();
+            var seed = new SourceEvent(EventId.New(), EventSchemaVersion.Current, EventOrigin.InitialSnapshot, volume.Id, fileId, parentId, "stable.txt", null, CanonicalOperation.Create,
+                metadata,
+                new EventTime(DateTimeOffset.UtcNow, TimeSpan.Zero, null, DateTimeOffset.UtcNow, new SourceSequence(7), new MountSequence(7)),
+                EventQuality.Exact, null, ProcessAttributionQuality.Unknown, null, null, ImmutableDictionary<string, string>.Empty);
+            var canonical = normalizer.Normalize(seed)!;
+            await storage.AppendSourceAsync(seed);
+            await storage.AppendCanonicalAsync(canonical);
+            await storage.ApplyAsync(canonical);
+
+            var api = new PostScanBoundaryFailureNtfsApi();
+            var runner = new ConfirmedReconciliationRunner(
+                new FakeVolumes(volume),
+                api,
+                new WindowsVolumeSnapshotReader(new FakeMetadataNative()),
+                new WindowsFileMetadataReader(new FakeMetadataNative()),
+                storage,
+                normalizer,
+                new AgentHealthState());
+
+            var summary = await runner.ExecuteAsync(new PendingReconciliationRequest("boundary-gap", volume.Id, "boundary test", 7, DateTimeOffset.UtcNow.AddMinutes(-1), FileSystem: "NTFS"));
+            var events = await storage.ReadCanonicalPageAsync(0, 512);
+
+            Assert.False(summary.Completed);
+            Assert.Equal("Failed", summary.Status);
+            Assert.Equal(2, api.QueryCount);
+            Assert.Contains(events, value => value.Operation == CanonicalOperation.UnverifiedGap && value.Quality == EventQuality.UnverifiedGap);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task UnchangedNonNtfsSnapshotDoesNotQueryDetailedMetadata()
     {
         var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.Reconciliation", Guid.NewGuid().ToString("N"));
@@ -214,12 +293,78 @@ public sealed class ConfirmedReconciliationRunnerTests
         public ValueTask<IReadOnlyList<VolumeDescriptor>> EnumerateAsync(CancellationToken cancellationToken = default) => ValueTask.FromResult<IReadOnlyList<VolumeDescriptor>>(volume is null ? [] : [volume]);
     }
 
+    private sealed class ThrowingVolumes : IVolumeEnumerator
+    {
+        public async ValueTask<IReadOnlyList<VolumeDescriptor>> EnumerateAsync(CancellationToken cancellationToken = default)
+        {
+            await Task.Yield();
+            throw new IOException("volume enumeration failed");
+        }
+    }
+
     private sealed class UnsupportedNtfsApi : StorageChronicle.Platform.Windows.Ntfs.INtfsApi
     {
         public SafeFileHandle OpenVolume(string devicePath) => throw new PlatformNotSupportedException();
         public NtfsApiCallResult QueryUsnJournal(SafeFileHandle volumeHandle, out UsnJournalData? data) { data = null; throw new PlatformNotSupportedException(); }
         public NtfsApiCallResult ReadUsnJournal(SafeFileHandle volumeHandle, ReadUsnJournalRequest request, byte[] outputBuffer, out int bytesReturned) { bytesReturned = 0; throw new PlatformNotSupportedException(); }
         public NtfsApiCallResult EnumerateUsnData(SafeFileHandle volumeHandle, EnumUsnDataRequest request, byte[] outputBuffer, out int bytesReturned) { bytesReturned = 0; throw new PlatformNotSupportedException(); }
+    }
+
+    private sealed class PostScanBoundaryFailureNtfsApi : StorageChronicle.Platform.Windows.Ntfs.INtfsApi
+    {
+        private readonly byte[] enumBuffer = CreateEnumBuffer();
+
+        public int QueryCount { get; private set; }
+
+        public SafeFileHandle OpenVolume(string devicePath) => new(new nint(1), ownsHandle: false);
+
+        public NtfsApiCallResult QueryUsnJournal(SafeFileHandle volumeHandle, out UsnJournalData? data)
+        {
+            QueryCount++;
+            if (QueryCount == 1)
+            {
+                data = new UsnJournalData(1, 1, 7, 1, 100, 4096, 4096, 2, 3);
+                return new NtfsApiCallResult(NtfsApiStatus.Success, 56, 0);
+            }
+
+            data = null;
+            return new NtfsApiCallResult(NtfsApiStatus.AccessDenied, 0, 5);
+        }
+
+        public NtfsApiCallResult ReadUsnJournal(SafeFileHandle volumeHandle, ReadUsnJournalRequest request, byte[] outputBuffer, out int bytesReturned)
+        {
+            bytesReturned = 0;
+            return new NtfsApiCallResult(NtfsApiStatus.Success, 0, 0);
+        }
+
+        public NtfsApiCallResult EnumerateUsnData(SafeFileHandle volumeHandle, EnumUsnDataRequest request, byte[] outputBuffer, out int bytesReturned)
+        {
+            enumBuffer.CopyTo(outputBuffer, 0);
+            bytesReturned = enumBuffer.Length;
+            return new NtfsApiCallResult(NtfsApiStatus.Success, bytesReturned, 0);
+        }
+
+        private static byte[] CreateEnumBuffer()
+        {
+            const long fileId = 0x0001_0000_0000_0001;
+            const long parentId = 0x0000_0000_0000_0005;
+            const long usn = 7;
+            var nameBytes = Encoding.Unicode.GetBytes("stable.txt");
+            var recordLength = 64 + nameBytes.Length;
+            var buffer = new byte[sizeof(ulong) + recordLength];
+            BinaryPrimitives.WriteUInt64LittleEndian(buffer.AsSpan(0, sizeof(ulong)), 0);
+            var record = buffer.AsSpan(sizeof(ulong));
+            BinaryPrimitives.WriteInt32LittleEndian(record, recordLength);
+            BinaryPrimitives.WriteInt16LittleEndian(record[4..], 2);
+            BinaryPrimitives.WriteInt64LittleEndian(record[8..], fileId);
+            BinaryPrimitives.WriteInt64LittleEndian(record[16..], parentId);
+            BinaryPrimitives.WriteInt64LittleEndian(record[24..], usn);
+            BinaryPrimitives.WriteUInt32LittleEndian(record[52..], 0);
+            BinaryPrimitives.WriteUInt16LittleEndian(record[56..], (ushort)nameBytes.Length);
+            BinaryPrimitives.WriteUInt16LittleEndian(record[58..], 64);
+            nameBytes.CopyTo(record[64..]);
+            return buffer;
+        }
     }
 
     private sealed class FakeMetadataNative : IWindowsFileMetadataNative

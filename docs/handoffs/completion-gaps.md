@@ -1,6 +1,6 @@
 # Completion-gap integration plan
 
-Updated 2026-08-19. This is the top-agent audit of requirements that still need external evidence or final branch integration. An unexecuted acceptance lane is recorded as pending; it is never converted into a pass by a default script.
+Updated 2026-08-20. This is the top-agent audit of requirements that still need external evidence or final branch integration. An unexecuted acceptance lane is recorded as pending; it is never converted into a pass by a default script.
 
 ## Current verdict
 
@@ -11,7 +11,7 @@ The ordinary build and non-privileged tests are green, and the previously identi
 - Full solution build: 0 warnings, 0 errors.
 - Source documentation mirrors: DocMirror Validator passed, including required sections, test paths, project READMEs, and orphan checks.
 - Critical coverage gate: Domain 80.81%, State 94.13%, Projection 89.4%, Storage 84.51%; the gated UI ViewModels are all at least 70%.
-- Non-privileged orchestration: all 22 test projects pass through `build/Test-Fast.ps1`; the MTP executable runner enforces at least one discovered test and the privileged project is not counted as a false-green zero-test run. The Agent project has 26 passing non-privileged tests plus three environment-gated real NTFS, ACL-denied, and non-NTFS acceptance tests that are dispatched by `build/Test-Privileged.ps1` when matching TestLab roots are available.
+- Non-privileged orchestration: all 22 test projects pass through `build/Test-Fast.ps1`; the MTP executable runner enforces at least one discovered test and the privileged project is not counted as a false-green zero-test run. The latest targeted Agent run has 29 passing non-privileged tests plus three environment-gated real NTFS, ACL-denied, and non-NTFS acceptance tests that are dispatched by `build/Test-Privileged.ps1` when matching TestLab roots are available.
 - Settings modal, Agent settings gateway, Event Stack, and Diff View integration compile and have headless/UI tests.
 - Seven ADRs use the required `docs/decisions/ADR-XXXX-<slug>.md` naming.
 - ReadDirectoryChangesW handoff is bounded with backpressure, Agent flush interval is clamped to the required 1-60 second range, and all remaining production notification channels are bounded.
@@ -30,6 +30,7 @@ The ordinary build and non-privileged tests are green, and the previously identi
 - The Agent pipeline now raises a post-commit source boundary to a bounded volume-scoped reconciliation buffer. Confirmed reconciliation replays captured ordinary events after scan completion and turns buffer overflow into a failed gap; this closes the previously unaddressed concurrent-update state-ordering path without retaining contents or hashes.
 - The privileged acceptance manifest is now v2 with all required capabilities (`Vhdx`, `UsnQuery`, `UsnRead`, `Mft`, reconciliation, ETW/RDCW/buffer gap, SMB/service/session, clipboard, volume GUID, hot attach/detach, ACL-denied metadata, and non-NTFS). Real test paths are wired to the platform or production Agent tests; missing product/TestLab evidence remains `NOT_EXECUTED`, and the harness refuses journal creation/resizing and validates both TestLab marker files.
 - Additional audit hardening preserves explicit reconciliation `UnverifiedGap` semantics, requires a connected per-run MFT correctness artifact, makes installer manifests emit top-level `AcceptanceEligible` only after all eleven cases pass, and verifies TestLab guest markers before VHDX cleanup. These changes are covered by the passing fast lane but do not create environment evidence.
+- The follow-up implementation audit found two reconciliation failure paths that could escape before a failed gap was appended: volume enumeration failure and an unavailable post-scan NTFS journal boundary. Both now append `UnverifiedGap` without deleting already durable facts; Win32 metadata-open failures now fall back to unknown metadata quality. `ConfirmedReconciliationRunnerTests` is 29 passing plus three environment-gated skips in the latest targeted run.
 
 ## Unmet requirements and exit evidence
 
