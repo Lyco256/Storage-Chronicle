@@ -106,7 +106,7 @@ No row grants permission to weaken source quality, retain contents/hashes, delet
 | V-165 | Windows 10 22H2 compatibility | `Requirements/26_WINDOWS10_22H2_ACCEPTANCE.md` and TestLab definitions | NOT_EXECUTED |
 | V-166 | Formal idle resource gate | `build/quality/Test-ResourceBudgetAcceptance.ps1` | diagnostic evidence exists; formal 600-second quiet-period artifact pending |
 | V-167 | MFT performance matrix | `MftBenchmarks`, `Test-FullBenchmarkMatrix.ps1` | harness expanded; dedicated labeled volume/marker run pending |
-| V-168 | Physical installer acceptance | installer build/test scripts and requirement 29 | physical install/repair/update/rollback not executed |
+| V-168 | Physical installer acceptance | `build/package/New-ManualAcceptanceBundle.ps1`, `tools/PhysicalAcceptance/*`, installer build/test scripts and requirement 29 | physical install/repair/update/rollback not executed; manual bundle generation is implemented fail-closed and requires real base/updated/rollback MSI inputs |
 | V-169 | Real Agent/Explorer correlation | `build/quality/Test-CorrelationMetrics.ps1`, TestLab evidence contract | deterministic fixture only; live correlation not executed |
 | V-170 | Safe `devenv`/`main` integration | `Requirements/31_DEVENV_MAIN_INTEGRATION.md`, branch audit | pending all acceptance artifacts and remote branch/default-branch confirmation |
 | V-171 | Final fail-closed acceptance aggregation | `build/quality/Test-FinalAcceptance.ps1`, `docs/build/quality/Test-FinalAcceptance.ps1.md` | verified as a fail-closed gate; current invocation is blocked because all nine environment/integration artifacts are absent |
