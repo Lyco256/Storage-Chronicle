@@ -15,9 +15,11 @@ This handoff covers the code-side migration on `feat/testlab-virtualbox-migratio
 
 ## Validation commands and results
 
-- PowerShell parser scan for repository scripts, excluding generated/build output: 50 files, 0 errors.
+- PowerShell parser scan for repository scripts, excluding generated/build output: 51 files, 0 errors.
 - `git diff --check`: passed.
 - `build/quality/Test-DocMirror.ps1`: exit 0.
+- `build/quality/Test-VirtualBoxTestLab.ps1`: 6/6 provider-boundary contract cases passed; this does not claim a real guest run.
+- `build/quality/Test-Quality.ps1`: exit 0; architecture, integration, coverage, and VirtualBox boundary contract checks passed.
 - `build/Test-Fast.ps1 -NoRestore`: exit 0; all runnable suites passed, with only the existing environment-gated skips.
 - Release Installer tests: 8/8 passed.
 - Release LiveCorrelation validator tests: 4/4 passed.
@@ -27,9 +29,9 @@ This handoff covers the code-side migration on `feat/testlab-virtualbox-migratio
 
 ## Known limitations and required user handoff
 
-Real VirtualBox execution has not been claimed. The latest normal-user preflight observed no discoverable `VBoxManage.exe`, no supplied official ISO paths, and approximately 2.3 GiB available host memory, below the 6 GiB gate. No VM, Guest Additions installation, baseline snapshot, guest credential, installer matrix, Stage A, 10K/100K/1M MFT acceptance, performance acceptance, or final physical re-audit was executed.
+Real VirtualBox execution has not been claimed. The latest normal-user preflight observed no discoverable `VBoxManage.exe`, no supplied official ISO paths, and approximately 2.67 GiB available host memory, below the 6 GiB gate. No VM, Guest Additions installation, baseline snapshot, guest credential, installer matrix, Stage A, 10K/100K/1M MFT acceptance, performance acceptance, or final physical re-audit was executed.
 
-The user must complete the fixed handoff in Requirements 34: install the approved VirtualBox 7.2.x Windows host package through normal UAC with no Extension Pack, provide official ISO media and a safe local NTFS TestLabRoot, resolve any real firmware/virtualization issue without disabling security controls, complete guest setup and matching Guest Additions, create the exact `SC-CLEAN-BASELINE`, and send back only non-secret preflight fields. Codex must remain a normal non-administrator host process.
+The user must complete the fixed handoff in Requirements 34: install the approved VirtualBox 7.2.x Windows host package through normal UAC with no Extension Pack, provide official ISO media and a safe local NTFS TestLabRoot, resolve any real firmware/virtualization issue without disabling security controls, complete guest setup and matching Guest Additions, create the exact `SC-CLEAN-BASELINE`, and send back only non-secret preflight fields. Host applications must be closed until the latest 2.67 GiB available-RAM reading reaches the 6 GiB gate. Codex must remain a normal non-administrator host process.
 
 ## Merge gate
 

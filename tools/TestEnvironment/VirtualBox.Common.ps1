@@ -86,12 +86,42 @@ function Get-VBoxVmState([string]$Name) {
 }
 
 function Get-VBoxVmDiskPaths([string]$Name) {
+    return @(Get-VBoxDiskAttachments -Name $Name | ForEach-Object Path | Sort-Object -Unique)
+}
+
+function Get-VBoxDiskAttachments {
+    param([Parameter(Mandatory = $true)][string]$Name)
     $result = Invoke-VBoxManage @('showvminfo', $Name, '--machinereadable')
-    $paths = [System.Collections.Generic.List[string]]::new()
-    foreach ($line in ($result.Output -split "`r?`n")) {
-        if ($line -match '^[A-Za-z]+-\d+-\d+="(?<path>.+)"$' -and $Matches.path -match '\.(vdi|vhdx|vmdk)$') { [void]$paths.Add([IO.Path]::GetFullPath($Matches.path)) }
+    $paths = [System.Collections.Generic.List[object]]::new()
+    $info = Get-VBoxMachineReadableInfo -Name $Name
+    foreach ($property in $info.PSObject.Properties) {
+        if ($property.Name -match '^(?<controller>[A-Za-z]+)-(?<port>\d+)-(?<device>\d+)$' -and [string]$property.Value -match '\.(?<extension>vdi|vhd|vhdx|vmdk)$') {
+            [void]$paths.Add([pscustomobject]@{
+                    Slot = $property.Name
+                    Path = [IO.Path]::GetFullPath([string]$property.Value)
+                    Extension = $Matches.extension.ToLowerInvariant()
+                })
+        }
     }
-    return @($paths | Sort-Object -Unique)
+    return @($paths)
+}
+
+function Get-VBoxMediumInfo {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $result = Invoke-VBoxManage @('showmediuminfo', [IO.Path]::GetFullPath($Path), '--machinereadable')
+    $values = [ordered]@{}
+    foreach ($line in ($result.Output -split "`r?`n")) {
+        if ($line -match '^([^=]+)="(.*)"$') { $values[$Matches[1]] = $Matches[2] }
+        elseif ($line -match '^([^=]+)=(.*)$') { $values[$Matches[1]] = $Matches[2] }
+    }
+    return [pscustomobject]$values
+}
+
+function Get-VBoxInfoProperty {
+    param([Parameter(Mandatory = $true)]$Info, [Parameter(Mandatory = $true)][string]$Name)
+    $property = $Info.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $null }
+    return $property.Value
 }
 
 function Get-TestLabConfig {
@@ -103,6 +133,10 @@ function Get-TestLabConfig {
     $config.Root = [IO.Path]::GetFullPath([string]$config.Root)
     foreach ($key in @('Windows11Iso', 'Windows10Iso', 'GuestCredentialReference')) {
         $config[$key] = if ($config.ContainsKey($key) -and -not [string]::IsNullOrWhiteSpace([string]$config[$key])) { [IO.Path]::GetFullPath([string]$config[$key]) } else { $null }
+    }
+    if ($null -ne $config.GuestCredentialReference) {
+        $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..')).TrimEnd('\')
+        if ([string]$config.GuestCredentialReference -eq $repositoryRoot -or [string]$config.GuestCredentialReference.StartsWith($repositoryRoot + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'GuestCredentialReference must remain outside the repository; use a local-only credential store.' }
     }
     return $config
 }
@@ -154,10 +188,65 @@ function Assert-ExactTestLabVm {
 function Assert-TestLabVmDisks {
     param([Parameter(Mandatory = $true)]$Vm, [Parameter(Mandatory = $true)][string]$Root)
     $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd('\')
-    $paths = @(Get-VBoxVmDiskPaths $Vm.Name)
-    if ($paths.Count -eq 0) { throw "The approved VirtualBox VM has no registered dynamic disk: $($Vm.Name)" }
-    foreach ($path in $paths) {
+    $attachments = @(Get-VBoxDiskAttachments -Name $Vm.Name)
+    if ($attachments.Count -eq 0) { throw "The approved VirtualBox VM has no registered virtual disk: $($Vm.Name)" }
+    foreach ($attachment in $attachments) {
+        $path = [string]$attachment.Path
+        if ([string]$attachment.Extension -ne 'vdi') { throw "The approved VirtualBox VM disk must be VDI and remain under TestLabRoot: $path" }
         if (-not ($path.Equals($rootFull, [StringComparison]::OrdinalIgnoreCase) -or $path.StartsWith($rootFull + '\', [StringComparison]::OrdinalIgnoreCase))) { throw "The approved VirtualBox VM disk is outside the approved root: $path" }
+    }
+}
+
+function Assert-TestLabVmProfile {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('SC-Test-W11-VBox', 'SC-Test-W10-VBox')][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Root,
+        [switch]$AllowProvisioningNetwork
+    )
+    $guest = if ($Name -eq 'SC-Test-W11-VBox') { 'Windows11' } else { 'Windows10' }
+    $definition = Get-TestLabVmDefinition -Guest $guest
+    $info = Get-VBoxMachineReadableInfo -Name $Name
+    $expectedProperties = [ordered]@{
+        name = $Name
+        ostype = $definition.GuestOsType
+        memory = '4096'
+        cpus = '2'
+        firmware = 'efi'
+        'tpm-type' = if ($definition.Tpm) { '2.0' } else { 'none' }
+    }
+    foreach ($property in $expectedProperties.Keys) {
+        $actual = Get-VBoxInfoProperty -Info $info -Name $property
+        if ($null -eq $actual -or [string]$actual -ne [string]$expectedProperties[$property]) { throw "VirtualBox VM profile $property is '$actual', expected '$($expectedProperties[$property])' for $Name." }
+    }
+    $attachments = @(Get-VBoxDiskAttachments -Name $Name)
+    $osDisk = @($attachments | Where-Object Slot -eq 'SATA-0-0')
+    if ($osDisk.Count -ne 1) { throw "The approved VM must have exactly one OS disk at SATA-0-0: $Name" }
+    $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd('\')
+    if (-not ([string]$osDisk[0].Path).StartsWith($rootFull + '\', [StringComparison]::OrdinalIgnoreCase)) { throw "The OS disk is outside TestLabRoot: $($osDisk[0].Path)" }
+    $medium = Get-VBoxMediumInfo -Path $osDisk[0].Path
+    if ([string](Get-VBoxInfoProperty -Info $medium -Name 'Format') -ne 'VDI') { throw "The OS disk is not VDI: $($osDisk[0].Path)" }
+    $mediumType = [string](Get-VBoxInfoProperty -Info $medium -Name 'Type')
+    if ($mediumType.ToLowerInvariant() -ne 'normal') { throw "The OS disk is not a dynamically allocated normal medium: $($osDisk[0].Path)" }
+    $logicalSize = 0L
+    if (-not [long]::TryParse([string](Get-VBoxInfoProperty -Info $medium -Name 'LogicalSize'), [ref]$logicalSize)) { throw "The OS disk logical size is unavailable: $($osDisk[0].Path)" }
+    $expectedBytes = [long]$definition.DiskSizeGiB * 1GB
+    if ($logicalSize -ne $expectedBytes) { throw "The OS disk logical size is $logicalSize bytes; expected $expectedBytes bytes for $Name." }
+    $network = [string](Get-VBoxInfoProperty -Info $info -Name 'nic1')
+    if ($AllowProvisioningNetwork) {
+        if ($network -ne 'nat') { throw "Provisioning VM network must be NAT: $Name has '$network'." }
+    } elseif ($network -ne 'none') {
+        throw "Acceptance VM network must be disconnected: $Name has '$network'."
+    }
+    return [pscustomobject]@{ Name = $Name; Definition = $definition; OsDisk = [string]$osDisk[0].Path; LogicalSizeBytes = $logicalSize; Network = $network }
+}
+
+function Assert-TestLabVmExclusive {
+    param([Parameter(Mandatory = $true)][ValidateSet('SC-Test-W11-VBox', 'SC-Test-W10-VBox')][string]$Name)
+    $other = if ($Name -eq 'SC-Test-W11-VBox') { 'SC-Test-W10-VBox' } else { 'SC-Test-W11-VBox' }
+    $result = Invoke-VBoxManage @('showvminfo', $other, '--machinereadable') -AllowNonZero
+    if ($result.ExitCode -eq 0) {
+        $state = Get-VBoxVmState -Name $other
+        if ($state -ne 'poweroff') { throw "Only one Storage Chronicle TestLab VM may run at a time; $other is '$state'." }
     }
 }
 
@@ -185,11 +274,17 @@ function Assert-VirtualBoxResourceGate {
 function Assert-VBoxSafeSettings {
     param([Parameter(Mandatory = $true)][string]$Name, [switch]$AllowProvisioningNetwork)
     $info = Get-VBoxMachineReadableInfo $Name
-    $expected = [ordered]@{ 'clipboard-mode' = 'disabled'; draganddrop = 'disabled'; accelerate3d = 'off'; 'audio-enabled' = 'off'; usb = 'off' }
+    $expected = [ordered]@{ 'clipboard-mode' = 'disabled'; draganddrop = 'disabled'; accelerate3d = 'off'; 'audio-enabled' = 'off'; usb = 'off'; vrde = 'off' }
     foreach ($property in $expected.Keys) {
-        if ($null -ne $info.PSObject.Properties[$property] -and [string]$info.$property -ne $expected[$property]) { throw "VirtualBox safety setting $property is not $($expected[$property]) for $Name." }
+        $actual = Get-VBoxInfoProperty -Info $info -Name $property
+        if ($null -eq $actual -or [string]$actual -ne $expected[$property]) { throw "VirtualBox safety setting $property is '$actual', expected '$($expected[$property])' for $Name." }
     }
-    if (-not $AllowProvisioningNetwork -and $null -ne $info.PSObject.Properties['nic1'] -and [string]$info.nic1 -notmatch '^none$') { throw "VirtualBox network is not disconnected for $Name." }
+    $expectedNetwork = if ($AllowProvisioningNetwork) { 'nat' } else { 'none' }
+    for ($adapter = 1; $adapter -le 8; $adapter++) {
+        $property = "nic$adapter"
+        $actual = Get-VBoxInfoProperty -Info $info -Name $property
+        if ($null -eq $actual -or ($adapter -eq 1 -and [string]$actual -ne $expectedNetwork) -or ($adapter -gt 1 -and [string]$actual -ne 'none')) { throw "VirtualBox network setting $property is '$actual'; expected '$expectedNetwork' for nic1 and none for all other adapters." }
+    }
     $shared = @($info.PSObject.Properties | Where-Object Name -match 'SharedFolder')
     if ($shared.Count -gt 0) { throw "VirtualBox shared folders are configured for $Name; shared folders are prohibited." }
 }
@@ -197,11 +292,13 @@ function Assert-VBoxSafeSettings {
 function Set-VBoxVmProvisioningSettings {
     param([Parameter(Mandatory = $true)][string]$Name, [Parameter(Mandatory = $true)][bool]$Provisioning)
     $network = if ($Provisioning) { 'nat' } else { 'none' }
-    Invoke-VBoxManage @('modifyvm', $Name, '--memory', '4096', '--cpus', '2', '--firmware', 'efi', '--vram', '64', '--accelerate3d', 'off', '--audio-enabled', 'off', '--audio-driver', 'none', '--usb', 'off', '--clipboard-mode', 'disabled', '--draganddrop', 'disabled', '--nic1', $network) | Out-Null
+    Invoke-VBoxManage @('modifyvm', $Name, '--memory', '4096', '--cpus', '2', '--firmware', 'efi', '--vram', '64', '--accelerate3d', 'off', '--audio-enabled', 'off', '--audio-driver', 'none', '--usb', 'off', '--clipboard-mode', 'disabled', '--draganddrop', 'disabled', '--vrde', 'off', '--nic1', $network, '--nic2', 'none', '--nic3', 'none', '--nic4', 'none', '--nic5', 'none', '--nic6', 'none', '--nic7', 'none', '--nic8', 'none') | Out-Null
 }
 
 function Start-TestLabVm {
-    param([Parameter(Mandatory = $true)][string]$Name)
+    param([Parameter(Mandatory = $true)][string]$Name, [string]$Root)
+    Assert-TestLabVmExclusive -Name $Name
+    if (-not [string]::IsNullOrWhiteSpace($Root)) { Assert-TestLabVmProfile -Name $Name -Root $Root | Out-Null }
     Assert-VBoxSafeSettings $Name
     if ((Get-VBoxVmState $Name) -ne 'poweroff') { throw "VirtualBox VM must be powered off before start: $Name" }
     Invoke-VBoxManage @('startvm', $Name, '--type', 'headless') | Out-Null
@@ -321,7 +418,9 @@ function Assert-VirtualBoxHostPrerequisites {
     $hostCapability = [bool]($hostInfo.Output -match '(?im)VT-x/AMD-V:\s+enabled')
     $ready = $freeDiskGiB -ge 40 -and $freeMemoryGiB -ge 6 -and $hostCapability
     foreach ($iso in @(@{ Name = 'Windows11Iso'; Path = $Windows11Iso }, @{ Name = 'Windows10Iso'; Path = $Windows10Iso })) { if (-not [string]::IsNullOrWhiteSpace([string]$iso.Path)) { Assert-ExistingIso -Path $iso.Path -Label $iso.Name } }
-    return [ordered]@{
+    $report = [ordered]@{
         Schema = 'StorageChronicle.VirtualBoxHostPreflight.v1'; GeneratedUtc = [DateTimeOffset]::UtcNow; ProductName = $os.Caption; OsVersion = $os.Version; OsBuild = $os.BuildNumber; Architecture = $os.OSArchitecture; Cpu = (Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty Name); Cores = $computer.NumberOfLogicalProcessors; TotalMemoryGiB = [math]::Round($computer.TotalPhysicalMemory / 1GB, 2); AvailableMemoryGiB = $freeMemoryGiB; TestLabRoot = $rootFull; FreeDiskGiB = $freeDiskGiB; FileSystem = (Get-Volume -DriveLetter ([IO.Path]::GetPathRoot($rootFull).Substring(0,1))).FileSystem; VirtualBoxPath = Get-VBoxManagePath; VirtualBoxVersion = $version; VirtualBoxBaseline = '7.2.16'; VirtualBoxVersionPolicy = '7.2.16 baseline; same-series 7.2.x fallback requires reporting'; ExtensionPacks = $extensionPacks.Output; HostInfo = $hostInfo.Output; HostVirtualizationCapability = $hostCapability; WmiVirtualizationFirmwareEnabled = [bool](Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty VirtualizationFirmwareEnabled); HyperVModulePresent = [bool](Get-Module -ListAvailable -Name Hyper-V); Windows11Iso = $Windows11Iso; Windows10Iso = $Windows10Iso; ReadyForProvisioning = $ready; ReadyForFunctionalAcceptance = $ready; ResourceProfile = if ($freeDiskGiB -ge 100) { 'full-provisioning' } elseif ($freeDiskGiB -ge 60) { 'existing-baseline-only' } else { 'functional-smoke-only' }
     }
+    if (-not $ready) { throw "VirtualBox host prerequisites are not met: AvailableMemoryGiB=$freeMemoryGiB, FreeDiskGiB=$freeDiskGiB, HostVirtualizationCapability=$hostCapability." }
+    return $report
 }

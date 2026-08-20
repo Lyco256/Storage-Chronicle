@@ -24,6 +24,8 @@ try {
     if (-not $path.Equals($expectedPath, [StringComparison]::OrdinalIgnoreCase)) { throw "The disposable disk path does not match the current TestId/Role contract: $path" }
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Disposable VirtualBox disk does not exist: $path" }
     $vm = Assert-ExactTestLabVm -Name $VmName
+    Assert-TestLabVmDisks -Vm $vm -Root $root
+    Assert-TestLabVmProfile -Name $VmName -Root $root | Out-Null
     if ([string]$vm.State -ne 'poweroff') { throw "The VirtualBox VM must be powered off before disk removal: $VmName" }
     if (-not $Apply) { $manifest.Status = 'READY_FOR_USER_APPLY'; $manifest.Reason = 'Re-run with -Apply only after approving detachment and deletion of this disposable disk.'; Write-TestLabJson $manifestPath $manifest; Write-Output ($manifest | ConvertTo-Json -Depth 10); exit 2 }
     $paths = @(Get-VBoxVmDiskPaths $VmName)

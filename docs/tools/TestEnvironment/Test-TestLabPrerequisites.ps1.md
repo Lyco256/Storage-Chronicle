@@ -1,6 +1,6 @@
 # Test-TestLabPrerequisites.ps1
 
-Performs the read-only VirtualBox host preflight required before TestLab construction. It records Windows edition/build/architecture, CPU/core/RAM/free-space/NTFS status, TPM and Device Guard/Memory Integrity audit values, WMI virtualization, VirtualBox version/path/hostinfo, current approved VM and baseline state, Hyper-V presence only as an audit field, and user-supplied ISO/root paths. It never enables features, changes firmware/BCD, restarts the host, downloads media, formats disks, or creates a VM. An unavailable `VBoxManage.exe`, insufficient RAM, missing ISO, unsafe root, or unavailable hardware capability remains explicit and produces exit code 2.
+Performs the read-only VirtualBox host preflight required before TestLab construction. It records Windows edition/build/architecture, CPU/core/RAM/free-space/NTFS status, TPM and Device Guard/Memory Integrity audit values, WMI virtualization, VirtualBox version/path/hostinfo, current approved VM and baseline state, strict VM profile/safety state, Hyper-V presence only as an audit field, and user-supplied ISO/root paths. It never enables features, changes firmware/BCD, restarts the host, downloads media, formats disks, or creates a VM. An unavailable `VBoxManage.exe`, insufficient RAM, missing ISO, unsafe root, unavailable hardware capability, missing VM profile, or missing baseline remains explicit and produces exit code 2.
 
 ## Role
 
@@ -16,4 +16,4 @@ The script fails closed with `ReadyForProvisioning=false`, `ReadyForFunctionalAc
 
 ## Tests and verification
 
-Run with an approved candidate root and official ISO paths only after the user has selected them. The script is validated by PowerShell syntax checking and manual read-only execution; it is not a substitute for the later VM acceptance artifacts.
+Run with an approved candidate root and official ISO paths only after the user has selected them. The script distinguishes host readiness for provisioning from functional readiness of provisioned VMs. It is validated by PowerShell syntax checking and manual read-only execution; it is not a substitute for the later VM acceptance artifacts.

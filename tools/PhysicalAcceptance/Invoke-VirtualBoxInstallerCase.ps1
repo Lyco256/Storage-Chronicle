@@ -81,13 +81,14 @@ try {
     if ($TargetKind -ne 'VirtualBoxVm' -or $ExecutionMode -ne 'VM') { throw 'The VirtualBox installer driver requires VirtualBoxVm/VM.' }
     $vm = Assert-ExactTestLabVm $VmName
     Assert-TestLabVmDisks -Vm $vm -Root $root
+    Assert-TestLabVmProfile -Name $VmName -Root $root | Out-Null
     Assert-VBoxSafeSettings $VmName
     $credential = Import-GuestCredential
     Ensure-TestLabBaseline -Name $VmName -Snapshot 'SC-CLEAN-BASELINE'
     if ((Get-VBoxVmState $VmName) -ne 'poweroff') { Stop-TestLabVm -Name $VmName }
     Restore-TestLabBaseline -Name $VmName -Snapshot 'SC-CLEAN-BASELINE'
     Set-VBoxVmProvisioningSettings -Name $VmName -Provisioning:$false
-    Start-TestLabVm -Name $VmName
+    Start-TestLabVm -Name $VmName -Root $root
     Wait-TestLabGuestReady -VmName $VmName -Credential $credential -TempRoot $root
     $guestIdentity = Invoke-VBoxGuestControl -VmName $VmName -Credential $credential -Executable 'C:\Windows\System32\whoami.exe' -TempRoot $root
     if ($guestIdentity.ExitCode -ne 0) { throw "VirtualBox guest whoami smoke check failed: $($guestIdentity.Error.Trim())" }

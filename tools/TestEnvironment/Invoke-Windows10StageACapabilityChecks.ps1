@@ -47,6 +47,8 @@ try {
     } else {
         $null = Assert-VirtualBoxHostPrerequisites -Root $config.Root -Windows10Iso $config.Windows10Iso
         $vm = Assert-ExactTestLabVm -Name 'SC-Test-W10-VBox'
+        Assert-TestLabVmDisks -Vm $vm -Root $config.Root
+        Assert-TestLabVmProfile -Name 'SC-Test-W10-VBox' -Root $config.Root | Out-Null
         if ([string]$vm.State -ne 'running') { throw 'SC-Test-W10-VBox is not running; the capability check did not start or modify a VM.' }
         $guestRoot = "C:\StorageChronicleAcceptance\StageA\Capabilities\$RunId"
         $guestScript = Join-Path $guestRoot 'Test-Windows10StageACapability.ps1'

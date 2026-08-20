@@ -18,6 +18,7 @@ try {
     $root = Assert-TestLabRoot $config.Root
     $vm = Assert-ExactTestLabVm $Name
     Assert-TestLabVmDisks -Vm $vm -Root $root
+    Assert-TestLabVmProfile -Name $Name -Root $root | Out-Null
     Ensure-TestLabBaseline -Name $Name -Snapshot $SnapshotName
     if (-not $Apply) { $manifest.Status = 'READY_FOR_USER_APPLY'; $manifest.Reason = 'The approved baseline exists; re-run with -Apply to restore it.'; Write-TestLabJson $manifestPath $manifest; Write-Output ($manifest | ConvertTo-Json -Depth 10); exit 2 }
     if ($PSCmdlet.ShouldProcess($Name, 'Restore VirtualBox baseline')) { Restore-TestLabBaseline -Name $Name -Snapshot $SnapshotName }

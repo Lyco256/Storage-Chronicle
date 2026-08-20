@@ -33,13 +33,14 @@ try {
     foreach ($path in @($MsiPath, $UpdatedMsiPath, $RollbackMsiPath, $GuestCredentialReference)) { if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Required host input is missing: $path" } }
     $vm = Assert-ExactTestLabVm $definition.Name
     Assert-TestLabVmDisks -Vm $vm -Root $root
+    Assert-TestLabVmProfile -Name $definition.Name -Root $root | Out-Null
     Ensure-TestLabBaseline -Name $definition.Name -Snapshot $baselineSnapshot
     $resource = Assert-VirtualBoxResourceGate -Root $root
     $manifest.Resource = $resource
     if (-not $Apply) { $manifest.Status = 'READY_FOR_USER_APPLY'; $manifest.Stages += [ordered]@{ Name = 'preflight'; Status = 'READY_FOR_USER_APPLY'; Reason = 'VirtualBox VM, baseline, ISO, MSI, credential reference, and resource inputs are present; no installer operation was run. Re-run with -Apply only after explicit approval.' }; Write-TestLabJson $manifestPath $manifest; Write-Output ($manifest | ConvertTo-Json -Depth 12); exit 2 }
     Restore-TestLabBaseline -Name $definition.Name -Snapshot $baselineSnapshot
     Set-VBoxVmProvisioningSettings -Name $definition.Name -Provisioning:$false
-    Start-TestLabVm -Name $definition.Name
+    Start-TestLabVm -Name $definition.Name -Root $root
     $manifest.Stages += [ordered]@{ Name = 'baseline'; Status = 'PASSED'; Reason = 'Approved VirtualBox clean baseline restored and started with networking disconnected.' }
     $installer = Join-Path $repositoryRoot 'build/package/Test-Installer.ps1'
     $driver = Join-Path $repositoryRoot 'tools/PhysicalAcceptance/Invoke-VirtualBoxInstallerCase.ps1'

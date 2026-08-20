@@ -179,6 +179,7 @@ try {
 
     $preflight = Assert-VirtualBoxHostPrerequisites -Root $root -Windows11Iso ([string]$config.Windows11Iso) -Windows10Iso ([string]$config.Windows10Iso)
     Add-Stage 'preflight' 'PASSED' 'VirtualBox host capability, safe root, resource profile, and selected ISO paths were validated without host elevation.' $preflight
+    if ($DataRole -eq 'Mft') { $mftResource = Assert-VirtualBoxResourceGate -Root $root -RequireMftSeed; Add-Stage 'mft-resource-gate' 'PASSED' 'The 1M MFT seed resource gate passed before any guest data disk mutation.' $mftResource }
     $guestWorkloadDestination = 'C:\StorageChronicleTest\StorageChronicle.FileMutationWorkload.exe'
     $guestWorkloadDirectory = Split-Path -Parent $guestWorkloadDestination
     $guestAgentDestination = 'C:\StorageChronicleTest\StorageChronicle.Agent.exe'
@@ -192,6 +193,7 @@ try {
         $definition = Get-TestLabVmDefinition -Guest $guest
         $vm = Assert-ExactTestLabVm -Name $definition.Name
         Assert-TestLabVmDisks -Vm $vm -Root $root
+        Assert-TestLabVmProfile -Name $definition.Name -Root $root | Out-Null
         $safeRunId = $RunId -replace '[^A-Za-z0-9_.-]', '-'
         $vhdxPath = Assert-PathUnderRoot -Root $root -Path (Join-Path $root "data\$($definition.Name)\$safeRunId-$DataRole.vdi")
         $guestArtifactDirectory = Join-Path $artifactDirectory $definition.Name
@@ -242,7 +244,7 @@ Compress-Archive -Path (Join-Path `$historyRoot '*') -DestinationPath `$historyZ
             if ($LASTEXITCODE -ne 0) { throw "Data VHDX creation failed for $($definition.Name)." }
             [void]$activeVhdx.Add([pscustomobject]@{ VmName = $definition.Name; Path = $vhdxPath })
             Set-VBoxVmProvisioningSettings -Name $definition.Name -Provisioning:$false
-            Start-TestLabVm -Name $definition.Name
+            Start-TestLabVm -Name $definition.Name -Root $root
             Add-Stage $definition.Name 'STARTED' 'VirtualBox baseline restored, disposable dynamic data disk attached, networking disconnected, and the approved VM started.' $vhdxPath
             Copy-GuestArtifactDirectory -VmName $definition.Name -SourceDirectory $workloadSourceDirectory -DestinationDirectory $guestWorkloadDirectory -LogPath (Join-Path $guestArtifactDirectory 'copy-workload.log')
             if ($null -ne $agentSource) {

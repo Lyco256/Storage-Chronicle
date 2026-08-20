@@ -33,13 +33,15 @@ function Add-VirtualBoxVm {
     } else {
         $vm = Assert-ExactTestLabVm -Name $Definition.Name
         Assert-TestLabVmDisks -Vm $vm -Root $Root
+        if ([string]$vm.State -ne 'poweroff') { throw "The approved VM must be powered off before initialization: $($Definition.Name) is '$($vm.State)'." }
     }
     $iso = [string]$Config[$Definition.IsoKey]
     Assert-ExistingIso -Path $iso -Label "$($Definition.TargetOs) ISO"
-    Invoke-VBoxManage @('modifyvm', $Definition.Name, '--memory', '4096', '--cpus', '2', '--firmware', 'efi', '--vram', '64', '--accelerate3d', 'off', '--audio-enabled', 'off', '--audio-driver', 'none', '--usb', 'off', '--clipboard-mode', 'disabled', '--draganddrop', 'disabled', '--nic1', 'nat', '--boot1', 'dvd', '--boot2', 'disk') | Out-Null
+    Set-VBoxVmProvisioningSettings -Name $Definition.Name -Provisioning:$true
+    Invoke-VBoxManage @('modifyvm', $Definition.Name, '--boot1', 'dvd', '--boot2', 'disk') | Out-Null
     if ($Definition.Tpm) { Invoke-VBoxManage @('modifyvm', $Definition.Name, '--tpm-type', '2.0') | Out-Null }
-    $dvd = Invoke-VBoxManage @('showvminfo', $Definition.Name, '--machinereadable')
     Invoke-VBoxManage @('storageattach', $Definition.Name, '--storagectl', 'IDE', '--port', '1', '--device', '0', '--type', 'dvddrive', '--medium', $iso) | Out-Null
+    Assert-TestLabVmProfile -Name $Definition.Name -Root $Root -AllowProvisioningNetwork | Out-Null
     Assert-VBoxSafeSettings -Name $Definition.Name -AllowProvisioningNetwork
     return [ordered]@{ Name = $Definition.Name; Created = $created; OsDisk = $diskPath; Iso = $iso; MemoryMiB = 4096; Vcpu = 2; DynamicDisk = $true; Firmware = 'EFI'; Tpm = $Definition.Tpm; Network = 'NAT until baseline, then disconnected'; Snapshot = 'SC-CLEAN-BASELINE required after user guest setup' }
 }

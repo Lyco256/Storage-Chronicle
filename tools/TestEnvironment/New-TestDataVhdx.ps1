@@ -21,6 +21,7 @@ try {
     $root = Assert-TestLabRoot -Root $config.Root
     $vm = Assert-ExactTestLabVm -Name $VmName
     Assert-TestLabVmDisks -Vm $vm -Root $root
+    Assert-TestLabVmProfile -Name $VmName -Root $root | Out-Null
     if ([string]$vm.State -ne 'poweroff') { throw "The VirtualBox VM must be powered off before attaching a disposable data disk: $VmName" }
     if ($SizeGiB -le 0) { $SizeGiB = if ($Role -eq 'Mft') { 16 } else { 4 } }
     if ($Role -eq 'Mft' -and $SizeGiB -lt 16) { throw 'The MFT TestLab data disk must be at least 16 GiB.' }

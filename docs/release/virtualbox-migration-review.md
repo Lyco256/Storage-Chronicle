@@ -23,8 +23,8 @@ The latest read-only normal-user preflight was run on 2026-08-20 against `C:\Tem
 | --- | --- |
 | OS/build | Windows 11 Home, `10.0.26200`, x64 |
 | CPU / logical processors | 12th Gen Intel Core i5-1235U / 12 |
-| Total / available RAM | 15.83 GiB / 2.3 GiB (below the required 6 GiB) |
-| Candidate root | `C:\Temp`, NTFS, 171.91 GiB free |
+| Total / available RAM | 15.83 GiB / 2.67 GiB (below the required 6 GiB) |
+| Candidate root | `C:\Temp`, NTFS, 171.05 GiB free |
 | WMI firmware virtualization | `false`; not treated as the sole blocker |
 | Device Guard / Memory Integrity | detected enabled by the read-only audit |
 | TPM | not readable from the normal-user preflight; no TPM status was promoted to success |
@@ -40,11 +40,13 @@ After migration, the runtime scan over `build`, `tools`, `src`, and `tests` foun
 
 ## Verification performed
 
-- 50 PowerShell files parsed with `System.Management.Automation.Language.Parser`; 0 parser errors.
+- 51 PowerShell files parsed with `System.Management.Automation.Language.Parser`; 0 parser errors.
+- `build/quality/Test-Quality.ps1`: exit 0; architecture, integration, coverage, and VirtualBox boundary contract checks passed.
 - `StorageChronicle.Installer.Tests.exe`: 8/8 passed.
 - `StorageChronicle.LiveCorrelationValidator.Tests.exe`: 4/4 passed, including pass and fail-closed fixtures.
 - `StorageChronicle.Platform.Windows.Integration.Tests` Release build: passed with 0 errors.
 - The preflight negative path returned exit code 2 with non-eligible JSON.
+- `build/quality/Test-VirtualBoxTestLab.ps1`: 6/6 provider-boundary contract cases passed; this does not claim a real guest run.
 - `git diff --check` and the final forbidden-control scan remain required immediately before commit/push.
 
 ## Not executed / remaining acceptance blockers

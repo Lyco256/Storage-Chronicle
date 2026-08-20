@@ -12,8 +12,8 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'TestLab.Common.ps1')
 
 function New-Check {
-    param([string]$Name, [ValidateSet('PASS', 'FAIL', 'NOT_EXECUTED', 'REQUIRES_USER_ACTION')][string]$Status, [string]$Detail, [string]$Remediation)
-    [pscustomobject]@{ Name = $Name; Status = $Status; Detail = $Detail; Remediation = $Remediation }
+    param([string]$Name, [ValidateSet('PASS', 'FAIL', 'NOT_EXECUTED', 'REQUIRES_USER_ACTION')][string]$Status, [string]$Detail, [string]$Remediation, [ValidateSet('Host', 'Functional')][string]$Scope = 'Host')
+    [pscustomobject]@{ Name = $Name; Status = $Status; Detail = $Detail; Remediation = $Remediation; Scope = $Scope }
 }
 
 function Write-PreflightResult {
@@ -74,20 +74,33 @@ function Get-HostTpmAudit {
 }
 
 function Get-VirtualBoxVmAudit {
-    param([string[]]$Names)
+    param([string[]]$Names, [string]$Root)
     $items = [System.Collections.Generic.List[object]]::new()
     foreach ($name in $Names) {
         $exists = $false
         $state = $null
         $baseline = $false
+        $profileStatus = 'NOT_EXECUTED'
+        $safetyStatus = 'NOT_EXECUTED'
+        $diagnostic = $null
         try {
             $info = Assert-ExactTestLabVm -Name $name
             $exists = $true
             $state = [string]$info.State
             $snapshot = Invoke-VBoxManage @('snapshot', $name, 'showvminfo', 'SC-CLEAN-BASELINE') -AllowNonZero
             $baseline = $snapshot.ExitCode -eq 0
+            $allowProvisioningNetwork = [string]$info.Info.nic1 -eq 'nat'
+            try {
+                Assert-TestLabVmDisks -Vm $info -Root $Root
+                Assert-TestLabVmProfile -Name $name -Root $Root -AllowProvisioningNetwork:$allowProvisioningNetwork | Out-Null
+                $profileStatus = 'PASS'
+            } catch { $profileStatus = 'FAIL'; $diagnostic = $_.Exception.Message }
+            try {
+                Assert-VBoxSafeSettings -Name $name -AllowProvisioningNetwork:$allowProvisioningNetwork
+                $safetyStatus = 'PASS'
+            } catch { $safetyStatus = 'FAIL'; if ($null -eq $diagnostic) { $diagnostic = $_.Exception.Message } }
         } catch { }
-        [void]$items.Add([ordered]@{ Name = $name; Exists = $exists; State = $state; BaselineSnapshot = $baseline })
+        [void]$items.Add([ordered]@{ Name = $name; Exists = $exists; State = $state; BaselineSnapshot = $baseline; ProfileStatus = $profileStatus; SafetyStatus = $safetyStatus; Diagnostic = $diagnostic })
     }
     return @($items)
 }
@@ -164,7 +177,7 @@ try {
         $result.Host.HostInfo = $hostInfo.Output
         $extensionPacks = Invoke-VBoxManage @('list', 'extpacks')
         $result.Host.ExtensionPacks = $extensionPacks.Output
-        $result.Host.VirtualBoxVms = Get-VirtualBoxVmAudit -Names @('SC-Test-W11-VBox', 'SC-Test-W10-VBox')
+        $result.Host.VirtualBoxVms = Get-VirtualBoxVmAudit -Names @('SC-Test-W11-VBox', 'SC-Test-W10-VBox') -Root $root
         $checks.Add((New-Check 'VirtualBox version' $(if ($version -match '^7\.2\.') { 'PASS' } else { 'FAIL' }) $version 'Use Oracle VirtualBox 7.2.16, or report a later stable 7.2.x release before using it. Do not use an unapproved major/minor release.'))
         $checks.Add((New-Check 'VirtualBox hardware virtualization' $(if ($result.Host.HostVirtualizationCapability) { 'PASS' } else { 'REQUIRES_USER_ACTION' }) ("VBoxManage hostinfo reports VT-x/AMD-V enabled={0}; WMI={1}" -f $result.Host.HostVirtualizationCapability, $result.Host.WmiVirtualizationFirmwareEnabled) 'If a real VM cannot start, use the fixed firmware handoff; do not disable security features automatically.'))
         $checks.Add((New-Check 'Extension Pack' $(if ($extensionPacks.Output -match '(?im)^Extension Packs:\s+0\s*$') { 'PASS' } else { 'FAIL' }) $extensionPacks.Output 'Do not install Oracle VirtualBox Extension Pack for this TestLab.'))
@@ -178,6 +191,12 @@ try {
         $checks.Add((New-Check 'VirtualBox hardware virtualization' 'REQUIRES_USER_ACTION' 'VBoxManage hostinfo was not available.' 'Rerun after VirtualBox installation; only if a real VM cannot start, inspect firmware VT-x/AMD-V without disabling security features.'))
         $checks.Add((New-Check 'Extension Pack' 'REQUIRES_USER_ACTION' 'VBoxManage list extpacks was not available.' 'Rerun after VirtualBox installation and verify that no Extension Pack is installed.'))
     }
+    if (@($result.Host.VirtualBoxVms).Count -eq 0) {
+        $result.Host.VirtualBoxVms = @(
+            [ordered]@{ Name = 'SC-Test-W11-VBox'; Exists = $false; State = $null; BaselineSnapshot = $false; ProfileStatus = 'NOT_EXECUTED'; SafetyStatus = 'NOT_EXECUTED'; Diagnostic = $null }
+            [ordered]@{ Name = 'SC-Test-W10-VBox'; Exists = $false; State = $null; BaselineSnapshot = $false; ProfileStatus = 'NOT_EXECUTED'; SafetyStatus = 'NOT_EXECUTED'; Diagnostic = $null }
+        )
+    }
     $result.Host.HyperVDetectedForAudit = [bool]$result.Host.HyperVModulePresent -or [bool]$result.Host.HyperVFeatureDetected
     foreach ($iso in @([pscustomobject]@{ Name = 'Windows 11 ISO'; Path = $Windows11Iso }, [pscustomobject]@{ Name = 'Windows 10 22H2 ISO'; Path = $Windows10Iso })) {
         if ([string]::IsNullOrWhiteSpace($iso.Path)) { $checks.Add((New-Check $iso.Name 'REQUIRES_USER_ACTION' 'No ISO path supplied.' 'Provide a user-approved official Microsoft ISO path when that guest is selected.')) }
@@ -187,11 +206,23 @@ try {
     $result.Host.Windows11Iso = $Windows11Iso
     $result.Host.Windows10Iso = $Windows10Iso
     $result.Host.ResourceProfile = if ($freeDiskGiB -ge 100) { 'full-provisioning' } elseif ($freeDiskGiB -ge 60) { 'existing-baseline-only' } else { 'functional-smoke-only' }
+    foreach ($vmAudit in @($result.Host.VirtualBoxVms)) {
+        if (-not [bool]$vmAudit.Exists) {
+            $checks.Add((New-Check "VirtualBox VM $($vmAudit.Name)" 'REQUIRES_USER_ACTION' 'The exact TestLab VM has not been provisioned.' 'Run Initialize-TestLab.ps1 after host preflight, then complete guest setup.' 'Functional'))
+        } else {
+            if ([string]$vmAudit.ProfileStatus -ne 'PASS') { $checks.Add((New-Check "VirtualBox VM profile $($vmAudit.Name)" 'FAIL' ([string]$vmAudit.Diagnostic) 'Repair or recreate the VM so its exact 4 GiB/2-vCPU/EFI/TPM/VDI profile is restored.' 'Host')) }
+            if ([string]$vmAudit.SafetyStatus -ne 'PASS') { $checks.Add((New-Check "VirtualBox safety $($vmAudit.Name)" 'FAIL' ([string]$vmAudit.Diagnostic) 'Disable all unsafe devices and disconnect networking before acceptance.' 'Host')) }
+            if ([string]$vmAudit.State -ne 'poweroff') { $checks.Add((New-Check "VirtualBox VM exclusivity $($vmAudit.Name)" 'FAIL' "The VM is currently '$($vmAudit.State)'; TestLab VMs must be powered off before readiness." 'Power off the VM and rerun preflight.' 'Host')) }
+            if (-not [bool]$vmAudit.BaselineSnapshot) { $checks.Add((New-Check "VirtualBox baseline $($vmAudit.Name)" 'REQUIRES_USER_ACTION' 'SC-CLEAN-BASELINE does not exist.' 'Complete guest setup and create exactly one SC-CLEAN-BASELINE snapshot.' 'Functional')) }
+        }
+    }
+    $provisioningBlocking = @($checks | Where-Object { $_.Scope -eq 'Host' -and $_.Status -in @('FAIL', 'NOT_EXECUTED', 'REQUIRES_USER_ACTION') })
     $blocking = @($checks | Where-Object Status -in @('FAIL', 'NOT_EXECUTED', 'REQUIRES_USER_ACTION'))
     $result.Checks = @($checks)
     $result.BlockingChecks = @($blocking.Name)
-    $result.ReadyForProvisioning = $blocking.Count -eq 0
-    $result.ReadyForFunctionalAcceptance = $result.ReadyForProvisioning -and [bool]$result.Host.HostVirtualizationCapability
+    $result.ProvisioningBlockingChecks = @($provisioningBlocking.Name)
+    $result.ReadyForProvisioning = $provisioningBlocking.Count -eq 0
+    $result.ReadyForFunctionalAcceptance = $blocking.Count -eq 0 -and [bool]$result.Host.HostVirtualizationCapability
     $result.Status = if ($result.ReadyForFunctionalAcceptance) { 'PASSED' } elseif ($result.ReadyForProvisioning) { 'REQUIRES_USER_ACTION' } else { 'BLOCKED' }
     if (-not $result.ReadyForFunctionalAcceptance) {
         $result.HumanHandoff = [ordered]@{
