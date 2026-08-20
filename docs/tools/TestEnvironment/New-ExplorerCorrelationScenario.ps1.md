@@ -6,7 +6,7 @@ Prepares the disposable, marker-verified NTFS workload volume for the human-assi
 
 ## Usage
 
-Run inside the approved `SC-Test-W11` guest after `Invoke-WindowsTestLab.ps1` has initialized the marked Workload volume:
+Run inside the approved `SC-Test-W11-VBox` guest after `Invoke-WindowsTestLab.ps1` has initialized the marked Workload volume:
 
 ```powershell
 .\New-ExplorerCorrelationScenario.ps1 -Root 'D:\StorageChronicleTestData' -TestId '<run-id>' -Apply

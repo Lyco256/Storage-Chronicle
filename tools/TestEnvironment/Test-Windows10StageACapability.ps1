@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$OutputDirectory,
     [Parameter(Mandatory = $true)][string]$RunId,
-    [string]$VmName = 'SC-Test-W10'
+    [string]$VmName = 'SC-Test-W10-VBox'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -46,7 +46,7 @@ function Write-CheckArtifact {
         CheckName = $Name
         RunId = $RunId
         TargetOs = 'Windows10-22H2'
-        TargetKind = 'HyperVVm'
+        TargetKind = 'VirtualBoxVm'
         VmName = $VmName
         ExecutionMode = 'VM'
         Environment = $Environment
@@ -62,7 +62,7 @@ function Write-CheckArtifact {
         Schema = 'StorageChronicle.Windows10StageACheck.v1'
         CheckName = $Name
         TargetOs = 'Windows10-22H2'
-        TargetKind = 'HyperVVm'
+        TargetKind = 'VirtualBoxVm'
         VmName = $VmName
         ExecutionMode = 'VM'
         Status = if ($Passed) { 'PASSED' } else { 'FAILED' }
@@ -180,7 +180,7 @@ $summary = [ordered]@{
     Schema = 'StorageChronicle.Windows10StageACapabilitySummary.v1'
     RunId = $RunId
     TargetOs = 'Windows10-22H2'
-    TargetKind = 'HyperVVm'
+    TargetKind = 'VirtualBoxVm'
     VmName = $VmName
     ExecutionMode = 'VM'
     Environment = $environment

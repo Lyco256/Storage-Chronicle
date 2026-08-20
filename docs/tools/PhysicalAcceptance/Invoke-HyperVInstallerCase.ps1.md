@@ -1,4 +1,6 @@
-# Invoke-HyperVInstallerCase.ps1
+# Historical / superseded: Invoke-HyperVInstallerCase.ps1
+
+This document describes the removed Hyper-V provider driver and is retained only for historical traceability. Current runtime entry point: `Invoke-VirtualBoxInstallerCase.ps1`, governed by Requirements 32–36. Do not use this document as an execution guide.
 
 Runs one real installer acceptance case inside an approved `SC-Test-W11` or `SC-Test-W10` guest through PowerShell Direct. It imports a host DPAPI-protected guest credential, transfers only the MSI payload and driver scripts, requires the guest TestLab marker through the guest physical-case driver, collects guest evidence back into the host case directory, and rewrites evidence paths to host-visible paths. It never treats a VM result as physical-machine acceptance.
 

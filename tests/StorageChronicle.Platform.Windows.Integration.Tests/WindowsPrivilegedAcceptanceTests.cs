@@ -342,7 +342,7 @@ public sealed class WindowsPrivilegedAcceptanceTests
         var imagePath = WindowsAcceptanceEnvironment.VhdxPath;
         Assert.True(File.Exists(imagePath), $"The disposable VHDX does not exist: {imagePath}");
         var result = await WindowsAcceptanceEnvironment.RunPowerShellAsync(
-            "param($path) $image = Get-DiskImage -ImagePath $path -ErrorAction Stop; if (-not $image.Attached) { throw 'The disposable VHDX was not attached before the hot attach check.' }; Dismount-VHD -Path $path -ErrorAction Stop; Mount-VHD -Path $path -ErrorAction Stop; $image = Get-DiskImage -ImagePath $path -ErrorAction Stop; if (-not $image.Attached) { throw 'The disposable VHDX was not attached after the hot attach check.' }; [Console]::WriteLine($image.Attached)",
+            "param($path) $image = Get-DiskImage -ImagePath $path -ErrorAction Stop; if (-not $image.Attached) { throw 'The disposable VHDX was not attached before the hot attach check.' }; Dismount-DiskImage -ImagePath $path -ErrorAction Stop; Mount-DiskImage -ImagePath $path -ErrorAction Stop; $image = Get-DiskImage -ImagePath $path -ErrorAction Stop; if (-not $image.Attached) { throw 'The disposable VHDX was not attached after the hot attach check.' }; [Console]::WriteLine($image.Attached)",
             imagePath);
         Assert.Equal("True", result, ignoreCase: true);
     }

@@ -2,7 +2,7 @@
 
 ## Role
 
-Runs the Windows 10 22H2 Stage A capability probes inside the approved `SC-Test-W10` guest. It produces independent real-evidence artifacts for Cloud Files API capability detection and the no-driver invariant.
+Runs the Windows 10 22H2 Stage A capability probes inside the approved `SC-Test-W10-VBox` guest. It produces independent real-evidence artifacts for Cloud Files API capability detection and the no-driver invariant.
 
 ## Public inputs and outputs
 
@@ -10,7 +10,7 @@ The script requires an output directory, a run identifier, and the guest VM name
 
 ## Invariants and failure behavior
 
-The result is `PASSED` and `AcceptanceEligible=true` only for Windows 10 22H2 x64 and complete real probes. Wrong OS, missing APIs, inaccessible driver metadata, a matching product driver, or any probe exception yields `FAILED`/ineligible. Results are always `Diagnostic=false`, `EvidenceOrigin=real`, and identify `SC-Test-W10`/VM execution; an exit code alone is not acceptance evidence.
+The result is `PASSED` and `AcceptanceEligible=true` only for Windows 10 22H2 x64 and complete real probes. Wrong OS, missing APIs, inaccessible driver metadata, a matching product driver, or any probe exception yields `FAILED`/ineligible. Results are always `Diagnostic=false`, `EvidenceOrigin=real`, and identify `SC-Test-W10-VBox`/VirtualBox VM execution; an exit code alone is not acceptance evidence.
 
 ## Dependencies and tests
 

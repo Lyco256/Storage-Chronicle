@@ -603,17 +603,15 @@ try {
     $currentTarget = Get-CurrentWindowsTarget
     $validTarget = $TargetOs -in @('Windows10-22H2', 'Windows11')
     $validMode = $ExecutionMode -in @('Local', 'VM')
-    $validTargetKind = $TargetKind -in @('PhysicalMachine', 'HyperVVm')
+    $validTargetKind = $TargetKind -in @('PhysicalMachine', 'VirtualBoxVm')
     $driverReady = Test-DriverLauncher $DriverScript
-    $hyperVReady = $false
+    $virtualBoxReady = $false
     $vmReady = $false
     if ($validMode -and $ExecutionMode -eq 'VM' -and $hostIsWindows) {
-        $getVm = Get-Command Get-VM -ErrorAction SilentlyContinue
-        $hyperVReady = $null -ne $getVm
-        if ($hyperVReady -and -not [string]::IsNullOrWhiteSpace($VmName)) {
+        try { . (Join-Path $root 'tools/TestEnvironment/VirtualBox.Common.ps1'); $null = Get-VBoxManagePath; $virtualBoxReady = $true } catch { $virtualBoxReady = $false }
+        if ($virtualBoxReady -and -not [string]::IsNullOrWhiteSpace($VmName)) {
             try {
-                $vm = Get-VM -Name $VmName -ErrorAction Stop
-                $vmReady = [string]$vm.State -eq 'Running'
+                $vmReady = (Get-VBoxVmState $VmName) -eq 'running'
             } catch {
                 $vmReady = $false
             }
@@ -623,7 +621,7 @@ try {
     Add-Precondition 'WindowsHost' $hostIsWindows 'The installer acceptance harness requires a Windows host because MSI, service, session, and ACL checks are Windows-only.'
     Add-Precondition 'ExecutionArmed' ([bool]$Execute) 'The run is armed only when -Execute is supplied; planning or omitted execution never passes.'
     Add-Precondition 'TargetOs' ($validTarget) 'TargetOs must be Windows10-22H2 or Windows11 and must be supplied explicitly.'
-    Add-Precondition 'TargetKind' $validTargetKind 'TargetKind must be PhysicalMachine or HyperVVm and must be supplied explicitly.'
+    Add-Precondition 'TargetKind' $validTargetKind 'TargetKind must be PhysicalMachine or VirtualBoxVm and must be supplied explicitly.'
     Add-Precondition 'ExecutionMode' ($validMode) 'ExecutionMode must be Local or VM and must be supplied explicitly.'
     Add-Precondition 'Driver' $driverReady 'A real installer driver script or executable is required; no fake/default driver is provided.'
     Add-Precondition 'CaseTimeout' ($CaseTimeoutSeconds -ge 1 -and $CaseTimeoutSeconds -le 7200) 'CaseTimeoutSeconds must be between 1 and 7200 seconds.'
@@ -634,10 +632,10 @@ try {
     Add-Precondition 'NonAdminUser' (-not [string]::IsNullOrWhiteSpace($NonAdminUser)) 'An existing non-administrator account is required for the non-admin UI case.'
     Add-Precondition 'NonAdminCredentialReference' (-not [string]::IsNullOrWhiteSpace($NonAdminCredentialReference)) 'A non-admin credential reference is required; plaintext passwords are not accepted by this harness.'
     Add-Precondition 'SessionUser' (-not [string]::IsNullOrWhiteSpace($SessionUser)) 'An interactive session user is required for Session Agent startup verification.'
-    Add-Precondition 'ServiceCredentialReference' (-not [string]::IsNullOrWhiteSpace($ServiceCredentialReference) -or ($validMode -and $ExecutionMode -eq 'VM' -and -not [string]::IsNullOrWhiteSpace($GuestCredentialReference)) -or ($validMode -and $ExecutionMode -eq 'Local' -and $isAdministrator)) 'A service-capable credential reference is required for VM runs, or the PowerShell Direct guest credential/current administrator must be available for an explicitly isolated run.'
-    Add-Precondition 'GuestCredentialReference' (-not [string]::IsNullOrWhiteSpace($GuestCredentialReference) -or -not ($validMode -and $ExecutionMode -eq 'VM')) 'A DPAPI-protected host credential reference for PowerShell Direct is required for VM runs.'
+    Add-Precondition 'ServiceCredentialReference' (-not [string]::IsNullOrWhiteSpace($ServiceCredentialReference) -or ($validMode -and $ExecutionMode -eq 'VM' -and -not [string]::IsNullOrWhiteSpace($GuestCredentialReference)) -or ($validMode -and $ExecutionMode -eq 'Local' -and $isAdministrator)) 'A service-capable credential reference is required for VM runs, or the guest credential/current administrator must be available for an explicitly isolated run.'
+    Add-Precondition 'GuestCredentialReference' (-not [string]::IsNullOrWhiteSpace($GuestCredentialReference) -or -not ($validMode -and $ExecutionMode -eq 'VM')) 'A local-only guest credential reference is required for VirtualBox guestcontrol VM runs.'
     Add-Precondition 'GuestTestDataRoot' (-not [string]::IsNullOrWhiteSpace($GuestTestDataRoot)) 'A guest TestLab data root is required for VM runs.'
-    Add-Precondition 'HostAdministrator' $isAdministrator 'Administrator/service privileges are required to control MSI installation, SCM, ACL, and VM acceptance operations.'
+    Add-Precondition 'HostAdministrator' ($isAdministrator -or ($validMode -and $ExecutionMode -eq 'VM' -and $TargetKind -eq 'VirtualBoxVm')) 'A host administrator is required for local/physical acceptance; VirtualBox VM acceptance uses guest credentials and does not elevate the host process.'
     Add-Precondition 'MsiPath' (Test-MsiFile $MsiPath) 'The base MSI path must point to an existing .msi file.'
     Add-Precondition 'UpdatedMsiPath' (Test-MsiFile $UpdatedMsiPath) 'The updated MSI path must point to an existing .msi file for update and rollback.'
     Add-Precondition 'RollbackMsiPath' (Test-MsiFile $RollbackMsiPath) 'The rollback MSI path must point to an existing .msi file from the prior product version.'
@@ -646,7 +644,7 @@ try {
         Add-Precondition 'Isolation' ([bool]$AllowLocalIsolatedExecution) 'Local execution requires explicit -AllowLocalIsolatedExecution and must be performed only on a disposable machine.'
         Add-Precondition 'LocalTargetOs' ($hostIsWindows -and $currentTarget -eq $TargetOs) "The live host target '$currentTarget' does not match the requested '$TargetOs'."
     } elseif ($validMode -and $ExecutionMode -eq 'VM') {
-        Add-Precondition 'Isolation' ($hyperVReady -and $vmReady) 'VM execution requires Hyper-V and a running named VM; the driver must reset an isolated snapshot per case.'
+        Add-Precondition 'Isolation' ($virtualBoxReady -and $vmReady) 'VM execution requires VBoxManage and a running named VM; the driver must reset an isolated SC-CLEAN-BASELINE snapshot per case.'
         Add-Precondition 'VmName' (-not [string]::IsNullOrWhiteSpace($VmName)) 'A named VM is required for VM execution.'
         Add-Precondition 'WindowsIsoPath' (Test-IsoFile $WindowsIsoPath) 'A Windows ISO file is required to identify/recreate the target VM environment; absence is NOT_EXECUTED.'
     } else {

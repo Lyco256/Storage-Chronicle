@@ -308,7 +308,7 @@ public static class Program
 
     private static void ValidateEnvironment(CorrelationEnvironment environment, string history, string oracle, string explorer)
     {
-        if (!string.Equals(environment.TargetOs, "Windows11", StringComparison.Ordinal) || !string.Equals(environment.VmName, "SC-Test-W11", StringComparison.Ordinal) || !string.Equals(environment.ExecutionMode, "TestLab", StringComparison.Ordinal) || !string.Equals(environment.AgentHostMode, "TestLab", StringComparison.Ordinal) || environment.Diagnostic) throw new InvalidDataException("The correlation environment is not a non-diagnostic SC-Test-W11 TestLab run.");
+        if (!string.Equals(environment.TargetOs, "Windows11", StringComparison.Ordinal) || !string.Equals(environment.VmName, "SC-Test-W11-VBox", StringComparison.Ordinal) || !string.Equals(environment.ExecutionMode, "TestLab", StringComparison.Ordinal) || !string.Equals(environment.AgentHostMode, "TestLab", StringComparison.Ordinal) || environment.Diagnostic) throw new InvalidDataException("The correlation environment is not a non-diagnostic SC-Test-W11-VBox TestLab run.");
         if (!File.Exists(history) && !Directory.Exists(history)) throw new DirectoryNotFoundException($"Agent history does not exist: {history}");
         if (!Path.GetFullPath(environment.AgentHistoryPath ?? string.Empty).Equals(Path.GetFullPath(history), StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Agent history path does not match the validator input.");
         if (!Path.GetFullPath(environment.WorkloadOraclePath ?? string.Empty).Equals(Path.GetFullPath(oracle), StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Workload oracle path does not match the validator input.");

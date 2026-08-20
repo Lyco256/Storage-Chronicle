@@ -115,6 +115,19 @@ function Invoke-Captured([string]$FilePath, [string[]]$Arguments) {
     return $captured
 }
 
+function Invoke-DiskPartScript([string]$Root, [string[]]$Lines) {
+    $scriptPath = Join-Path $Root ('.storage-chronicle-diskpart-' + $runId + '.txt')
+    if (-not ([IO.Path]::GetFullPath($scriptPath).StartsWith([IO.Path]::GetFullPath($Root).TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase))) { throw 'The DiskPart script path escaped TestLabRoot.' }
+    try {
+        Set-Content -LiteralPath $scriptPath -Value ($Lines -join [Environment]::NewLine) -Encoding ASCII
+        $result = Invoke-Captured 'diskpart.exe' @('/s', $scriptPath)
+        if ($result.ExitCode -ne 0) { throw "DiskPart failed with exit code $($result.ExitCode): $($result.Error.Trim())" }
+        return $result
+    } finally {
+        if (Test-Path -LiteralPath $scriptPath) { Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 function Get-VolumeForPath([string]$Path) {
     try {
         $volume = Get-Volume -Path $Path -ErrorAction Stop
@@ -296,18 +309,23 @@ try {
         if (-not ($VhdxPath.Equals($TestLabRoot, [StringComparison]::OrdinalIgnoreCase) -or $VhdxPath.StartsWith($TestLabRoot + '\', [StringComparison]::OrdinalIgnoreCase))) { throw "The disposable VHDX must be under the approved TestLab root: $VhdxPath" }
         if (Test-Path -LiteralPath $VhdxPath) { throw "Refusing to overwrite an existing VHDX: $VhdxPath" }
         if (-not (Test-Path -LiteralPath (Split-Path -Parent $VhdxPath))) { throw 'The VHDX parent directory must already exist.' }
-        foreach ($command in @('New-VHD', 'Mount-VHD', 'Get-Disk', 'Initialize-Disk', 'New-Partition', 'Format-Volume')) {
-            if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "The Hyper-V/Storage command $command is not available; VHDX setup was not executed." }
+        foreach ($command in @('Get-DiskImage', 'Mount-DiskImage', 'Dismount-DiskImage', 'Get-Disk', 'Set-Disk', 'Initialize-Disk', 'New-Partition', 'Format-Volume')) {
+            if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "The Windows Storage command $command is not available; VHDX setup was not executed." }
         }
 
-        New-VHD -Path $VhdxPath -SizeBytes 4GB -Dynamic | Out-Null
+        Invoke-DiskPartScript -Root $TestLabRoot -Lines @(
+            ('create vdisk file="{0}" maximum=4096 type=expandable' -f $VhdxPath),
+            ('select vdisk file="{0}"' -f $VhdxPath),
+            'attach vdisk'
+        ) | Out-Null
         $createdVhdx = $true
-        $diskImage = Mount-VHD -Path $VhdxPath -Passthru
+        $diskImage = Get-DiskImage -ImagePath $VhdxPath -ErrorAction Stop
+        if (-not $diskImage.Attached) { throw "The disposable VHDX did not attach: $VhdxPath" }
         $mountedVhdx = $true
         $disk = $diskImage | Get-Disk
         if ($disk.IsOffline) { Set-Disk -Number $disk.Number -IsOffline $false }
         if ($disk.IsReadOnly) { Set-Disk -Number $disk.Number -IsReadOnly $false }
-        Initialize-Disk -Number $disk.Number -PartitionStyle GPT | Out-Null
+        Initialize-Disk -Number $disk.Number -PartitionStyle GPT -Confirm:$false | Out-Null
         $partition = New-Partition -DiskNumber $disk.Number -UseMaximumSize -AssignDriveLetter
         Format-Volume -Partition $partition -FileSystem NTFS -NewFileSystemLabel 'SC_TEST_VOLUME' -Confirm:$false | Out-Null
         $VhdxRoot = "$($partition.DriveLetter):\"
@@ -533,7 +551,7 @@ try {
     exit $exitCode
 } finally {
     if ($mountedVhdx -and $VhdxPath) {
-        Dismount-VHD -Path $VhdxPath -ErrorAction SilentlyContinue
+        Dismount-DiskImage -ImagePath $VhdxPath -ErrorAction SilentlyContinue
     }
     if ($createdVhdx -and $VhdxPath -and (Test-Path -LiteralPath $VhdxPath -PathType Leaf)) {
         Remove-Item -LiteralPath $VhdxPath -Force -ErrorAction SilentlyContinue

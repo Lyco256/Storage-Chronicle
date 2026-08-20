@@ -20,8 +20,8 @@ $manifest = [ordered]@{
     Schema = 'StorageChronicle.Windows10StageACapabilityExecution.v1'
     RunId = $RunId
     TargetOs = 'Windows10-22H2'
-    TargetKind = 'HyperVVm'
-    VmName = 'SC-Test-W10'
+    TargetKind = 'VirtualBoxVm'
+    VmName = 'SC-Test-W10-VBox'
     ExecutionMode = 'VM'
     Apply = [bool]$Apply
     Status = 'NOT_EXECUTED'
@@ -45,49 +45,43 @@ try {
     if (-not $Apply) {
         $manifest.Failure = 'Pass -Apply only after the approved SC-Test-W10 VM is running; no guest command was executed.'
     } else {
-        Assert-HyperVMutationPrerequisites
-        $vm = Assert-ExactTestLabVm -Name 'SC-Test-W10'
-        if ([string]$vm.State -ne 'Running') { throw 'SC-Test-W10 is not running; the capability check did not start or modify a VM.' }
+        $null = Assert-VirtualBoxHostPrerequisites -Root $config.Root -Windows10Iso $config.Windows10Iso
+        $vm = Assert-ExactTestLabVm -Name 'SC-Test-W10-VBox'
+        if ([string]$vm.State -ne 'running') { throw 'SC-Test-W10-VBox is not running; the capability check did not start or modify a VM.' }
         $guestRoot = "C:\StorageChronicleAcceptance\StageA\Capabilities\$RunId"
         $guestScript = Join-Path $guestRoot 'Test-Windows10StageACapability.ps1'
         $guestOutput = Join-Path $guestRoot 'results'
         $sourceScript = Join-Path $PSScriptRoot 'Test-Windows10StageACapability.ps1'
         if (-not (Test-Path -LiteralPath $sourceScript -PathType Leaf)) { throw "Guest capability script is missing: $sourceScript" }
-        $sessionParameters = @{ VMName = 'SC-Test-W10'; ErrorAction = 'Stop' }
-        if ($null -ne $Credential) { $sessionParameters.Credential = $Credential }
-        $session = New-PSSession @sessionParameters
-        try {
-            Invoke-Command -Session $session -ScriptBlock { param($Root, $Results) New-Item -ItemType Directory -Force -Path $Root, $Results | Out-Null } -ArgumentList $guestRoot, $guestOutput | Out-Null
-            Copy-Item -LiteralPath $sourceScript -Destination $guestScript -ToSession $session -Force -ErrorAction Stop
-            $remoteOutput = @(Invoke-Command -Session $session -ScriptBlock {
-                    param($Script, $Results, $ExecutionId)
-                    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $Script -OutputDirectory $Results -RunId $ExecutionId -VmName 'SC-Test-W10'
-                    [pscustomobject]@{ ExitCode = [int]$LASTEXITCODE }
-                } -ArgumentList $guestScript, $guestOutput, $RunId)
-            $remoteResult = $remoteOutput | Where-Object { $null -ne $_.PSObject.Properties['ExitCode'] } | Select-Object -Last 1
-            if ($null -eq $remoteResult) { throw 'The Windows 10 capability guest script did not return an exit code.' }
+        $guestCredential = Get-TestLabGuestCredential -Credential $Credential -CredentialReference ([string]$config.GuestCredentialReference)
+        $setup = "New-Item -ItemType Directory -Force -Path '$($guestRoot.Replace("'", "''"))', '$($guestOutput.Replace("'", "''"))' | Out-Null"
+        $setupResult = & (Join-Path $PSScriptRoot 'Invoke-TestLabCommand.ps1') -VmName 'SC-Test-W10-VBox' -Command $setup -Credential $guestCredential -ConfigPath $ConfigPath 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "VirtualBox guest setup failed: $($setupResult -join [Environment]::NewLine)" }
+        & (Join-Path $PSScriptRoot 'Copy-TestArtifactsToVm.ps1') -VmName 'SC-Test-W10-VBox' -SourcePath $sourceScript -DestinationPath $guestScript -Credential $guestCredential -ConfigPath $ConfigPath 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'The Windows 10 capability script transfer failed.' }
+        $command = "& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '$($guestScript.Replace("'", "''"))' -OutputDirectory '$($guestOutput.Replace("'", "''"))' -RunId '$RunId' -VmName 'SC-Test-W10-VBox'; exit `$LASTEXITCODE"
+        $remoteOutput = & (Join-Path $PSScriptRoot 'Invoke-TestLabCommand.ps1') -VmName 'SC-Test-W10-VBox' -Command $command -Credential $guestCredential -ConfigPath $ConfigPath 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "Windows 10 capability guest script failed: $($remoteOutput -join [Environment]::NewLine)" }
 
             foreach ($name in @('CloudFilesCapability', 'NoDriver')) {
                 $guestCheck = Join-Path $guestOutput "$name-check.json"
                 $guestEvidence = Join-Path $guestOutput "$name-evidence.json"
                 $hostCheck = Join-Path $OutputDirectory "$name-check.json"
                 $hostEvidence = Join-Path $OutputDirectory "$name-evidence.json"
-                Copy-Item -FromSession $session -LiteralPath $guestEvidence -Destination $hostEvidence -Force -ErrorAction Stop
-                Copy-Item -FromSession $session -LiteralPath $guestCheck -Destination $hostCheck -Force -ErrorAction Stop
+                & (Join-Path $PSScriptRoot 'Copy-TestResultsFromVm.ps1') -VmName 'SC-Test-W10-VBox' -SourcePath $guestEvidence -DestinationPath $hostEvidence -Credential $guestCredential -ConfigPath $ConfigPath 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) { throw "Could not retrieve $name evidence." }
+                & (Join-Path $PSScriptRoot 'Copy-TestResultsFromVm.ps1') -VmName 'SC-Test-W10-VBox' -SourcePath $guestCheck -DestinationPath $hostCheck -Credential $guestCredential -ConfigPath $ConfigPath 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) { throw "Could not retrieve $name check." }
                 $check = Get-Content -Raw -Encoding UTF8 -LiteralPath $hostCheck | ConvertFrom-Json
                 $check.GuestEvidencePath = [string]$check.EvidencePath
                 $check.EvidencePath = [IO.Path]::GetFullPath($hostEvidence)
                 $check | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $hostCheck -Encoding UTF8
                 $manifest["$name`CheckPath"] = [IO.Path]::GetFullPath($hostCheck)
             }
-            if ([int]$remoteResult.ExitCode -ne 0) { throw "Windows 10 capability checks were not all eligible; guest exit code $($remoteResult.ExitCode)." }
             $manifest.Status = 'PASSED'
             $manifest.AcceptanceEligible = $true
             $exitCode = 0
-        } finally {
-            if ($null -ne $session) { Remove-PSSession $session -ErrorAction SilentlyContinue }
         }
-    }
 } catch {
     $manifest.Status = if ($Apply) { 'FAILED' } else { 'NOT_EXECUTED' }
     $manifest.AcceptanceEligible = $false

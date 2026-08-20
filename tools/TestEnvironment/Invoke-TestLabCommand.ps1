@@ -1,25 +1,28 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][ValidateSet('SC-Test-W11', 'SC-Test-W10')][string]$VmName,
-    [string]$Command,
-    [string]$ScriptPath,
-    [object[]]$ArgumentList = @(),
+    [Parameter(Mandatory = $true)][ValidateSet('SC-Test-W11-VBox', 'SC-Test-W10-VBox')][string]$VmName,
+    [Parameter(Mandatory = $true)][string]$Command,
+    [string]$ConfigPath,
     [pscredential]$Credential,
-    [string]$ConfigPath
+    [string]$CredentialReference
 )
 
 $ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'TestLab.Common.ps1')
-$config = Get-TestLabConfig -ConfigPath $ConfigPath
-$null = Assert-TestLabRoot -Root $config.Root
-Assert-HyperVMutationPrerequisites
-$null = Assert-ExactTestLabVm -Name $VmName
-if ([string]::IsNullOrWhiteSpace($Command) -and [string]::IsNullOrWhiteSpace($ScriptPath)) { throw 'Specify exactly one of -Command or -ScriptPath.' }
-if (-not [string]::IsNullOrWhiteSpace($Command) -and -not [string]::IsNullOrWhiteSpace($ScriptPath)) { throw 'Specify exactly one of -Command or -ScriptPath.' }
-if ($ScriptPath) {
-    if (-not (Test-Path -LiteralPath $ScriptPath -PathType Leaf)) { throw "Guest script was not found: $ScriptPath" }
-    $Command = Get-Content -Raw -LiteralPath $ScriptPath
+try {
+    $config = Get-TestLabConfig -ConfigPath $ConfigPath
+    $root = Assert-TestLabRoot $config.Root
+    $vm = Assert-ExactTestLabVm $VmName
+    if ([string]$vm.State -ne 'running') { throw "Approved VirtualBox VM is not running: $VmName" }
+    $reference = if (-not [string]::IsNullOrWhiteSpace($CredentialReference)) { $CredentialReference } else { [string]$config.GuestCredentialReference }
+    $guestCredential = Get-TestLabGuestCredential -Credential $Credential -CredentialReference $reference
+    $result = Invoke-VBoxGuestControl -VmName $VmName -Credential $guestCredential -Executable 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -Arguments @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', $Command) -TempRoot $root
+    if ($result.ExitCode -ne 0) { throw "VirtualBox guestcontrol PowerShell command failed with exit code $($result.ExitCode): $($result.Error.Trim())" }
+    Write-Output $result.Output
+    exit 0
 }
-$parameters = @{ VMName = $VmName; ScriptBlock = [scriptblock]::Create($Command); ArgumentList = $ArgumentList; ErrorAction = 'Stop' }
-if ($null -ne $Credential) { $parameters.Credential = $Credential }
-Invoke-Command @parameters
+catch {
+    Write-Error $_.Exception.Message
+    exit 2
+}

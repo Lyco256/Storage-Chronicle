@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$CaseId,
     [Parameter(Mandatory = $true)][ValidateSet('Windows10-22H2', 'Windows11')][string]$TargetOs,
-    [ValidateSet('PhysicalMachine', 'HyperVVm')][string]$TargetKind = 'PhysicalMachine',
+    [ValidateSet('PhysicalMachine', 'VirtualBoxVm')][string]$TargetKind = 'PhysicalMachine',
     [Parameter(Mandatory = $true)][ValidateSet('Local', 'VM')][string]$ExecutionMode,
     [Parameter(Mandatory = $true)][string]$MsiPath,
     [string]$UpdatedMsiPath,
@@ -250,8 +250,8 @@ try {
     $result.Target.IsAdministrator = Test-Administrator
     if (-not $result.Target.IsAdministrator) { throw 'The installer driver requires an elevated process.' }
     $isPhysicalLocal = $TargetKind -eq 'PhysicalMachine' -and $ExecutionMode -eq 'Local'
-    $isHyperVGuest = $TargetKind -eq 'HyperVVm' -and $ExecutionMode -eq 'VM'
-    if (-not $isPhysicalLocal -and -not $isHyperVGuest) { throw 'This installer case driver requires PhysicalMachine/Local or HyperVVm/VM.' }
+    $isVirtualBoxGuest = $TargetKind -eq 'VirtualBoxVm' -and $ExecutionMode -eq 'VM'
+    if (-not $isPhysicalLocal -and -not $isVirtualBoxGuest) { throw 'This installer case driver requires PhysicalMachine/Local or VirtualBoxVm/VM.' }
     $acceptanceRoot = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_ACCEPTANCE_TEST_ROOT', 'Process')
     if ([string]::IsNullOrWhiteSpace($acceptanceRoot) -or -not (Test-Path -LiteralPath $acceptanceRoot -PathType Container)) { throw 'The driver was not given an existing approved acceptance root.' }
     $acceptanceRoot = [IO.Path]::GetFullPath($acceptanceRoot).TrimEnd('\\')

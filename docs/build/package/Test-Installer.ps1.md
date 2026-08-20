@@ -6,7 +6,7 @@ Runs the R-20 physical installer acceptance matrix for one explicitly declared W
 
 ## Public types and responsibilities
 
-The PowerShell script has no shared product contract or substitute domain type. Its public command-line parameters select the MSI artifacts, target (`Windows10-22H2` or `Windows11`), target kind (`PhysicalMachine` or `HyperVVm`), execution mode (`Local` or `VM`), isolated-environment driver, guest paths, and non-secret credential references. Target kind is validated after environment-variable fallback so an omitted input produces a real `NOT_EXECUTED` manifest rather than a parameter-binding error. The fixed manifest contains these eleven cases:
+The PowerShell script has no shared product contract or substitute domain type. Its public command-line parameters select the MSI artifacts, target (`Windows10-22H2` or `Windows11`), target kind (`PhysicalMachine` or `VirtualBoxVm`), execution mode (`Local` or `VM`), isolated-environment driver, guest paths, and non-secret credential references. Target kind is validated after environment-variable fallback so an omitted input produces a real `NOT_EXECUTED` manifest rather than a parameter-binding error. The fixed manifest contains these eleven cases:
 
 1. clean install
 2. repair
@@ -26,13 +26,13 @@ The external driver performs the destructive MSI operations and state assertions
 
 Parameters may be supplied directly or through process environment variables. The important variables are `STORAGE_CHRONICLE_INSTALLER_MSI`, `STORAGE_CHRONICLE_INSTALLER_UPDATED_MSI`, `STORAGE_CHRONICLE_INSTALLER_ROLLBACK_MSI`, `STORAGE_CHRONICLE_INSTALLER_TARGET_OS`, `STORAGE_CHRONICLE_INSTALLER_TARGET_KIND`, `STORAGE_CHRONICLE_INSTALLER_MODE`, `STORAGE_CHRONICLE_INSTALLER_DRIVER`, `STORAGE_CHRONICLE_INSTALLER_VM_NAME`, `STORAGE_CHRONICLE_INSTALLER_WINDOWS_ISO`, `STORAGE_CHRONICLE_INSTALLER_NONADMIN_USER`, `STORAGE_CHRONICLE_INSTALLER_NONADMIN_CREDENTIAL_REF`, `STORAGE_CHRONICLE_INSTALLER_SESSION_USER`, and `STORAGE_CHRONICLE_INSTALLER_SERVICE_CREDENTIAL_REF`. No plaintext password is accepted or written to the manifest.
 
-`-Execute` is required to arm a run. VM mode requires a running Hyper-V VM, a Windows ISO, administrator rights, and a driver; local mode additionally requires `-AllowLocalIsolatedExecution` and a disposable host whose OS matches the requested target. The default output directory is `artifacts/installer/acceptance`.
+`-Execute` is required to arm a run. VirtualBox VM mode requires a running exact-name VM, Guest Additions/guestcontrol, a Windows ISO, guest credentials, and a driver; the host process does not require administrator rights. Local mode additionally requires `-AllowLocalIsolatedExecution` and a disposable host whose OS matches the requested target. The default output directory is `artifacts/installer/acceptance`.
 
 Each run writes one JSON manifest and one Markdown report named `installer-acceptance-<run-id>.*`. The JSON includes `AcceptanceEligible=true` only when all eleven cases are `PASSED`; missing, diagnostic, or partial runs remain ineligible. Driver logs and per-case result JSON files are written below the matching run directory. `-CaseTimeoutSeconds` bounds each driver invocation (1 through 7200 seconds; the default is 1800). A driver result is accepted as `PASSED` only when it names the exact case, declares the requested target and isolation, declares administrator execution, contains passing assertions, and references existing host-visible evidence files.
 
 ## Dependencies
 
-The script depends on Windows MSI/SCM/session/ACL capabilities, PowerShell, the existing WiX output from `build/package/Build-Installer.ps1`, and an environment-specific driver that can reset a disposable VM or explicitly isolated host for each case. VM mode also depends on Hyper-V `Get-VM` and a supplied Windows ISO. The product installer remains the only product dependency; this harness does not install a driver, .NET runtime, or unrelated resident application.
+The script depends on Windows MSI/SCM/session/ACL capabilities, PowerShell, the existing WiX output from `build/package/Build-Installer.ps1`, and an environment-specific driver that can reset a disposable VM or explicitly isolated host for each case. VirtualBox VM mode also depends on the approved `VBoxManage.exe`, Guest Additions, an exact-name VM, a clean baseline snapshot, and a supplied Windows ISO. The product installer remains the only product dependency; this harness does not install a driver, .NET runtime, or unrelated resident application.
 
 ## Invariants
 
@@ -57,7 +57,7 @@ The deterministic installer manifest contract is covered by `tests/StorageChroni
 
 ## OS constraints
 
-MSI, LocalSystem service recovery, user-logon Session Agent startup, non-administrator UI launch, and Windows ACL behavior are Windows-only. `Windows10-22H2` and `Windows11` are separate target values; the script never labels an unexecuted Windows 10 run as compatible. VM mode requires a running Hyper-V target and a Windows ISO so the environment can be recreated or audited. Local mode is allowed only with an explicit disposable-host acknowledgement.
+MSI, LocalSystem service recovery, user-logon Session Agent startup, non-administrator UI launch, and Windows ACL behavior are Windows-only. `Windows10-22H2` and `Windows11` are separate target values; the script never labels an unexecuted Windows 10 run as compatible. VirtualBox VM mode requires a running exact-name VirtualBox target and a Windows ISO so the environment can be recreated or audited. Local mode is allowed only with an explicit disposable-host acknowledgement.
 
 ## Change-sensitive contracts
 

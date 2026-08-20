@@ -6,7 +6,7 @@ This executable is the fail-closed producer for the real Agent/process/Explorer 
 
 ## Public types and entry point
 
-`StorageChronicle.LiveCorrelationValidator.Program.Main` accepts `--oracle`, `--history`, `--explorer`, `--environment`, and `--output`. It returns zero only when the evidence is a non-diagnostic Windows 11 `SC-Test-W11` TestLab run with complete workload state, zero false exact process attributions, and zero false Explorer source attributions.
+`StorageChronicle.LiveCorrelationValidator.Program.Main` accepts `--oracle`, `--history`, `--explorer`, `--environment`, and `--output`. It returns zero only when the evidence is a non-diagnostic Windows 11 `SC-Test-W11-VBox` TestLab run with complete workload state, zero false exact process attributions, and zero false Explorer source attributions.
 
 ## Invariants
 

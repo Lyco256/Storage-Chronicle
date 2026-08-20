@@ -1,6 +1,6 @@
 # Test-TestLabPrerequisites.ps1
 
-Performs the read-only host preflight required before Hyper-V TestLab construction. It records Windows edition/build/architecture, determines x64 from the operating system bitness API rather than localized WMI text, and records virtualization and SLAT capability, Hyper-V module and service availability, administrator state, memory and candidate-volume space, and user-supplied ISO/root paths. It never enables Windows features, changes firmware/BCD, restarts the host, downloads media, formats disks, or creates a VM. Missing user approval, unsupported editions, absent Hyper-V, and omitted ISO/root values remain explicit blocking statuses and produce exit code 2.
+Performs the read-only VirtualBox host preflight required before TestLab construction. It records Windows edition/build/architecture, CPU/core/RAM/free-space/NTFS status, TPM and Device Guard/Memory Integrity audit values, WMI virtualization, VirtualBox version/path/hostinfo, current approved VM and baseline state, Hyper-V presence only as an audit field, and user-supplied ISO/root paths. It never enables features, changes firmware/BCD, restarts the host, downloads media, formats disks, or creates a VM. An unavailable `VBoxManage.exe`, insufficient RAM, missing ISO, unsafe root, or unavailable hardware capability remains explicit and produces exit code 2.
 
 ## Role
 
@@ -12,7 +12,7 @@ Inputs are optional user-approved paths and resource thresholds. Output is JSON 
 
 ## Failure behavior
 
-The script fails closed with `ReadyForTestLab=false` and exit code 2 for any missing prerequisite, unsupported host, missing user action, or incomplete inspection. An administrator rerun is required where Windows feature state cannot be queried.
+The script fails closed with `ReadyForProvisioning=false`, `ReadyForFunctionalAcceptance=false`, and exit code 2 for any missing prerequisite, unsupported host, missing user action, or incomplete inspection. A UAC-only Windows feature query is recorded as `REQUIRES_USER_ACTION` audit information and does not abort the normal-user preflight. Human-controlled installation, firmware, ISO, and guest setup use the fixed handoff fields `Blocked`, `Reason`, `WhyUserActionIsRequired`, `DoThis`, `ExpectedResult`, `DoNotDo`, `ResumeCommand`, and `SendBack`.
 
 ## Tests and verification
 

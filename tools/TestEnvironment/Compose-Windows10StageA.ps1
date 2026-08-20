@@ -23,8 +23,8 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $OutputPath) | Out
 $manifest = [ordered]@{
     Schema = 'StorageChronicle.Windows10StageAAcceptance.v1'
     TargetOs = 'Windows10-22H2'
-    TargetKind = 'HyperVVm'
-    VmName = 'SC-Test-W10'
+    TargetKind = 'VirtualBoxVm'
+    VmName = 'SC-Test-W10-VBox'
     ExecutionMode = 'VM'
     Status = 'NOT_EXECUTED'
     AcceptanceEligible = $false
@@ -68,8 +68,8 @@ function Assert-RealCheckArtifact {
     if ([string]$value.Schema -ne 'StorageChronicle.Windows10StageACheck.v1' -or
         [string]$value.CheckName -ne $ExpectedName -or
         [string]$value.TargetOs -ne 'Windows10-22H2' -or
-        [string]$value.TargetKind -ne 'HyperVVm' -or
-        [string]$value.VmName -ne 'SC-Test-W10' -or
+        [string]$value.TargetKind -ne 'VirtualBoxVm' -or
+        [string]$value.VmName -ne 'SC-Test-W10-VBox' -or
         [string]$value.ExecutionMode -ne 'VM' -or
         [string]$value.Status -ne 'PASSED' -or
         -not [bool]$value.AcceptanceEligible -or
@@ -135,19 +135,19 @@ function Assert-Installer {
     param([Parameter(Mandatory = $true)]$Artifact)
 
     $value = $Artifact.Value
-    if ([string]$value.Schema -ne 'StorageChronicle.HyperVInstallerAcceptance.v1' -or
+    if ([string]$value.Schema -ne 'StorageChronicle.VirtualBoxInstallerAcceptance.v1' -or
         [string]$value.Target -ne 'Windows10' -or
         [string]$value.TargetOs -ne 'Windows10-22H2' -or
         [string]$value.Status -ne 'PASSED' -or
-        -not [bool]$value.AcceptanceEligible) { throw 'Windows 10 Hyper-V installer evidence is not eligible.' }
+        -not [bool]$value.AcceptanceEligible) { throw 'Windows 10 VirtualBox installer evidence is not eligible.' }
     $genericPath = [string]$value.InstallerManifestPath
-    $generic = Read-JsonArtifact -Path $genericPath -Label 'Windows 10 Hyper-V installer manifest'
+    $generic = Read-JsonArtifact -Path $genericPath -Label 'Windows 10 VirtualBox installer manifest'
     $genericValue = $generic.Value
     if ([string]$genericValue.Schema -ne 'storage-chronicle.installer-acceptance.v1' -or
         [string]$genericValue.Status -ne 'PASSED' -or
         -not [bool]$genericValue.AcceptanceEligible -or
         [string]$genericValue.TargetOs -ne 'Windows10-22H2' -or
-        [string]$genericValue.TargetKind -ne 'HyperVVm' -or
+        [string]$genericValue.TargetKind -ne 'VirtualBoxVm' -or
         [string]$genericValue.ExecutionMode -ne 'VM' -or
         $null -eq $genericValue.Summary -or
         [int]$genericValue.Summary.Total -ne 11 -or
@@ -156,18 +156,18 @@ function Assert-Installer {
         [int]$genericValue.Summary.NotExecuted -ne 0 -or
         @($genericValue.Tests).Count -ne 11 -or
         @($genericValue.Tests | Where-Object { [string]$_.Status -ne 'PASSED' }).Count -ne 0) {
-        throw 'Windows 10 Hyper-V installer manifest does not prove all eleven cases passed.'
+        throw 'Windows 10 VirtualBox installer manifest does not prove all eleven cases passed.'
     }
     $requiredCaseIds = @(Get-RequiredInstallerCaseIds)
     $caseIds = @($genericValue.Tests | ForEach-Object { [string]$_.CaseId })
-    if (@($caseIds | Sort-Object -Unique).Count -ne $requiredCaseIds.Count -or @($requiredCaseIds | Where-Object { $caseIds -notcontains $_ }).Count -ne 0) { throw 'Windows 10 Hyper-V installer manifest does not contain the defined eleven case IDs.' }
+    if (@($caseIds | Sort-Object -Unique).Count -ne $requiredCaseIds.Count -or @($requiredCaseIds | Where-Object { $caseIds -notcontains $_ }).Count -ne 0) { throw 'Windows 10 VirtualBox installer manifest does not contain the defined eleven case IDs.' }
     return $generic.Path
 }
 
 try {
     $testLab = Read-JsonArtifact -Path $TestLabManifestPath -Label 'Windows 10 TestLab manifest'
     $privileged = Read-JsonArtifact -Path $PrivilegedManifestPath -Label 'Windows 10 privileged manifest'
-    $installer = Read-JsonArtifact -Path $InstallerManifestPath -Label 'Windows 10 Hyper-V installer manifest'
+    $installer = Read-JsonArtifact -Path $InstallerManifestPath -Label 'Windows 10 VirtualBox installer manifest'
     $cloudFiles = Read-JsonArtifact -Path $CloudFilesCheckPath -Label 'Windows 10 Cloud Files check'
     $noDriver = Read-JsonArtifact -Path $NoDriverCheckPath -Label 'Windows 10 no-driver check'
 

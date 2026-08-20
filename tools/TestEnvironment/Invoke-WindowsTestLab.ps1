@@ -55,7 +55,7 @@ function Invoke-GuestCommand {
     $arguments = @{ VmName = $VmName; Command = $Command; ConfigPath = $ConfigPath }
     if ($null -ne $Credential) { $arguments.Credential = $Credential }
     $output = @(& (Join-Path $PSScriptRoot 'Invoke-TestLabCommand.ps1') @arguments 2>&1)
-    if ($LASTEXITCODE -ne 0) { throw "PowerShell Direct command failed on ${VmName}: $($output -join [Environment]::NewLine)" }
+    if ($LASTEXITCODE -ne 0) { throw "VirtualBox guestcontrol command failed on ${VmName}: $($output -join [Environment]::NewLine)" }
     return $output
 }
 
@@ -177,8 +177,8 @@ try {
         exit 2
     }
 
-    Assert-HyperVMutationPrerequisites
-    Add-Stage 'preflight' 'PASSED' 'Hyper-V and VMMS were available on the elevated host.'
+    $preflight = Assert-VirtualBoxHostPrerequisites -Root $root -Windows11Iso ([string]$config.Windows11Iso) -Windows10Iso ([string]$config.Windows10Iso)
+    Add-Stage 'preflight' 'PASSED' 'VirtualBox host capability, safe root, resource profile, and selected ISO paths were validated without host elevation.' $preflight
     $guestWorkloadDestination = 'C:\StorageChronicleTest\StorageChronicle.FileMutationWorkload.exe'
     $guestWorkloadDirectory = Split-Path -Parent $guestWorkloadDestination
     $guestAgentDestination = 'C:\StorageChronicleTest\StorageChronicle.Agent.exe'
@@ -193,7 +193,7 @@ try {
         $vm = Assert-ExactTestLabVm -Name $definition.Name
         Assert-TestLabVmDisks -Vm $vm -Root $root
         $safeRunId = $RunId -replace '[^A-Za-z0-9_.-]', '-'
-        $vhdxPath = Assert-PathUnderRoot -Root $root -Path (Join-Path $root "data\$($definition.Name)\$safeRunId-$DataRole.vhdx")
+        $vhdxPath = Assert-PathUnderRoot -Root $root -Path (Join-Path $root "data\$($definition.Name)\$safeRunId-$DataRole.vdi")
         $guestArtifactDirectory = Join-Path $artifactDirectory $definition.Name
         New-Item -ItemType Directory -Force -Path $guestArtifactDirectory | Out-Null
         $oracleGuestPath = Join-Path $GuestDataRoot "$RunId-oracle.json"
@@ -235,14 +235,15 @@ Compress-Archive -Path (Join-Path `$historyRoot '*') -DestinationPath `$historyZ
 "@
         $markerVerified = $false
         try {
-            & (Join-Path $PSScriptRoot 'Reset-TestVm.ps1') -Name $definition.Name -CheckpointName 'SC-CLEAN-BASELINE' -ConfigPath $ConfigPath -Apply | Out-File -LiteralPath (Join-Path $guestArtifactDirectory 'reset.log') -Encoding UTF8
+            & (Join-Path $PSScriptRoot 'Reset-TestVm.ps1') -Name $definition.Name -SnapshotName 'SC-CLEAN-BASELINE' -ConfigPath $ConfigPath -Apply | Out-File -LiteralPath (Join-Path $guestArtifactDirectory 'reset.log') -Encoding UTF8
             if ($LASTEXITCODE -ne 0) { throw "Baseline reset failed for $($definition.Name)." }
             $newArgs = @{ VmName = $definition.Name; Role = $DataRole; TestId = $RunId; ConfigPath = $ConfigPath; Apply = $true }
             & (Join-Path $PSScriptRoot 'New-TestDataVhdx.ps1') @newArgs | Out-File -LiteralPath (Join-Path $guestArtifactDirectory 'new-vhdx.log') -Encoding UTF8
             if ($LASTEXITCODE -ne 0) { throw "Data VHDX creation failed for $($definition.Name)." }
             [void]$activeVhdx.Add([pscustomobject]@{ VmName = $definition.Name; Path = $vhdxPath })
-            Start-VM -Name $definition.Name -ErrorAction Stop | Out-Null
-            Add-Stage $definition.Name 'STARTED' 'Baseline restored, disposable VHDX attached, and the approved VM started.' $vhdxPath
+            Set-VBoxVmProvisioningSettings -Name $definition.Name -Provisioning:$false
+            Start-TestLabVm -Name $definition.Name
+            Add-Stage $definition.Name 'STARTED' 'VirtualBox baseline restored, disposable dynamic data disk attached, networking disconnected, and the approved VM started.' $vhdxPath
             Copy-GuestArtifactDirectory -VmName $definition.Name -SourceDirectory $workloadSourceDirectory -DestinationDirectory $guestWorkloadDirectory -LogPath (Join-Path $guestArtifactDirectory 'copy-workload.log')
             if ($null -ne $agentSource) {
                 Copy-GuestArtifactDirectory -VmName $definition.Name -SourceDirectory $agentSourceDirectory -DestinationDirectory $guestAgentDirectory -LogPath (Join-Path $guestArtifactDirectory 'copy-agent.log')
@@ -275,9 +276,11 @@ Compress-Archive -Path (Join-Path `$historyRoot '*') -DestinationPath `$historyZ
             throw
         }
         finally {
-            if ($vm.State -ne 'Off') {
-                try { Stop-VM -Name $definition.Name -TurnOff -Confirm:$false -ErrorAction Stop } catch { [void]$cleanupFailures.Add("$($definition.Name) stop: $($_.Exception.Message)") }
-            }
+            try {
+                if ((Get-VBoxVmState $definition.Name) -ne 'poweroff') {
+                    Stop-TestLabVm -Name $definition.Name
+                }
+            } catch { [void]$cleanupFailures.Add("$($definition.Name) stop: $($_.Exception.Message)") }
             $active = @($activeVhdx | Where-Object VmName -eq $definition.Name | Select-Object -First 1)
             if ($active.Count -eq 1) {
                 if (-not $markerVerified) {
@@ -297,7 +300,7 @@ Compress-Archive -Path (Join-Path `$historyRoot '*') -DestinationPath `$historyZ
             $correlationEnvironmentPath = Join-Path $artifactDirectory 'correlation-environment.json'
             $correlationEnvironment = [ordered]@{
                 TargetOs = 'Windows11'
-                VmName = 'SC-Test-W11'
+                VmName = 'SC-Test-W11-VBox'
                 ExecutionMode = 'TestLab'
                 AgentHostMode = 'TestLab'
                 Diagnostic = $false
@@ -336,7 +339,7 @@ Compress-Archive -Path (Join-Path `$historyRoot '*') -DestinationPath `$historyZ
     $manifest.CleanupFailures = @($cleanupFailures)
     Write-TestLabJson -Path $manifestPath -Value $manifest
     Write-Output ($manifest | ConvertTo-Json -Depth 12)
-    exit 0
+    exit $(if ($manifest.AcceptanceEligible) { 0 } else { 2 })
 }
 catch {
     $manifest.Status = 'FAILED'

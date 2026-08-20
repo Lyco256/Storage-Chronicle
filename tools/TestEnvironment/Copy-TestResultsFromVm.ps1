@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][ValidateSet('SC-Test-W11', 'SC-Test-W10')][string]$VmName,
+    [Parameter(Mandatory = $true)][ValidateSet('SC-Test-W11-VBox', 'SC-Test-W10-VBox')][string]$VmName,
     [Parameter(Mandatory = $true)][string]$SourcePath,
     [Parameter(Mandatory = $true)][string]$DestinationPath,
     [pscredential]$Credential,
@@ -11,13 +11,15 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'TestLab.Common.ps1')
 $config = Get-TestLabConfig -ConfigPath $ConfigPath
 $root = Assert-TestLabRoot -Root $config.Root
-Assert-HyperVMutationPrerequisites
-$null = Assert-ExactTestLabVm -Name $VmName
-$destination = Assert-PathUnderRoot -Root ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\artifacts\acceptance\testlab'))) -Path $DestinationPath
+$artifactRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\artifacts\acceptance\testlab'))
+$destination = Assert-PathUnderRoot -Root $artifactRoot -Path $DestinationPath
+$vm = Assert-ExactTestLabVm -Name $VmName
+if ([string]$vm.State -ne 'running') { throw "Approved VirtualBox VM is not running: $VmName" }
+$guestCredential = Get-TestLabGuestCredential -Credential $Credential -CredentialReference ([string]$config.GuestCredentialReference)
 $parent = Split-Path -Parent $destination
 New-Item -ItemType Directory -Force -Path $parent | Out-Null
-$sessionParameters = @{ VMName = $VmName; ErrorAction = 'Stop' }
-if ($null -ne $Credential) { $sessionParameters.Credential = $Credential }
-$session = New-PSSession @sessionParameters
-try { Copy-Item -FromSession $session -LiteralPath $SourcePath -Destination $destination -Force -ErrorAction Stop }
-finally { Remove-PSSession $session -ErrorAction SilentlyContinue }
+$tempDirectory = Join-Path $root '.copy-results'
+New-Item -ItemType Directory -Force -Path $tempDirectory | Out-Null
+Copy-TestArtifactFromVm -VmName $VmName -Credential $guestCredential -GuestPath $SourcePath -HostDirectory $parent -TempRoot $tempDirectory
+$copied = Join-Path $parent (Split-Path -Leaf $SourcePath)
+if (-not [IO.Path]::GetFullPath($copied).Equals([IO.Path]::GetFullPath($destination), [StringComparison]::OrdinalIgnoreCase)) { Move-Item -LiteralPath $copied -Destination $destination -Force }

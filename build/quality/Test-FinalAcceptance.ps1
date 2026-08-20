@@ -7,7 +7,7 @@ param(
     [string]$ResourceEvidence,
     [string]$BenchmarkManifest,
     [string]$InstallerManifest,
-    [string]$Windows11HyperVInstallerManifest,
+    [string]$Windows11VirtualBoxInstallerManifest,
     [string]$CorrelationManifest,
     [string]$BranchManifest,
     [string]$OutputPath
@@ -52,27 +52,27 @@ function Assert-InstallerCaseRows {
     }
 }
 
-function Assert-Windows11HyperVInstallerPrerequisite {
+function Assert-Windows11VirtualBoxInstallerPrerequisite {
     param([Parameter(Mandatory = $true)][string]$Path)
 
-    $wrapper = Read-ReferencedJson -Path $Path -Label 'Windows 11 Hyper-V installer acceptance manifest'
-    if ([string]$wrapper.Schema -ne 'StorageChronicle.HyperVInstallerAcceptance.v1' -or
+    $wrapper = Read-ReferencedJson -Path $Path -Label 'Windows 11 VirtualBox installer acceptance manifest'
+    if ([string]$wrapper.Schema -ne 'StorageChronicle.VirtualBoxInstallerAcceptance.v1' -or
         [string]$wrapper.Target -ne 'Windows11' -or
         [string]$wrapper.TargetOs -ne 'Windows11' -or
         [string]$wrapper.Status -ne 'PASSED' -or
         -not [bool]$wrapper.AcceptanceEligible) {
-        throw 'Windows 11 Hyper-V installer acceptance is not an eligible passed artifact.'
+        throw 'Windows 11 VirtualBox installer acceptance is not an eligible passed artifact.'
     }
-    $generic = Read-ReferencedJson -Path ([string]$wrapper.InstallerManifestPath) -Label 'Windows 11 Hyper-V generic installer manifest'
+    $generic = Read-ReferencedJson -Path ([string]$wrapper.InstallerManifestPath) -Label 'Windows 11 VirtualBox generic installer manifest'
     if ([string]$generic.Schema -ne 'storage-chronicle.installer-acceptance.v1' -or
         [string]$generic.TargetOs -ne 'Windows11' -or
-        [string]$generic.TargetKind -ne 'HyperVVm' -or
+        [string]$generic.TargetKind -ne 'VirtualBoxVm' -or
         [string]$generic.ExecutionMode -ne 'VM' -or
         [string]$generic.Status -ne 'PASSED' -or
         -not [bool]$generic.AcceptanceEligible) {
-        throw 'Windows 11 Hyper-V generic installer evidence is not eligible.'
+        throw 'Windows 11 VirtualBox generic installer evidence is not eligible.'
     }
-    Assert-InstallerCaseRows -Value $generic -Label 'Windows 11 Hyper-V generic installer evidence'
+    Assert-InstallerCaseRows -Value $generic -Label 'Windows 11 VirtualBox generic installer evidence'
 }
 
 function Assert-GroupEvidence {
@@ -180,7 +180,7 @@ function Assert-GroupEvidence {
             if ([string]$Value.TargetOs -ne 'Windows10-22H2') { throw 'Windows 10 evidence does not identify Windows10-22H2.' }
             foreach ($field in @('StageA', 'StageB')) { if ($null -eq $Value.PSObject.Properties[$field]) { throw "Windows 10 evidence is missing $field." } }
             $stageA = Read-ReferencedJson -Path ([string]$Value.StageA.ManifestPath) -Label 'Windows 10 Stage A manifest'
-            if ([string]$stageA.Schema -ne 'StorageChronicle.Windows10StageAAcceptance.v1' -or [string]$stageA.TargetOs -ne 'Windows10-22H2' -or [string]$stageA.TargetKind -ne 'HyperVVm' -or [string]$stageA.VmName -ne 'SC-Test-W10' -or [string]$stageA.ExecutionMode -ne 'VM' -or [string]$stageA.Status -ne 'PASSED' -or -not [bool]$stageA.AcceptanceEligible) { throw 'Windows 10 Stage A is not an eligible real acceptance artifact.' }
+            if ([string]$stageA.Schema -ne 'StorageChronicle.Windows10StageAAcceptance.v1' -or [string]$stageA.TargetOs -ne 'Windows10-22H2' -or [string]$stageA.TargetKind -ne 'VirtualBoxVm' -or [string]$stageA.VmName -ne 'SC-Test-W10-VBox' -or [string]$stageA.ExecutionMode -ne 'VM' -or [string]$stageA.Status -ne 'PASSED' -or -not [bool]$stageA.AcceptanceEligible) { throw 'Windows 10 Stage A is not an eligible real acceptance artifact.' }
             if (@($stageA.Checks).Count -ne $requiredWindows10StageAChecks.Count) { throw 'Windows 10 Stage A does not contain exactly the required check count.' }
             $stageACheckNames = @($stageA.Checks | ForEach-Object { [string]$_.Name })
             if (@($stageACheckNames | Sort-Object -Unique).Count -ne $requiredWindows10StageAChecks.Count -or @($requiredWindows10StageAChecks | Where-Object { $stageACheckNames -notcontains $_ }).Count -ne 0) { throw 'Windows 10 Stage A checks are missing, duplicated, or contain an unexpected name.' }
@@ -251,7 +251,7 @@ function Assert-GroupEvidence {
             if ([string]$Value.Status -ne 'PASSED') { throw 'Installer evidence status is not PASSED.' }
             if ([string]$Value.TargetOs -ne 'Windows11' -or [string]$Value.TargetKind -ne 'PhysicalMachine' -or [string]$Value.ExecutionMode -ne 'Local') { throw 'Installer evidence is not from the required Windows 11 physical-machine acceptance path.' }
             Assert-InstallerCaseRows -Value $Value -Label 'Windows 11 physical installer evidence'
-            Assert-Windows11HyperVInstallerPrerequisite -Path $Windows11HyperVInstallerManifest
+            Assert-Windows11VirtualBoxInstallerPrerequisite -Path $Windows11VirtualBoxInstallerManifest
         }
         'AgentExplorerCorrelation' {
             if ($schema -ne 'StorageChronicle.AgentExplorerCorrelationEvidence.v1') { throw 'Agent/Explorer correlation evidence has an unexpected schema.' }
@@ -259,7 +259,7 @@ function Assert-GroupEvidence {
             if ($null -eq $Value.PSObject.Properties['FalseExactCount'] -or [int]$Value.FalseExactCount -ne 0) { throw 'Agent/Explorer evidence does not prove false Exact attribution is zero.' }
             foreach ($field in @('ProcessAttribution', 'ExplorerSourceCorrelation', 'FileStateCorrectness', 'WorkloadOraclePath', 'Environment', 'SourceEventCount', 'CanonicalEventCount', 'FinalStateCount', 'Failures')) { if ($null -eq $Value.PSObject.Properties[$field]) { throw "Agent/Explorer evidence is missing $field." } }
             if ([string]$Value.Environment.TargetOs -ne 'Windows11' -or
-                [string]$Value.Environment.VmName -ne 'SC-Test-W11' -or
+                [string]$Value.Environment.VmName -ne 'SC-Test-W11-VBox' -or
                 [string]$Value.Environment.ExecutionMode -ne 'TestLab' -or
                 [string]$Value.Environment.AgentHostMode -ne 'TestLab' -or
                 [bool]$Value.Environment.Diagnostic) { throw 'Agent/Explorer evidence does not prove a non-diagnostic Windows 11 TestLab Agent run.' }

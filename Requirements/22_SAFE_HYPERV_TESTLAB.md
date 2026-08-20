@@ -1,5 +1,7 @@
 # 安全なHyper-V TestLab要件
 
+> **Superseded for TestLab virtualization:** Requirements 32 and 33 replace the Hyper-V-specific host, VM-control, guest-control, and VHDX orchestration portions of this document with the VirtualBox TestLab contract. This file is retained as historical requirement context; product behavior, Windows Collector behavior, safety markers, acceptance evidence, and guest-internal VHDX rules remain in force unless Requirements 32–36 explicitly supersede them.
+
 ## 1. 目的
 
 Windows特権API、USN、MFT、Service、ETW、SMB、外付け媒体相当、再調整、性能試験をホストの実データから隔離する。

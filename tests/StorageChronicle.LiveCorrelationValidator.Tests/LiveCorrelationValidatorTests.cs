@@ -228,7 +228,7 @@ public sealed class LiveCorrelationValidatorTests
     private static void WriteEnvironment(string path, string history, string oracle, string explorer, string agent, string workload, bool diagnostic = false) => File.WriteAllText(path, JsonSerializer.Serialize(new
     {
         TargetOs = "Windows11",
-        VmName = "SC-Test-W11",
+        VmName = "SC-Test-W11-VBox",
         ExecutionMode = "TestLab",
         AgentHostMode = "TestLab",
         Diagnostic = diagnostic,

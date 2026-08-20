@@ -22,3 +22,6 @@ The existing local `devenv` and `main` refs are retained. This feature branch is
 ## Required next branch actions
 
 After the supported TestLab and physical gates pass, the top agent must merge reviewed commits into local `devenv` with `--no-ff`, rerun the full integrated suite, then merge `devenv` into `main` with `--no-ff`. Only then may remote `devenv` and `main` be published. The GitHub default branch must be changed to `main` by an authenticated user or authorized UI action if the top agent lacks permission.
+# Historical branch audit (superseded virtualization baseline)
+
+The Hyper-V host statement below is historical. Requirements 32–36 supersede Hyper-V-specific TestLab control with VirtualBox; see `docs/release/virtualbox-migration-inventory.md` and `docs/release/virtualbox-migration-review.md` for the current audit.

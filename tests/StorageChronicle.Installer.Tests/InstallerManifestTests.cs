@@ -26,19 +26,18 @@ public sealed class InstallerManifestTests
     }
 
     [Fact]
-    public void HyperVInstallerDriverIsExplicitAndFailClosed()
+    public void VirtualBoxInstallerDriverIsExplicitAndFailClosed()
     {
         var root = FindRoot();
         var genericHarness = File.ReadAllText(Path.Combine(root, "build", "package", "Test-Installer.ps1"));
-        var driver = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Invoke-HyperVInstallerCase.ps1"));
-        var orchestrator = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Run-HyperVInstallerAcceptance.ps1"));
+        var driver = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Invoke-VirtualBoxInstallerCase.ps1"));
+        var orchestrator = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Run-VirtualBoxInstallerAcceptance.ps1"));
 
         Assert.Contains("GuestCredentialReference", genericHarness, StringComparison.Ordinal);
-        Assert.Contains("'PhysicalMachine', 'HyperVVm'", genericHarness, StringComparison.Ordinal);
-        Assert.Contains("New-PSSession -VMName", driver, StringComparison.Ordinal);
-        Assert.Contains("Copy-Item", driver, StringComparison.Ordinal);
-        Assert.Contains("-ToSession $Session", driver, StringComparison.Ordinal);
-        Assert.Contains("Copy-Item -FromSession $Session", driver, StringComparison.Ordinal);
+        Assert.Contains("'PhysicalMachine', 'VirtualBoxVm'", genericHarness, StringComparison.Ordinal);
+        Assert.Contains("Invoke-VBoxGuestControl", driver, StringComparison.Ordinal);
+        Assert.Contains("Copy-TestArtifactToVm", driver, StringComparison.Ordinal);
+        Assert.Contains("Copy-TestArtifactFromVm", driver, StringComparison.Ordinal);
         Assert.Contains("Status = 'FAILED'", driver, StringComparison.Ordinal);
         Assert.Contains("SC-CLEAN-BASELINE", orchestrator, StringComparison.Ordinal);
         Assert.Contains("-Apply", orchestrator, StringComparison.Ordinal);
@@ -73,8 +72,8 @@ public sealed class InstallerManifestTests
         Assert.Contains("pnputil.exe", guest, StringComparison.Ordinal);
         Assert.Contains("DriverPresent", guest, StringComparison.Ordinal);
         Assert.Contains("ApiCalled = $false", guest, StringComparison.Ordinal);
-        Assert.Contains("SC-Test-W10", host, StringComparison.Ordinal);
-        Assert.Contains("Assert-HyperVMutationPrerequisites", host, StringComparison.Ordinal);
+        Assert.Contains("SC-Test-W10-VBox", host, StringComparison.Ordinal);
+        Assert.Contains("Assert-VirtualBoxHostPrerequisites", host, StringComparison.Ordinal);
         Assert.Contains("if (-not $Apply)", host, StringComparison.Ordinal);
         Assert.Contains("AcceptanceEligible = $false", host, StringComparison.Ordinal);
     }
@@ -107,7 +106,7 @@ public sealed class InstallerManifestTests
     }
 
     [Fact]
-    public void FinalAcceptanceRequiresPhysicalAndHyperVPrerequisites()
+    public void FinalAcceptanceRequiresPhysicalAndVirtualBoxPrerequisites()
     {
         var root = FindRoot();
         var finalGate = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-FinalAcceptance.ps1"));
@@ -117,8 +116,8 @@ public sealed class InstallerManifestTests
         var agent = File.ReadAllText(Path.Combine(root, "src", "StorageChronicle.Agent", "Program.cs"));
         var testLab = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Invoke-WindowsTestLab.ps1"));
 
-        Assert.Contains("Windows11HyperVInstallerManifest", finalGate, StringComparison.Ordinal);
-        Assert.Contains("Assert-Windows11HyperVInstallerPrerequisite", finalGate, StringComparison.Ordinal);
+        Assert.Contains("Windows11VirtualBoxInstallerManifest", finalGate, StringComparison.Ordinal);
+        Assert.Contains("Assert-Windows11VirtualBoxInstallerPrerequisite", finalGate, StringComparison.Ordinal);
         Assert.Contains("AgentIntegration-Windows11", finalGate, StringComparison.Ordinal);
         Assert.Contains("IsPhysicalMachine", finalGate, StringComparison.Ordinal);
         Assert.Contains("Configuration -ne 'Release'", finalGate, StringComparison.Ordinal);
@@ -141,7 +140,7 @@ public sealed class InstallerManifestTests
         var finalGate = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-FinalAcceptance.ps1"));
         var wrapper = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-CorrelationMetrics.ps1"));
 
-        Assert.Contains("SC-Test-W11", finalGate, StringComparison.Ordinal);
+        Assert.Contains("SC-Test-W11-VBox", finalGate, StringComparison.Ordinal);
         Assert.Contains("AgentHistoryPath", finalGate, StringComparison.Ordinal);
         Assert.Contains("WorkloadExecutablePath", finalGate, StringComparison.Ordinal);
         Assert.Contains("FalseAttributionCount", finalGate, StringComparison.Ordinal);

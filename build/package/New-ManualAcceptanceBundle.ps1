@@ -159,7 +159,7 @@ This bundle is preparation evidence only. `AcceptanceEligible` is `false` until 
 
 The script verifies the target OS, x64, administrator token, free space, bundle hashes, and marker before asking for an exact `YES` confirmation. It does not claim success from an exit code alone.
 
-For Windows 10, run `.Verify-Windows10PhysicalAcceptance.ps1 -BundleRoot . -TestDataRoot 'D:\SC-Acceptance'` first. After the physical installer run and after the real Windows 10 Hyper-V Stage A artifact has been copied to the target, run `.Finalize-Windows10PhysicalAcceptance.ps1 -StageAManifestPath <stage-a.json> -PhysicalPreflightPath .\results\windows10-preflight.json -PhysicalInstallerManifestPath <results\installer\installer-acceptance-*.json>`. The finalizer remains ineligible unless Stage A, all physical preflight checks, and all eleven physical installer cases pass. Collect only the generated result files with `.Collect-PhysicalAcceptanceResults.ps1 -BundleRoot .`.
+For Windows 10, run `.Verify-Windows10PhysicalAcceptance.ps1 -BundleRoot . -TestDataRoot 'D:\SC-Acceptance'` first. After the physical installer run and after the real Windows 10 VirtualBox Stage A artifact has been copied to the target, run `.Finalize-Windows10PhysicalAcceptance.ps1 -StageAManifestPath <stage-a.json> -PhysicalPreflightPath .\results\windows10-preflight.json -PhysicalInstallerManifestPath <results\installer\installer-acceptance-*.json>`. The finalizer remains ineligible unless Stage A, all physical preflight checks, and all eleven physical installer cases pass. Collect only the generated result files with `.Collect-PhysicalAcceptanceResults.ps1 -BundleRoot .`.
 
 Cleanup requires explicit `-ConfirmCleanup`; it never removes `%ProgramData%\Storage Chronicle\history`.
 "@

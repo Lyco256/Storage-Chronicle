@@ -82,7 +82,7 @@ if (-not [string]::IsNullOrWhiteSpace($LiveEvidencePath)) {
         $null -eq $live.PSObject.Properties['FalseExactCount'] -or
         [int]$live.FalseExactCount -ne 0 -or
         [string]$live.Environment.TargetOs -ne 'Windows11' -or
-        [string]$live.Environment.VmName -ne 'SC-Test-W11' -or
+        [string]$live.Environment.VmName -ne 'SC-Test-W11-VBox' -or
         [string]$live.Environment.ExecutionMode -ne 'TestLab' -or
         [string]$live.Environment.AgentHostMode -ne 'TestLab' -or
         [bool]$live.Environment.Diagnostic) {

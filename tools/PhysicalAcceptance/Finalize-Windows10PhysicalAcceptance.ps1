@@ -56,8 +56,8 @@ function Assert-StageA {
 
     $value = $Artifact.Value
     if ([string]$value.Schema -ne 'StorageChronicle.Windows10StageAAcceptance.v1' -or
-        [string]$value.TargetKind -ne 'HyperVVm' -or
-        [string]$value.VmName -ne 'SC-Test-W10' -or
+        [string]$value.TargetKind -ne 'VirtualBoxVm' -or
+        [string]$value.VmName -ne 'SC-Test-W10-VBox' -or
         [string]$value.ExecutionMode -ne 'VM') { throw "Stage A has an unexpected target or schema: $($Artifact.Path)" }
     if ([string]$value.TargetOs -ne 'Windows10-22H2' -or [string]$value.Status -ne 'PASSED' -or -not [bool]$value.AcceptanceEligible) { throw "Stage A is not an eligible Windows 10 22H2 acceptance artifact: $($Artifact.Path)" }
     $checks = @($value.Checks)
