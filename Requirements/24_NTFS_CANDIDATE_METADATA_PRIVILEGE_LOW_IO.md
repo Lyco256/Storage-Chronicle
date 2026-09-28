@@ -55,9 +55,9 @@ reconciliation workerはUI/通常live processingとは別のbackground workerで
 - low priority化のためにイベントを間引かない。
 - live event persistenceをreconciliationより常に優先する。
 
-## 5. TestLab
+## 5. 実機隔離受入れ
 
-ACL拒否シナリオを専用VHDXに作る。
+37の静的監査とpreflight後、ACL拒否シナリオをrun専用の新規file-backed VHDXに作る。既存ユーザーファイルのACLを変更しない。
 
 1. 通常tokenでは対象ディレクトリの詳細問い合わせが拒否される。
 2. `SeBackupPrivilege` scope内でread-only metadataを取得できる範囲を記録する。
@@ -65,7 +65,7 @@ ACL拒否シナリオを専用VHDXに作る。
 4. 対象内容を一切読み出していない。
 5. read-only metadata pathが対象ファイルを変更していない。
 
-低優先I/Oは、TestLabで同時にforeground I/O workloadを実行し、background mode設定の有無をログで確認する。性能値の改善を必須条件にはせず、OS優先度APIが正しく適用・解除されることを確認する。
+低優先I/Oは、実機の隔離fixtureで同時にforeground I/O workloadを実行し、background mode設定の有無をログで確認する。性能値の改善を必須条件にはせず、OS優先度APIが正しく適用・解除されることを確認する。
 
 ## 6. 計測
 

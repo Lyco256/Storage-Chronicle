@@ -8,7 +8,7 @@
 
 ## 2. 自動Agent相関workload
 
-Hyper-V Windows 11 VMで `StorageChronicle.FileMutationWorkload` を複数プロセスとして起動する。
+`37_PHYSICAL_READ_ONLY_ACCEPTANCE.md` の監査に合格したWindows 11実機で、run専用fixture内だけを対象に `StorageChronicle.FileMutationWorkload` を複数プロセスとして起動する。既存ユーザーファイルにはworkloadを向けない。
 
 最低ケース:
 
@@ -59,7 +59,7 @@ copyと特定できない場合は新規作成扱いを正答とする。
 
 UI AutomationでExplorer copy/pasteが安定して再現できる場合は全自動にする。
 
-自動化がflakyなら、最終Explorer acceptanceだけ人間補助モードに切り替える。スクリプトが専用TestLabフォルダーと操作一覧を準備し、ユーザーはVM内Explorerで番号順に操作するだけとする。
+自動化がflakyなら、最終Explorer acceptanceだけ人間補助モードに切り替える。スクリプトが実機上のrun専用fixtureと操作一覧を準備し、ユーザーはそのフォルダー内だけで番号順に操作する。既存のごみ箱内容や他のExplorerウィンドウを対象にしない。
 
 人間補助は最大20操作以内にまとめる。
 

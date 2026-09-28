@@ -1,8 +1,10 @@
 # 最終受入れフェーズ統括要件
 
+> 2026-09-28方針変更: 仮想環境を作らない。以下の旧TestLab/VM実行指示より `37_PHYSICAL_READ_ONLY_ACCEPTANCE.md` の実機データ保護、監査、権限境界を優先する。
+
 ## 1. 目的
 
-この文書は、既存の `Requirements/00_PRODUCT_REQUIREMENTS.md` ～ `Requirements/20_AGENT_INSTALLER_PACKAGING.md` を変更せず、2026-08-19 時点で未完了の最終受入れ項目を閉じるための追加要件である。
+この文書は、製品の記録品質・安全性・機能要件を維持しつつ、2026-08-19 時点で未完了の最終受入れ項目を閉じるための追加要件である。実機試験方法は2026-09-28の方針変更と37に従う。
 
 対象は次の9項目とする。
 
@@ -47,7 +49,7 @@
 
 次の順番を崩さない。
 
-1. `22_SAFE_HYPERV_TESTLAB.md` のPreflightとTestLab構築
+1. `37_PHYSICAL_READ_ONLY_ACCEPTANCE.md` の静的監査、通常権限preflight、隔離fixtureと実行時監査の準備
 2. `23_CONFIRMED_RECONCILIATION_EXECUTION.md`
 3. `24_NTFS_CANDIDATE_METADATA_PRIVILEGE_LOW_IO.md`
 4. `25_WINDOWS_PRIVILEGED_CAPABILITY_MATRIX.md`
@@ -58,13 +60,13 @@
 9. `29_REAL_MACHINE_INSTALLER_ACCEPTANCE.md`
 10. `31_DEVENV_MAIN_INTEGRATION.md`
 
-22 の安全境界が成立する前に、管理者権限付き破壊的ファイルシステム試験、MFT大規模試験、サービス登録試験をホスト上で開始してはならない。
+37 の監査と隔離境界が成立する前に、製品プロセス、管理者権限付き試験、MFT大規模試験、サービス登録試験を実機で開始してはならない。各段階は前段の監査証拠がPASSしてから進む。
 
 ## 5. 推奨作業ブランチ
 
 このフェーズでは次のブランチを使う。トップCodexはworktreeを分ける。
 
-- `feat/testlab-hyperv`
+- `feat/physical-readonly-acceptance`（旧 `feat/testlab-hyperv` は新規作成しない）
 - `feat/reconciliation-finalization`
 - `feat/windows-privileged-acceptance`
 - `feat/correlation-real-environment`
@@ -76,19 +78,10 @@
 
 ## 6. 人間操作が必要な境界
 
-Codexに自動実行させない操作は次だけである。
-
-- Hyper-Vが無効の場合のWindows機能有効化とホスト再起動
-- TestLab保存先とWindows ISOパスの初回承認
-- Windowsライセンス条項への同意が対話的に必要な場合
-- Windows 10 22H2物理機での最終受入れスクリプト起動とUAC承認
-- 実機インストーラー最終受入れの起動とUAC承認
-- GitHub既定ブランチ変更がCLI認証で実行できない場合のWeb UI操作
-
-それ以外のVM作成、VHDX作成、VM復元、成果物転送、テスト、ログ回収、VM破棄はCodexがスクリプト化して実行する。
+Codexが通常権限で自律して行う監査・修正・非特権テストと、ユーザーが隔離ルート・対象物理PCを確認しUACや別PC操作を行う境界は37の第5・6節を正本とする。VM、ISO、仮想化製品の準備を依頼しない。Codex自身を管理者化しない。
 
 ## 7. 完了条件
 
 9項目それぞれに実測artifactが存在し、`docs/release/main-readiness.md` に未完了として残らず、全自動ゲートと指定された人間実行ゲートが成功し、最後に `devenv` と `main` の統合が完了した場合だけ最終完了とする。
 
-診断実行、Fake Collectorだけの成功、VMで代替した物理機必須ゲート、`NOT_EXECUTED`、`AcceptanceEligible=false` を完了扱いしてはならない。
+診断実行、Fake Collectorだけの成功、静的監査だけの成功、`NOT_EXECUTED`、`AcceptanceEligible=false` を完了扱いしてはならない。

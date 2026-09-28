@@ -1,5 +1,7 @@
 # 安全なVirtualBox TestLab要件
 
+> **2026-09-28 supersession:** VMの作成・起動・Guest Additions・snapshotは不要。実機安全境界とユーザー操作は `37_PHYSICAL_READ_ONLY_ACCEPTANCE.md` に従う。本文は履歴資料であり実行しない。
+
 ## 1. 固定基盤
 
 ホストはWindows 11 Home x64を許可する。

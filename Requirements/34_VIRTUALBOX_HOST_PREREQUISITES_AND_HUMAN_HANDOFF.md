@@ -1,5 +1,7 @@
 # VirtualBoxホスト事前条件・人間引継ぎ要件
 
+> **2026-09-28 supersession:** VirtualBox導入・hostinfo・firmware・ISOのpreflightとhandoffは不要。実機preflightと人間引継ぎは `37_PHYSICAL_READ_ONLY_ACCEPTANCE.md` 第2・6節を正本とする。本文は履歴資料であり実行しない。
+
 ## 1. 現在確認済みホスト
 
 ユーザーが2026-08-20に取得した値を初期基準とする。

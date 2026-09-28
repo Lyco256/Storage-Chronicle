@@ -66,6 +66,7 @@ subagentはmergeしない。
 - Windows 11 installer real-machine acceptance
 - Windows 10 22H2 physical acceptance
 - Agent/Explorer real correlation measurement
+- `37_PHYSICAL_READ_ONLY_ACCEPTANCE.md` の実機静的監査、隔離smoke、独立書込み監査、既存データ変更ゼロの証拠
 - requirements verificationに未完了blocking rowなし
 
 `main`が存在しない場合はaccepted `devenv` HEADから作成する。存在する場合は履歴を消さず、通常のmergeで統合する。

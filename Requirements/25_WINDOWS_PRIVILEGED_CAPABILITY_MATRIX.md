@@ -2,13 +2,13 @@
 
 ## 1. 目的
 
-現在`NOT_EXECUTED`になっているWindows特権機能を、`22_SAFE_HYPERV_TESTLAB.md` の隔離環境で実API・実I/Oとして実行する。
+現在`NOT_EXECUTED`になっているWindows特権機能を、`37_PHYSICAL_READ_ONLY_ACCEPTANCE.md` の監査済み実機隔離領域で実API・実I/Oとして実行する。
 
 Fake Collectorだけの成功でこの項目を閉じない。
 
 ## 2. 必須マトリクス
 
-Windows 11 TestLabで最低限次を実行する。
+Windows 11実機で最低限次を実行する。製品の観測は既存データに対して読み取り専用とし、変更系の操作はテスト用workloadがrun専用fixtureまたは新規file-backed VHDX内だけで行う。
 
 | Capability | 必須確認 |
 |---|---|
@@ -20,8 +20,8 @@ Windows 11 TestLabで最低限次を実行する。
 | ETW | session start/stop, file/process correlation |
 | ReadDirectoryChangesW | 実create/rename/delete通知 |
 | Buffer gap | bounded testでgapを検出しfail-closed |
-| SMB share | TestLab内ディレクトリをshare/create/change/remove |
-| Service | install/start/stop/recovery config |
+| SMB share | 専用物理テストPC上のrun専用ディレクトリ・共有名だけをcreate/change/remove。既存共有設定へ触れない |
+| Service | 既存製品・履歴のない専用物理テストPCでinstall/start/stop/recovery config |
 | Session Agent | interactive user session接続 |
 | Clipboard | CF_HDROP/clipboard generation取得 |
 | Volume GUID | drive letterなしreadable volume識別 |
@@ -29,7 +29,7 @@ Windows 11 TestLabで最低限次を実行する。
 | ACL denied metadata | SeBackupPrivilege path |
 | Non-NTFS | best-effort notification + reconciliation |
 
-実物理USBはこのソフトウェア受入れマトリクスの必須条件にしない。Hot-add/hot-remove VHDXを外付け媒体接続相当として使う。実USBは将来の任意hardware portability testとする。
+実物理USBはこのソフトウェア受入れマトリクスの必須条件にしない。実機上でfile-backed VHDXをmount/dismountして接続相当を検証する。実USBはユーザーが専用テスト媒体を提供した場合だけ任意で測定する。
 
 ## 3. 実I/O oracle
 
@@ -49,11 +49,11 @@ Windows 11 TestLabで最低限次を実行する。
 
 ## 4. データ破壊防止
 
-このマトリクスの破壊操作はTestLab marker付きVHDXだけに限定する。
+このマトリクスの変更操作は37の隔離境界と、run GUID・所有markerが一致する新規file-backed VHDXだけに限定する。
 
-`\\.\C:`、VM OS volume、ホストvolume、実ユーザーデータが指定された場合はテストをskipではなくfail-closedで拒否する。
+`\\.\C:`、system/boot/回復volume、既存の物理disk、既存ユーザーデータが指定された場合はテストをskipではなくfail-closedで拒否する。
 
-既存のMFT benchmarkやWindows privileged scriptにC:を例示・許可する経路がある場合、安全guardを追加して専用TestLab volume以外をacceptance modeで拒否する。
+既存のMFT benchmarkやWindows privileged scriptに物理C:を例示・許可する経路がある場合、安全guardを追加してrun専用VHDXからmountしたvolume以外をacceptance modeで拒否する。
 
 ## 5. 成果物
 
@@ -76,4 +76,4 @@ Windows 11 TestLabで最低限次を実行する。
 
 ## 6. 完了条件
 
-Windows 11 TestLabで全必須capabilityが実行され、製品仕様で未対応が許されている能力以外はPASSし、TestLab外のvolumeを一切変更しない。
+Windows 11実機で全必須capabilityが実行され、製品仕様で未対応が許されている能力以外はPASSし、承認済みfixtureと製品専用保存先以外の既存データを一切変更しない。

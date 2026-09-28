@@ -1,5 +1,7 @@
 # VirtualBox TestLab移行・Hyper-V要件上書き
 
+> **2026-09-28 supersession:** VirtualBox移行・VM構築・guest実行は現在の受入れ方法ではない。`37_PHYSICAL_READ_ONLY_ACCEPTANCE.md` が実機試験の正本。本文は移行履歴として保持し、実行指示には使わない。
+
 ## 1. 目的
 
 Storage ChronicleのWindows特権・実I/O・MFT・USN・ETW・Service・Installer・相関受入れ環境を、Windows 11 Homeホストで利用できるOracle VirtualBoxへ移行する。

@@ -1,5 +1,7 @@
 # VirtualBox移行受入れ・再監査要件
 
+> **2026-09-28 supersession:** VirtualBox migration smoke・guest matrix・VM資源監査は実施しない。実機の静的監査、隔離smoke、独立した書込み監査、最終再監査は `37_PHYSICAL_READ_ONLY_ACCEPTANCE.md` を正本とする。本文は履歴資料であり実行しない。
+
 ## 1. 目的
 
 MDどおり進めた結果が「Hyper-VコードをVirtualBoxコードへ置き換えただけ」ではなく、既存Storage Chronicle受入れを無駄なく実行できる理想形になっていることを確認する。

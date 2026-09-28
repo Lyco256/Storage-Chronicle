@@ -75,9 +75,9 @@ NTFSでは次を行う。
 
 再調整RunをFailedまたはInterruptedとして残し、新しいgapを作る。
 
-## 8. TestLab受入れ
+## 8. 実機隔離受入れ
 
-`SC_TEST_VOLUME` と `SC_TEST_NONNTFS_VOLUME` で実行する。
+`37_PHYSICAL_READ_ONLY_ACCEPTANCE.md` の監査後、実機上で新規作成し識別した `SC_TEST_VOLUME` と `SC_TEST_NONNTFS_VOLUME` の隔離fixtureで実行する。
 
 最低ケース:
 
@@ -88,7 +88,7 @@ NTFSでは次を行う。
 - ユーザー拒否: scanを一切開始せずUnverifiedGapを残す。
 - 途中detach: Completedにしない。
 
-実環境scanを行うが、TestLab VHDX以外を対象にしない。
+実環境scanを行うが、変更を発生させるシナリオはrun専用file-backed VHDX以外を対象にしない。製品のscan自体は読み取り専用とする。
 
 ## 9. 完了条件
 

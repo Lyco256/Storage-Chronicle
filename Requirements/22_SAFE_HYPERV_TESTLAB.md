@@ -1,6 +1,8 @@
 # 安全なHyper-V TestLab要件
 
-> **Superseded for TestLab virtualization:** Requirements 32 and 33 replace the Hyper-V-specific host, VM-control, guest-control, and VHDX orchestration portions of this document with the VirtualBox TestLab contract. This file is retained as historical requirement context; product behavior, Windows Collector behavior, safety markers, acceptance evidence, and guest-internal VHDX rules remain in force unless Requirements 32–36 explicitly supersede them.
+> **2026-09-28 supersession:** 仮想環境の構築・起動・受入れ指示は `37_PHYSICAL_READ_ONLY_ACCEPTANCE.md` により終了。以下は履歴資料であり、実機へ読み替えてそのまま実行しない。製品の記録品質・既存データ保護の要件は37と各製品要件で維持する。
+
+> 2026-08の移行履歴: 当時は32/33がHyper-V固有部分をVirtualBoxへ置き換えた。現在は37が両仮想化方式の受入れ手順を上書きしている。
 
 ## 1. 目的
 

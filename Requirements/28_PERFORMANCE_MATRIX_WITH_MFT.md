@@ -8,7 +8,7 @@
 
 MFT acceptanceでは `STORAGE_CHRONICLE_MFT_VOLUME` にホストC:を指定してはならない。
 
-`22_SAFE_HYPERV_TESTLAB.md` で作成した `SC_TEST_MFT_VOLUME` のdevice pathだけを受け入れる。
+`37_PHYSICAL_READ_ONLY_ACCEPTANCE.md` の実機隔離境界内で新規作成・識別した `SC_TEST_MFT_VOLUME` のdevice pathだけを受け入れる。実機上の既存ボリュームをMFT datasetの作成先にしない。
 
 benchmark起動前にmarker/TestRun GUIDを検証し、専用VHDXでない場合はfail-closedする。
 
@@ -61,10 +61,10 @@ FileMutationWorkloadのbulk modeで0-byteファイル中心のMFT datasetを作�
 - elapsed/mean
 - environment
 - OS/build
-- VM CPU/memory
+- 物理host CPU/memory
 - VHDX type/size
 
-件数不一致やevent dropがあれば性能が速くてもFAIL。
+件数不一致やevent dropがあれば性能が速くてもFAIL。隔離VHDXの識別情報と監査した書込み先を併記する。
 
 ## 6. 閾値
 
@@ -76,12 +76,12 @@ FileMutationWorkloadのbulk modeで0-byteファイル中心のMFT datasetを作�
 
 ## 7. 負荷最小化
 
-1M datasetは一度作成後にclean MFT baseline VHDXとしてTestLab root内へ保存してよい。
+1M datasetは一度作成後にrun専用ルート内の識別済みMFT seed VHDXとして保存してよい。既存の別用途VHDXをseedへ転用しない。
 
-各benchmarkで1Mファイルを作り直さず、read-onlyに近い測定ならbaseline VHDXの差分コピーまたはcheckpointを使う。
+各benchmarkで1Mファイルを作り直さず、read-onlyの測定では検証済みseedを使う。変更を伴う測定はrun専用の新規コピーに限る。
 
 測定対象へ影響するためbenchmark中に圧縮、Defender exclusion変更、host power plan変更を勝手に行わない。
 
 ## 8. 完了条件
 
-`build/quality/Test-FullBenchmarkMatrix.ps1 -IncludeMft` 相当の最終scriptが専用VHDXで全必須suiteを実行し、manifestが `AcceptanceEligible=true` になること。
+`build/quality/Test-FullBenchmarkMatrix.ps1 -IncludeMft` 相当の最終scriptが37の監査済み実機専用VHDXで全必須suiteを実行し、manifestが `AcceptanceEligible=true` になること。

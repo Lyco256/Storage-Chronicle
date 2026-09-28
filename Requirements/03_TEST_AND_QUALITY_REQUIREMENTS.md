@@ -50,11 +50,12 @@
 ### Windows privileged
 
 既定`dotnet test`から分離し、カテゴリを付ける。
+実機での実行順、読み取り専用監査、隔離領域、ユーザー操作は `37_PHYSICAL_READ_ONLY_ACCEPTANCE.md` に従う。監査前に製品または特権テストを起動しない。
 
 - USN照会。
 - USN読取り。
 - MFT高速列挙。
-- テストスクリプトが作成・マウント・破棄する専用NTFS VHDX。通常システムドライブを破壊的テストに使わない。
+- 承認済み専用ルートへこのrunで新規作成したfile-backed NTFS VHDX。disk identityとmarkerを確認する前に初期化・formatしない。既存の実機データとシステムドライブをmutation対象にしない。
 - ETW。
 - SMB共有スナップショット。
 - Windows Service起動停止。
