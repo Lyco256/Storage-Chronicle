@@ -13,6 +13,7 @@ using StorageChronicle.Settings;
 using StorageChronicle.UI.DiffView;
 using StorageChronicle.UI.Shared;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 
 namespace StorageChronicle.UI.Desktop;
 
@@ -43,6 +44,9 @@ public sealed class DiffProjectionPanel : UserControl
     private readonly DispatcherTimer zoomPersistTimer;
     private string? currentPath;
     private bool isUpdatingReplaySlider;
+    private bool isLoadingPresentationSettings;
+    private Stopwatch replayClock = new();
+    private DateTimeOffset replayTimelineStart;
 
     /// <summary>Creates a Diff View backed by the Agent projection pipe.</summary>
     public DiffProjectionPanel(IProjectionService projection)
@@ -51,6 +55,9 @@ public sealed class DiffProjectionPanel : UserControl
         viewModel = projection is AgentPipeProjectionClient agent
             ? new DiffViewModel(new AgentDiffProjectionSource(agent))
             : new DiffViewModel(projection);
+        liveRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        replayTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+        zoomPersistTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
 
         treeList = new ListBox { ItemsSource = treeRows, [AutomationProperties.NameProperty] = "Diff View tree" };
         explorerHost = new ContentControl { IsVisible = false, [AutomationProperties.NameProperty] = "Diff View Explorer content" };
@@ -93,9 +100,9 @@ public sealed class DiffProjectionPanel : UserControl
         }
 
         var back = new Button { Content = "Back", [AutomationProperties.NameProperty] = "Diff navigation back" };
-        back.Click += (_, _) => { viewModel.NavigateBack(); UpdatePaneState(); };
+        back.Click += (_, _) => NavigateHistory(-1);
         var forward = new Button { Content = "Forward", [AutomationProperties.NameProperty] = "Diff navigation forward" };
-        forward.Click += (_, _) => { viewModel.NavigateForward(); UpdatePaneState(); };
+        forward.Click += (_, _) => NavigateHistory(1);
         openButton = new Button { Content = "Open in Explorer", [AutomationProperties.NameProperty] = "Open selected diff item in Explorer" };
         openButton.Click += async (_, _) => await OpenSelectedAsync().ConfigureAwait(true);
         var navigate = new Button { Content = "Go", [AutomationProperties.NameProperty] = "Navigate to Diff path" };
@@ -107,12 +114,21 @@ public sealed class DiffProjectionPanel : UserControl
         replayPlayButton = new Button { Content = "Play replay", [AutomationProperties.NameProperty] = "Play or pause diff replay" };
         replayPlayButton.Click += (_, _) => ToggleReplay();
         var present = new Button { Content = "Present", [AutomationProperties.NameProperty] = "Return replay to present" };
-        present.Click += (_, _) => { viewModel.ReturnReplayToPresent(); UpdatePaneState(); };
+        present.Click += (_, _) =>
+        {
+            viewModel.ReturnReplayToPresent();
+            replayTimer.Stop();
+            replayPlayButton.Content = "Play replay";
+            UpdateReplayControls();
+            UpdatePaneState();
+        };
         livePauseButton = new Button { Content = "Pause Live", [AutomationProperties.NameProperty] = "Pause or resume Diff Live updates" };
         livePauseButton.Click += async (_, _) => await ToggleLivePauseAsync().ConfigureAwait(true);
         zoomSlider = new Slider { Minimum = 50, Maximum = 300, Value = 100, Width = 110, [AutomationProperties.NameProperty] = "Explorer icon zoom" };
         zoomSlider.ValueChanged += (_, _) =>
         {
+            if (zoomSlider.Value is >= DiffExplorerView.MinimumZoomPercent and <= DiffExplorerView.MaximumZoomPercent)
+                viewModel.Explorer.SetZoomPercent((int)Math.Round(zoomSlider.Value));
             if (viewModel.ViewMode is ExplorerViewMode.ExtraLargeIcons or ExplorerViewMode.LargeIcons or ExplorerViewMode.MediumIcons or ExplorerViewMode.SmallIcons) RenderRows();
         };
         replayTimeline = new Slider { Minimum = 0, Maximum = 0, Width = 140, [AutomationProperties.NameProperty] = "Replay event timeline" };
@@ -148,14 +164,11 @@ public sealed class DiffProjectionPanel : UserControl
                 new StackPanel { Orientation = Orientation.Vertical, Spacing = 8, Children = { modes, toolbar, explorerModes, status, resultGrid } }
             }
         };
-        liveRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         liveRefreshTimer.Tick += async (_, _) =>
         {
             if (viewModel.Mode == DiffMode.Live && !viewModel.IsPaused) await RefreshAsync(DiffMode.Live).ConfigureAwait(true);
         };
-        replayTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         replayTimer.Tick += (_, _) => AdvanceReplay();
-        zoomPersistTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
         zoomPersistTimer.Tick += async (_, _) =>
         {
             zoomPersistTimer.Stop();
@@ -163,6 +176,7 @@ public sealed class DiffProjectionPanel : UserControl
         };
         zoomSlider.ValueChanged += (_, _) =>
         {
+            if (isLoadingPresentationSettings) return;
             zoomPersistTimer.Stop();
             zoomPersistTimer.Start();
         };
@@ -202,7 +216,9 @@ public sealed class DiffProjectionPanel : UserControl
             treeRows.Add($"{new string(' ', row.Depth * 2)}{row.Visuals.Primary.IconKey}{secondary} {row.Node.Projection.DisplayName} ({row.Node.Projection.DescendantCount})");
         }
 
-        var rows = viewModel.Explorer.GetPage(1, 250);
+        var rows = viewModel.CurrentPath is null
+            ? viewModel.Explorer.GetPage(1, 250)
+            : viewModel.Explorer.GetChildrenPage(viewModel.CurrentPath, 1, 250);
         explorerHost.Content = BuildExplorerLayout(rows);
         UpdateAddressControls();
         UpdateReplayControls();
@@ -272,7 +288,9 @@ public sealed class DiffProjectionPanel : UserControl
                 status.Text = "Select a row with recorded replay events first.";
                 return;
             }
+            if (viewModel.Replay.IsAtPresent) viewModel.SetReplayPoint(0);
             viewModel.Replay.Play();
+            ResetReplayClock();
             replayTimer.Start();
             replayPlayButton.Content = "Pause replay";
         }
@@ -315,7 +333,7 @@ public sealed class DiffProjectionPanel : UserControl
             var icon = new TextBlock
             {
                 Text = row.Visuals.Primary.IconKey,
-                FontSize = Math.Clamp(iconSize, 12, 64),
+                FontSize = Math.Clamp(iconSize, 12, 192),
                 Foreground = BrushFor(projection.SemanticState),
                 VerticalAlignment = VerticalAlignment.Center,
                 [AutomationProperties.NameProperty] = $"{projection.PrimaryOperation} icon"
@@ -333,9 +351,17 @@ public sealed class DiffProjectionPanel : UserControl
                 TextWrapping = TextWrapping.Wrap,
                 VerticalAlignment = VerticalAlignment.Center
             };
+            var markers = new TextBlock
+            {
+                Text = string.Join(" · ", row.Visuals.Secondary.Select(marker => marker.IconKey).Append(projection.Quality.ToString())),
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = Math.Max(10, 12 * zoomSlider.Value / 100),
+                VerticalAlignment = VerticalAlignment.Center,
+                [AutomationProperties.NameProperty] = $"Secondary operations and quality: {string.Join(", ", row.Visuals.Secondary.Select(marker => marker.Kind).Append(projection.Quality.ToString()))}"
+            };
             var body = mode is ExplorerViewMode.ExtraLargeIcons or ExplorerViewMode.LargeIcons or ExplorerViewMode.MediumIcons or ExplorerViewMode.SmallIcons
-                ? new StackPanel { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Center, Children = { icon, details } }
-                : new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { icon, details } };
+                ? new StackPanel { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Center, Children = { icon, details, markers } }
+                : new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { icon, details, markers } };
             var openState = row.CanOpenInExplorer ? string.Empty : $" — {row.OpenDisabledReason}";
             var button = new Button
             {
@@ -354,10 +380,20 @@ public sealed class DiffProjectionPanel : UserControl
             }
             button.Click += (_, _) =>
             {
-                currentPath = ParentPath(projection.DisplayPath);
+                if (projection.Kind == FileKind.Directory)
+                {
+                    viewModel.NavigateToLocation(projection.DisplayPath);
+                }
+                else
+                {
+                    viewModel.NavigateToPath(projection.DisplayPath);
+                    currentPath = ParentPath(projection.DisplayPath);
+                    if (currentPath is not null) viewModel.NavigateToLocation(currentPath, preserveSelection: true);
+                }
+                currentPath = viewModel.CurrentPath;
                 address.Text = currentPath ?? string.Empty;
-                viewModel.NavigateToPath(projection.DisplayPath);
                 UpdateAddressControls();
+                RenderRows();
                 UpdatePaneState();
             };
             panel.Children.Add(button);
@@ -372,7 +408,9 @@ public sealed class DiffProjectionPanel : UserControl
         {
             if (projectionClient is not null)
             {
+                isLoadingPresentationSettings = true;
                 var settings = await projectionClient.LoadUserSettingsAsync().ConfigureAwait(true);
+                viewModel.Explorer.SetZoomPercent(settings.DiffZoomPercent);
                 zoomSlider.Value = settings.DiffZoomPercent;
                 viewModel.SetViewMode(settings.DiffFormat switch
                 {
@@ -385,6 +423,10 @@ public sealed class DiffProjectionPanel : UserControl
         catch (Exception exception) when (exception is IOException or TimeoutException or UnauthorizedAccessException or InvalidDataException)
         {
             status.Text = $"Diff View preferences could not be loaded: {exception.Message}";
+        }
+        finally
+        {
+            isLoadingPresentationSettings = false;
         }
     }
 
@@ -407,15 +449,15 @@ public sealed class DiffProjectionPanel : UserControl
     {
         var speed = replaySpeed.SelectedIndex switch { 1 => 2d, 2 => 10d, _ => 1d };
         viewModel.Replay.SetSpeed(speed);
+        if (viewModel.Replay.IsPlaying) ResetReplayClock();
     }
 
     private void StepReplay(int direction)
     {
-        var timeline = viewModel.SelectedNode?.Projection.ReplayTimeline;
-        if (timeline is not { Count: > 0 }) return;
-        var current = GetReplayIndex(timeline);
-        var next = Math.Clamp(current + direction, 0, timeline.Count - 1);
-        viewModel.SetReplayPoint(next);
+        replayTimer.Stop();
+        viewModel.Replay.Pause();
+        replayPlayButton.Content = "Play replay";
+        if (!viewModel.StepReplay(direction)) return;
         UpdateReplayControls();
         UpdatePaneState();
     }
@@ -431,8 +473,10 @@ public sealed class DiffProjectionPanel : UserControl
             return;
         }
 
-        var next = GetReplayIndex(timeline) + Math.Max(1, (int)viewModel.Replay.Speed);
-        if (next >= timeline.Count)
+        var replayTarget = replayTimelineStart + TimeSpan.FromTicks((long)(replayClock.Elapsed.Ticks * viewModel.Replay.Speed));
+        var next = GetReplayIndex(timeline);
+        while (next + 1 < timeline.Count && timeline[next + 1].TimeUtc <= replayTarget) next++;
+        if (next + 1 >= timeline.Count && replayTarget >= timeline[^1].TimeUtc)
         {
             next = timeline.Count - 1;
             viewModel.Replay.Pause();
@@ -460,6 +504,7 @@ public sealed class DiffProjectionPanel : UserControl
         if (projectionClient is null) return;
         try
         {
+            viewModel.Explorer.SetZoomPercent((int)Math.Round(zoomSlider.Value));
             var settings = await projectionClient.LoadUserSettingsAsync().ConfigureAwait(true);
             var result = await projectionClient.ApplyUserSettingsAsync(settings with { DiffZoomPercent = (int)Math.Round(zoomSlider.Value) }).ConfigureAwait(true);
             if (!result.Succeeded) status.Text = $"Diff View zoom was not saved: {result.Error}";
@@ -474,6 +519,7 @@ public sealed class DiffProjectionPanel : UserControl
     {
         if (isUpdatingReplaySlider || viewModel.SelectedNode?.Projection.ReplayTimeline is not { Count: > 0 }) return;
         viewModel.SetReplayPoint((int)replayTimeline.Value);
+        if (viewModel.Replay.IsPlaying) ResetReplayClock();
         UpdatePaneState();
     }
 
@@ -483,7 +529,7 @@ public sealed class DiffProjectionPanel : UserControl
         var count = timeline?.Count ?? 0;
         isUpdatingReplaySlider = true;
         replayTimeline.Maximum = Math.Max(0, count - 1);
-        var index = timeline is null ? 0 : GetReplayIndex(timeline);
+        var index = timeline is null ? 0 : viewModel.Replay.IsAtPresent ? Math.Max(0, count - 1) : GetReplayIndex(timeline);
         replayTimeline.Value = Math.Clamp(index < 0 ? 0 : index, 0, Math.Max(0, count - 1));
         replayTimeline.IsEnabled = count > 0;
         isUpdatingReplaySlider = false;
@@ -493,57 +539,73 @@ public sealed class DiffProjectionPanel : UserControl
     {
         var path = address.Text?.Trim();
         if (string.IsNullOrWhiteSpace(path)) return;
-        if (!viewModel.NavigateToPath(path))
+        if (!viewModel.NavigateToLocation(path))
         {
-            status.Text = "The requested path is not present in the current Diff projection.";
+            status.Text = "Enter a rooted path or a projected virtual location.";
             return;
         }
-        currentPath = path;
-        await Task.CompletedTask;
+        currentPath = viewModel.CurrentPath;
         UpdateAddressControls();
         RenderRows();
+        await Task.CompletedTask;
     }
 
     private async Task NavigateUpAsync()
     {
-        if (string.IsNullOrWhiteSpace(currentPath)) return;
-        var parent = ParentPath(currentPath);
-        if (parent is null) return;
-        address.Text = parent;
-        await NavigateToAddressAsync().ConfigureAwait(true);
+        if (!viewModel.NavigateUp()) return;
+        currentPath = viewModel.CurrentPath;
+        address.Text = currentPath;
+        UpdateAddressControls();
+        RenderRows();
+        await Task.CompletedTask;
     }
 
     private void UpdateAddressControls()
     {
         breadcrumbs.Children.Clear();
-        var path = currentPath;
+        var path = viewModel.CurrentPath;
         if (string.IsNullOrWhiteSpace(path))
         {
             breadcrumbs.Children.Add(new TextBlock { Text = "All changes", VerticalAlignment = VerticalAlignment.Center });
             return;
         }
-        var parts = path.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
-        var prefix = path.StartsWith("\\\\", StringComparison.Ordinal) ? "\\\\" : string.Empty;
-        for (var index = 0; index < parts.Length; index++)
+        var crumbs = viewModel.Breadcrumbs;
+        foreach (var breadcrumb in crumbs)
         {
-            prefix = index == 0 ? prefix + parts[index] : Path.Combine(prefix, parts[index]);
-            var target = prefix;
-            var crumb = new Button { Content = parts[index], Padding = new Avalonia.Thickness(4, 2), [AutomationProperties.NameProperty] = $"Navigate to {target}" };
+            var crumb = new Button { Content = breadcrumb.Label, Padding = new Avalonia.Thickness(4, 2), [AutomationProperties.NameProperty] = $"Navigate to {breadcrumb.Path}" };
             crumb.Click += async (_, _) =>
             {
-                address.Text = target;
-                await NavigateToAddressAsync().ConfigureAwait(true);
+                if (!viewModel.NavigateToBreadcrumb(breadcrumb.Index)) return;
+                currentPath = viewModel.CurrentPath;
+                address.Text = currentPath;
+                UpdateAddressControls();
+                RenderRows();
+                await Task.CompletedTask;
             };
             breadcrumbs.Children.Add(crumb);
-            if (index < parts.Length - 1) breadcrumbs.Children.Add(new TextBlock { Text = "›", VerticalAlignment = VerticalAlignment.Center });
+            if (breadcrumb.Index < crumbs.Count - 1) breadcrumbs.Children.Add(new TextBlock { Text = "›", VerticalAlignment = VerticalAlignment.Center });
         }
+    }
+
+    private void NavigateHistory(int direction)
+    {
+        var navigated = direction < 0 ? viewModel.NavigateBack() : viewModel.NavigateForward();
+        if (!navigated) return;
+        currentPath = viewModel.CurrentPath;
+        address.Text = currentPath;
+        UpdateAddressControls();
+        RenderRows();
+    }
+
+    private void ResetReplayClock()
+    {
+        replayTimelineStart = viewModel.Replay.CursorUtc ?? DateTimeOffset.UtcNow;
+        replayClock.Restart();
     }
 
     private static string? ParentPath(string path)
     {
-        var normalized = path.TrimEnd('\\', '/');
-        var parent = Path.GetDirectoryName(normalized);
-        return string.IsNullOrWhiteSpace(parent) ? null : parent;
+        return DiffPathNavigation.GetParent(path);
     }
 
     private static IBrush BrushFor(DiffSemanticState state, double opacity = 1) => new SolidColorBrush(state switch

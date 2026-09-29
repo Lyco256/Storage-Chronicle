@@ -17,41 +17,31 @@ Projection の path resolver と FileDiffProjection に依存する。空の chi
 Headless テストが root、lazy expansion、virtual unknown/deleted row、gutter icon を検証する。
 
 ## Role
-
-This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle.
+Projects shared Diff View state into a lazy tree presentation.
 
 ## Public types and responsibilities
-
-Public types preserve source facts and the explicitly owned responsibility; UI interpretation and correlation remain outside this boundary.
+`DiffTreeView` provides tree roots and on-demand child expansion/collapse while retaining the relationship to projected paths.
 
 ## Inputs and outputs
-
-Inputs and outputs are the declared contracts of the source file. File contents and file-content hashes are never an input or output.
+Inputs are projected rows and explicit expansion requests; outputs are tree nodes and visible descendants. File contents and content hashes are not inspected.
 
 ## Dependencies
-
-Dependencies are limited to the referenced project contracts and platform services shown by the source file.
+Depends on platform-neutral Diff View contracts and the shared projection model; desktop controls consume its results.
 
 ## Invariants
-
-The source keeps canonical facts distinguishable from reconstructed state and does not synthesize descendant events.
+Descendants are materialized on expansion only. Grouping nodes are presentation constructs and do not create canonical events or alter recorded state.
 
 ## Threading and lifetime
-
-Callers own cancellation and lifetime; asynchronous work must not outlive the owning pipeline or UI scope.
+Tree operations are caller-driven; child loading observes caller cancellation and retains no OS resource.
 
 ## Failure behavior
-
-Failure, corruption, cancellation, and recovery remain observable and are not converted into a false successful observation.
+Unavailable descendants remain absent or unknown rather than being queried from the host filesystem; cancellation propagates to the caller.
 
 ## Tests
-
-Validated by tests/StorageChronicle.Integration.Tests and the affected integration tests.
+See `tests/StorageChronicle.UI.Headless.Tests` for roots, lazy expansion, virtual rows, and gutter rendering.
 
 ## OS constraints
-
-Platform-neutral behavior remains portable; Windows-only APIs are isolated in the Windows platform projects.
+Tree construction is platform-neutral and makes no operating-system filesystem calls.
 
 ## Change-sensitive contracts
-
-Public names, serialized fields, persistence boundaries, and the mirrored path are compatibility-sensitive contracts.
+Root selection, lazy expansion, and separation of grouping rows from source records are compatibility-sensitive.

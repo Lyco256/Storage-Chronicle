@@ -13,7 +13,8 @@ Hosts the shared Diff View model in the Avalonia desktop shell. The panel expose
 - Projection data comes from `IProjectionService` or the Agent IPC client; the panel never reads monitored file contents.
 - Tree descendants are loaded through the shared lazy Tree model.
 - Explorer rendering is bounded to the first 250 rows; the complete row set remains in the ViewModel for navigation and tests.
-- Replay controls act on the selected projection's recorded timeline; 1×, 2×, and 10× playback advances by the corresponding number of event positions per half-second UI tick, and explicit event-step controls move exactly one event.
+- Replay controls act on the selected projection's recorded timeline; playback advances its cursor by elapsed wall time multiplied by the selected 1×, 2×, or 10× rate, and explicit event-step controls move exactly one event.
+- Explorer folder navigation renders only immediate projected children. Missing intermediate folders are synthesized from recorded paths as virtual grouping rows, never by enumerating the host file system.
 - Live polling runs only while the panel is attached and Live is unpaused. Pausing affects display refresh only; Agent recording is independent.
 - Zoom updates use the validated `IUserSettingsClient`/Agent route and retain unrelated user settings from the latest settings snapshot.
 - Deleted, virtual, and unknown-location rows cannot be opened through the operating-system Explorer adapter.

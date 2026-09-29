@@ -17,41 +17,31 @@ Domain、Contracts、Projection の公開型だけに依存する。仮想・削
 DiffViewModel の Headless テストが adapter 経由の rich rows、visuals、Explorer launcher の可否を検証する。
 
 ## Role
-
-This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle.
+Defines platform-neutral value contracts shared by Diff View projection and rendering.
 
 ## Public types and responsibilities
-
-Public types preserve source facts and the explicitly owned responsibility; UI interpretation and correlation remain outside this boundary.
+The records and enums represent display modes, projected rows, quality markers, and Explorer eligibility without duplicating canonical event contracts.
 
 ## Inputs and outputs
-
-Inputs and outputs are the declared contracts of the source file. File contents and file-content hashes are never an input or output.
+Contracts carry already-projected metadata between UI components. File contents and file-content hashes are outside the contract.
 
 ## Dependencies
-
-Dependencies are limited to the referenced project contracts and platform services shown by the source file.
+Depends on shared Storage Chronicle contracts and value types; it has no desktop or OS dependency.
 
 ## Invariants
-
-The source keeps canonical facts distinguishable from reconstructed state and does not synthesize descendant events.
+Source quality and openability remain explicit; display interpretation cannot upgrade unknown facts or create durable history.
 
 ## Threading and lifetime
-
-Callers own cancellation and lifetime; asynchronous work must not outlive the owning pipeline or UI scope.
+Contracts are immutable values with no asynchronous or resource lifetime.
 
 ## Failure behavior
-
-Failure, corruption, cancellation, and recovery remain observable and are not converted into a false successful observation.
+Invalid values are rejected by owning constructors/operations; consumers preserve unknown quality rather than silently coercing it.
 
 ## Tests
-
-Validated by tests/StorageChronicle.Integration.Tests and the affected integration tests.
+See `tests/StorageChronicle.UI.DiffView.Tests` and `tests/StorageChronicle.UI.Headless.Tests`.
 
 ## OS constraints
-
-Platform-neutral behavior remains portable; Windows-only APIs are isolated in the Windows platform projects.
+Contracts are platform-neutral and contain no OS handles or filesystem access.
 
 ## Change-sensitive contracts
-
-Public names, serialized fields, persistence boundaries, and the mirrored path are compatibility-sensitive contracts.
+Public names, quality values, mode identifiers, and eligibility semantics are compatibility-sensitive.

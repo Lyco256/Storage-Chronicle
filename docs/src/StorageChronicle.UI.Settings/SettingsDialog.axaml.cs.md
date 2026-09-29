@@ -1,4 +1,4 @@
-# SettingsDialogWindow.axaml.cs
+# SettingsDialog.axaml.cs
 
 ## Role
 

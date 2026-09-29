@@ -5,41 +5,31 @@
 表示には8 Explorer mode、primary/sub gutter icon と color token、仮想削除/不明場所 root、Explorer open 可否、path navigation、split panes、Live pause、Replay timeline/cursor/speed、Move reciprocal navigation が含まれる。OS のファイル API は `IExplorerLauncher` の外部 adapter に限定される。
 
 ## Role
-
-This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle.
+Documents the platform-neutral Diff View module and its boundary with the desktop shell.
 
 ## Public types and responsibilities
-
-Public types preserve source facts and the explicitly owned responsibility; UI interpretation and correlation remain outside this boundary.
+The module provides view contracts, a projection-backed ViewModel, lazy Tree rendering, bounded Explorer rendering, lexical navigation, split-pane state, and replay state. It does not duplicate canonical event types.
 
 ## Inputs and outputs
-
-Inputs and outputs are the declared contracts of the source file. File contents and file-content hashes are never an input or output.
+Projection records and explicit UI commands enter the module; tree/Explorer rows and view state leave it. File contents and content hashes are never inputs.
 
 ## Dependencies
-
-Dependencies are limited to the referenced project contracts and platform services shown by the source file.
+Depends on shared contracts, projection services, and UI.Shared abstractions. Desktop rendering and OS Explorer launching are external adapters.
 
 ## Invariants
-
-The source keeps canonical facts distinguishable from reconstructed state and does not synthesize descendant events.
+Source facts and quality remain explicit; grouping is not durable history. Tree expansion and Explorer paging are bounded/on-demand. Live pause affects presentation only.
 
 ## Threading and lifetime
-
-Callers own cancellation and lifetime; asynchronous work must not outlive the owning pipeline or UI scope.
+Projection queries are asynchronous and cancellation-aware. Renderers are caller-owned and retain no OS resources.
 
 ## Failure behavior
-
-Failure, corruption, cancellation, and recovery remain observable and are not converted into a false successful observation.
+Projection errors and cancellation remain visible; navigation does not infer host filesystem existence.
 
 ## Tests
-
-Validated by tests/StorageChronicle.Integration.Tests and the affected integration tests.
+See `tests/StorageChronicle.UI.DiffView.Tests` and `tests/StorageChronicle.UI.Headless.Tests`.
 
 ## OS constraints
-
-Platform-neutral behavior remains portable; Windows-only APIs are isolated in the Windows platform projects.
+Module behavior is platform-neutral and performs no host filesystem enumeration.
 
 ## Change-sensitive contracts
-
-Public names, serialized fields, persistence boundaries, and the mirrored path are compatibility-sensitive contracts.
+Public contracts, mode identifiers, quality/openability semantics, and the projection/UI boundary must remain synchronized with source mirrors.
