@@ -1,5 +1,7 @@
 # SettingsDialogViewModel.cs
 
+`LoadAsync` retrieves Machine and User settings through the asynchronous `IAgentSettingsGateway` boundary. Validation errors and Agent apply failures remain visible and are never represented as success; machine restart state is reported only after an accepted Agent result. The ViewModel has no path or filesystem access.
+
 ## ??
 
 ???????????????????????????????? Headless ViewModel ??????

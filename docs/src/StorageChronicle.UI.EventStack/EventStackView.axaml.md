@@ -2,7 +2,7 @@
 
 ## 役割
 
-Compiled Bindingを有効にしたAvalonia実UI。モード、順序、Live、filter、保存filter、virtualized rows、展開children、詳細品質、process navigation、ページ操作を表示する。
+Compiled Bindingを有効にしたAvalonia実UI。モード、順序、Live、filter、名前付き保存filter、50～5000のページ行数入力、virtualized rows、展開children、詳細品質、process navigation、ページ操作を表示する。起動時の設定読込みと保存はViewModelのAgent IPC境界を使用する。
 
 ## アクセシビリティ・入力
 

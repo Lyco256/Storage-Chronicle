@@ -42,6 +42,11 @@ public static class SettingsValidator
             errors.Add(new("EventStackPageSize", "Event Stack page size must be between 50 and 5000."));
         }
 
+        if (!Enum.IsDefined(settings.InitialEventStackMode))
+        {
+            errors.Add(new("InitialEventStackMode", "Initial Event Stack mode is not supported."));
+        }
+
         if (settings.DiffZoomPercent is < 50 or > 300)
         {
             errors.Add(new("DiffZoomPercent", "Diff View zoom must be between 50 and 300 percent."));

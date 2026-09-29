@@ -1,8 +1,12 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
+using System.Text;
+using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using StorageChronicle.Contracts;
 using StorageChronicle.Domain.Contracts;
+using StorageChronicle.Settings;
 using StorageChronicle.UI.Shared;
 
 namespace StorageChronicle.UI.EventStack;
@@ -28,30 +32,37 @@ public sealed class EventStackViewModel : ObservableObject, IFeatureView
     private ProcessInstanceId? requestedProcess;
     private SavedEventStackFilter? selectedSavedFilter;
     private readonly IOperationIconResolver iconResolver;
+    private readonly IUserSettingsClient? settingsClient;
+    private UserSettings? currentUserSettings;
+    private string pageSizeInput = "250";
+    private string savedFilterName = "Saved filter";
+    private const string SavedFilterPrefix = "StorageChronicle.EventStackFilter.v1:";
 
     /// <summary>Initializes an Event Stack over a platform-neutral projection.</summary>
-    public EventStackViewModel(IEventStackProjection projection, IOperationIconResolver? iconResolver = null)
+    public EventStackViewModel(IEventStackProjection projection, IOperationIconResolver? iconResolver = null, IUserSettingsClient? settingsClient = null)
     {
         this.projection = projection ?? throw new ArgumentNullException(nameof(projection));
         this.iconResolver = iconResolver ?? new MaterialOperationIconResolver();
+        this.settingsClient = settingsClient;
         LoadPageCommand = new AsyncRelayCommand(() => LoadPageAsync(currentPage, pageSize).AsTask());
         NextPageCommand = new AsyncRelayCommand(() => NextPageAsync().AsTask());
         PreviousPageCommand = new AsyncRelayCommand(() => PreviousPageAsync().AsTask());
         ToggleFollowCommand = new AsyncRelayCommand(ToggleFollowAsync);
         ReturnToCurrentCommand = new AsyncRelayCommand(() => ReturnToCurrentAsync().AsTask());
-        SaveFilterCommand = new RelayCommand(() => SaveCurrentFilter("Saved filter"));
+        SaveFilterCommand = new AsyncRelayCommand(SaveCurrentFilterAsync);
         CloseDetailsCommand = new RelayCommand(() => IsDetailsOpen = false);
         ApplyFilterCommand = new AsyncRelayCommand(() => LoadPageAsync(1, PageSize).AsTask());
         SetModeCommand = new AsyncRelayCommand<EventStackMode>(value => SetModeAsync(value).AsTask());
         SetSortDirectionCommand = new AsyncRelayCommand<EventStackSortDirection>(value => SetSortDirectionAsync(value).AsTask());
         SetPageSizeCommand = new AsyncRelayCommand<int>(value => SetPageSizeAsync(value).AsTask());
+        ApplyPageSizeCommand = new AsyncRelayCommand(ApplyPageSizeInputAsync);
         ApplySavedFilterCommand = new AsyncRelayCommand<SavedEventStackFilter>(value => ApplySavedFilterAsync(value!).AsTask());
         NavigateToParentProcessCommand = new RelayCommand(NavigateToParentProcess);
         NavigateToChildProcessCommand = new RelayCommand<ProcessInstanceId>(NavigateToChildProcess);
     }
 
     /// <summary>Initializes an Event Stack over the shared bounded page source.</summary>
-    public EventStackViewModel(IVirtualizedPageSource<EventStackRow> source) : this(new EventStackPageSourceAdapter(source)) { }
+    public EventStackViewModel(IVirtualizedPageSource<EventStackRow> source, IUserSettingsClient? settingsClient = null) : this(new EventStackPageSourceAdapter(source), settingsClient: settingsClient) { }
 
     /// <inheritdoc />
     public string Id => "event-stack";
@@ -65,9 +76,6 @@ public sealed class EventStackViewModel : ObservableObject, IFeatureView
     /// <summary>Both supported orderings.</summary>
     public IReadOnlyList<EventStackSortDirection> AvailableSortDirections { get; } = [EventStackSortDirection.Descending, EventStackSortDirection.Ascending];
 
-    /// <summary>Supported page sizes; the projection still materializes only the selected page.</summary>
-    public IReadOnlyList<int> PageSizeOptions { get; } = [50, 100, 250, 500];
-
     /// <summary>First page-size binding value exposed as an integer for compiled Avalonia bindings.</summary>
     public int PageSize50 => 50;
 
@@ -76,6 +84,12 @@ public sealed class EventStackViewModel : ObservableObject, IFeatureView
 
     /// <summary>Third page-size binding value exposed as an integer for compiled Avalonia bindings.</summary>
     public int PageSize250 => 250;
+
+    /// <summary>Text entry for any supported page size from 50 through 5000.</summary>
+    public string PageSizeInput { get => pageSizeInput; set => SetProperty(ref pageSizeInput, value); }
+
+    /// <summary>Name used when saving the current filter.</summary>
+    public string SavedFilterName { get => savedFilterName; set => SetProperty(ref savedFilterName, value); }
 
     /// <summary>Current Source/Normalized/Grouped mode.</summary>
     public EventStackMode Mode { get => mode; private set => SetProperty(ref mode, value); }
@@ -161,6 +175,9 @@ public sealed class EventStackViewModel : ObservableObject, IFeatureView
     /// <summary>Human-readable asynchronous status.</summary>
     public string? StatusMessage { get => statusMessage; private set => SetProperty(ref statusMessage, value); }
 
+    /// <summary>Sets a status reported by the view boundary, such as an initial IPC failure.</summary>
+    public void SetStatusMessage(string value) => StatusMessage = value;
+
     /// <summary>Loads or reloads one bounded page.</summary>
     public async ValueTask LoadPageAsync(int requestedPage = 1, int requestedPageSize = 250, CancellationToken cancellationToken = default)
     {
@@ -181,25 +198,61 @@ public sealed class EventStackViewModel : ObservableObject, IFeatureView
         StatusMessage = $"Page {CurrentPage} · {Rows.Count} of {TotalCount}";
     }
 
+    /// <summary>Loads persisted user preferences before the first page is displayed.</summary>
+    public async ValueTask InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        if (settingsClient is not null)
+        {
+            try
+            {
+                currentUserSettings = await settingsClient.LoadUserSettingsAsync(cancellationToken).ConfigureAwait(false);
+                PageSize = currentUserSettings.EventStackPageSize;
+                PageSizeInput = PageSize.ToString(CultureInfo.InvariantCulture);
+                SortDirection = currentUserSettings.EventStackSort == EventStackSortOrder.OldestFirst
+                    ? EventStackSortDirection.Ascending
+                    : EventStackSortDirection.Descending;
+                Mode = currentUserSettings.InitialEventStackMode switch
+                {
+                    EventStackInitialMode.Source => EventStackMode.Source,
+                    EventStackInitialMode.Normalized => EventStackMode.Normalized,
+                    _ => EventStackMode.Grouped
+                };
+                SavedFilters.Clear();
+                foreach (var encoded in currentUserSettings.SavedFilters)
+                {
+                    SavedFilters.Add(DecodeSavedFilter(encoded));
+                }
+            }
+            catch (Exception exception) when (exception is IOException or TimeoutException or UnauthorizedAccessException or JsonException or InvalidDataException)
+            {
+                StatusMessage = $"User preferences could not be loaded: {exception.Message}";
+            }
+        }
+
+        await LoadPageAsync(1, PageSize, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>Switches display mode without changing filter, sort, selection, or expansion state.</summary>
     public async ValueTask SetModeAsync(EventStackMode value, CancellationToken cancellationToken = default)
     {
         Mode = value;
         await LoadPageAsync(CurrentPage, PageSize, cancellationToken).ConfigureAwait(false);
+        await PersistUserSettingsAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Changes ordering and reloads from the first page.</summary>
     public ValueTask SetSortDirectionAsync(EventStackSortDirection value, CancellationToken cancellationToken = default)
     {
         SortDirection = value;
-        return LoadPageAsync(1, PageSize, cancellationToken);
+        return SetSortAndPersistAsync(cancellationToken);
     }
 
     /// <summary>Changes the maximum rows materialized per page.</summary>
     public ValueTask SetPageSizeAsync(int value, CancellationToken cancellationToken = default)
     {
-        ArgumentOutOfRangeException.ThrowIfNotEqual(value % 50, 0);
-        return LoadPageAsync(1, value, cancellationToken);
+        ArgumentOutOfRangeException.ThrowIfLessThan(value, 50);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 5000);
+        return SetPageSizeAndPersistAsync(value, cancellationToken);
     }
 
     /// <summary>Applies text and optional semantic filters to every display mode.</summary>
@@ -218,6 +271,86 @@ public sealed class EventStackViewModel : ObservableObject, IFeatureView
     {
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("A filter name is required.", nameof(name));
         SavedFilters.Add(new SavedEventStackFilter(name.Trim(), filter));
+    }
+
+    private async Task SaveCurrentFilterAsync()
+    {
+        SaveCurrentFilter(SavedFilterName);
+        await PersistUserSettingsAsync(CancellationToken.None).ConfigureAwait(false);
+    }
+
+    private async Task ApplyPageSizeInputAsync()
+    {
+        if (!int.TryParse(PageSizeInput, NumberStyles.None, CultureInfo.InvariantCulture, out var value) || value is < 50 or > 5000)
+        {
+            StatusMessage = "Page size must be an integer from 50 through 5000.";
+            return;
+        }
+
+        await SetPageSizeAsync(value).ConfigureAwait(false);
+    }
+
+    private async ValueTask SetPageSizeAndPersistAsync(int value, CancellationToken cancellationToken)
+    {
+        await LoadPageAsync(1, value, cancellationToken).ConfigureAwait(false);
+        PageSizeInput = value.ToString(CultureInfo.InvariantCulture);
+        await PersistUserSettingsAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask SetSortAndPersistAsync(CancellationToken cancellationToken)
+    {
+        await LoadPageAsync(1, PageSize, cancellationToken).ConfigureAwait(false);
+        await PersistUserSettingsAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask PersistUserSettingsAsync(CancellationToken cancellationToken)
+    {
+        if (settingsClient is null || currentUserSettings is null) return;
+        var updated = currentUserSettings with
+        {
+            EventStackPageSize = PageSize,
+            EventStackSort = SortDirection == EventStackSortDirection.Ascending ? EventStackSortOrder.OldestFirst : EventStackSortOrder.NewestFirst,
+            InitialEventStackMode = Mode switch
+            {
+                EventStackMode.Source => EventStackInitialMode.Source,
+                EventStackMode.Normalized => EventStackInitialMode.Normalized,
+                _ => EventStackInitialMode.Grouped
+            },
+            SavedFilters = SavedFilters.Select(EncodeSavedFilter).ToArray()
+        };
+        var result = await settingsClient.ApplyUserSettingsAsync(updated, cancellationToken).ConfigureAwait(false);
+        if (result.Succeeded)
+        {
+            currentUserSettings = updated;
+            StatusMessage = "Event Stack preferences saved.";
+        }
+        else
+        {
+            StatusMessage = $"Event Stack preferences were not saved: {result.Error ?? "Agent rejected the update."}";
+        }
+    }
+
+    private static string EncodeSavedFilter(SavedEventStackFilter saved)
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(saved);
+        return SavedFilterPrefix + Convert.ToBase64String(bytes);
+    }
+
+    private static SavedEventStackFilter DecodeSavedFilter(string value)
+    {
+        if (value.StartsWith(SavedFilterPrefix, StringComparison.Ordinal))
+        {
+            try
+            {
+                var bytes = Convert.FromBase64String(value[SavedFilterPrefix.Length..]);
+                return JsonSerializer.Deserialize<SavedEventStackFilter>(bytes)
+                    ?? new SavedEventStackFilter(value, new EventStackFilter(value, null, null, null));
+            }
+            catch (FormatException) { }
+            catch (JsonException) { }
+        }
+
+        return new SavedEventStackFilter(value, new EventStackFilter(value, null, null, null));
     }
 
     /// <summary>Applies one saved filter and returns to its first page.</summary>
@@ -334,6 +467,9 @@ public sealed class EventStackViewModel : ObservableObject, IFeatureView
     /// <summary>Command used by page-size controls.</summary>
     public IAsyncRelayCommand<int> SetPageSizeCommand { get; }
 
+    /// <summary>Applies the page size entered in the UI.</summary>
+    public IAsyncRelayCommand ApplyPageSizeCommand { get; }
+
     /// <summary>Command that applies the selected saved filter.</summary>
     public IAsyncRelayCommand<SavedEventStackFilter> ApplySavedFilterCommand { get; }
 
@@ -344,7 +480,7 @@ public sealed class EventStackViewModel : ObservableObject, IFeatureView
     public IRelayCommand<ProcessInstanceId> NavigateToChildProcessCommand { get; }
 
     /// <summary>Command bound to the save-filter button.</summary>
-    public IRelayCommand SaveFilterCommand { get; }
+    public IAsyncRelayCommand SaveFilterCommand { get; }
 
     /// <summary>Command bound to the close-details button.</summary>
     public IRelayCommand CloseDetailsCommand { get; }

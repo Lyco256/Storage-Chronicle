@@ -4,9 +4,9 @@ namespace StorageChronicle.Settings;
 public interface IAgentSettingsGateway
 {
     /// <summary>Loads machine settings through the agent.</summary>
-    SettingsLoadResult<MachineSettings> LoadMachineSettings();
+    ValueTask<SettingsLoadResult<MachineSettings>> LoadMachineSettingsAsync(CancellationToken cancellationToken = default);
     /// <summary>Loads user settings through the agent.</summary>
-    SettingsLoadResult<UserSettings> LoadUserSettings();
+    ValueTask<SettingsLoadResult<UserSettings>> LoadUserSettingsAsync(CancellationToken cancellationToken = default);
     /// <summary>Validates, persists, and applies machine settings through the agent.</summary>
     ValueTask<SettingsApplyResult> ApplyMachineSettingsAsync(MachineSettings settings, CancellationToken cancellationToken = default);
     /// <summary>Validates and persists user settings through the agent.</summary>
@@ -62,10 +62,18 @@ public sealed class AgentSettingsService : IAgentSettingsGateway
     }
 
     /// <inheritdoc />
-    public SettingsLoadResult<MachineSettings> LoadMachineSettings() => machineStore.Load();
+    public ValueTask<SettingsLoadResult<MachineSettings>> LoadMachineSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(machineStore.Load());
+    }
 
     /// <inheritdoc />
-    public SettingsLoadResult<UserSettings> LoadUserSettings() => userStore.Load();
+    public ValueTask<SettingsLoadResult<UserSettings>> LoadUserSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(userStore.Load());
+    }
 
     /// <inheritdoc />
     public async ValueTask<SettingsApplyResult> ApplyMachineSettingsAsync(MachineSettings settings, CancellationToken cancellationToken = default)

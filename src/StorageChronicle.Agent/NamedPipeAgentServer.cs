@@ -168,8 +168,8 @@ public sealed class NamedPipeAgentServer : BackgroundService
         if (request.MessageType == "SettingsSnapshotRequest")
         {
             if (settings is null) return Rejected("Settings endpoint is unavailable.");
-            var machine = settings.LoadMachineSettings();
-            var user = settings.LoadUserSettings();
+            var machine = await settings.LoadMachineSettingsAsync(cancellationToken).ConfigureAwait(false);
+            var user = await settings.LoadUserSettingsAsync(cancellationToken).ConfigureAwait(false);
             return IpcProtocol.Create("SettingsSnapshot", new SettingsSnapshot(ToJson(machine.Settings), ToJson(user.Settings), machine.Warning, user.Warning));
         }
 

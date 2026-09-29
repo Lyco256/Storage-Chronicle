@@ -1,5 +1,9 @@
 # SettingsValidation.cs
 
+## Event Stack mode validation
+
+User settings validation rejects undefined `InitialEventStackMode` values in addition to enforcing page-size and other numeric ranges. This prevents a corrupt or unsupported mode from being persisted or applied; legacy numeric settings remain valid through the compatibility values in `SettingsModels.cs`.
+
 ## ??
 
 Machine/User Settings ??????????IPC ?????????
