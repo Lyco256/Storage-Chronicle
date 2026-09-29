@@ -59,7 +59,7 @@ function Assert-GroupEvidence {
     switch ($Name) {
         'PhysicalSafety' {
             if ($schema -ne 'StorageChronicle.PhysicalReadOnlyAudit.v1') { throw 'Physical safety audit has an unexpected schema.' }
-            if (-not [bool]$Value.AcceptanceEligible) { throw 'Physical safety audit does not declare AcceptanceEligible=true.' }
+            if ($null -eq $Value.PSObject.Properties['AcceptanceEligible'] -or -not [bool]$Value.AcceptanceEligible) { throw 'Physical safety audit does not declare AcceptanceEligible=true.' }
             $currentCommit = (& git -C $root rev-parse HEAD).Trim()
             if ([string]$Value.targetCommit -ne $currentCommit) { throw 'Physical safety audit does not target the current commit.' }
             $workingChanges = @(& git -C $root status --porcelain)
@@ -332,7 +332,7 @@ foreach ($group in $groups) {
     }
     catch {
         $result.Status = 'FAILED'
-        $result.Reason = "Could not parse acceptance artifact: $($_.Exception.Message)"
+        $result.Reason = "Validation failed: $($_.Exception.Message)"
         $blocking.Add("$($group.Name):invalid")
     }
     $results.Add([pscustomobject]$result)
