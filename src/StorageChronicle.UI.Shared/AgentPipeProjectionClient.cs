@@ -9,9 +9,10 @@ using StorageChronicle.Settings;
 namespace StorageChronicle.UI.Shared;
 
 /// <summary>Reads bounded projections from the local Agent named pipe.</summary>
-public sealed class AgentPipeProjectionClient : IVirtualizedPageSource<EventStackRow>, IProjectionService, IUserSettingsClient, IAgentSettingsGateway
+public sealed class AgentPipeProjectionClient : IVirtualizedPageSource<EventStackRow>, IProjectionService, IUserSettingsClient
 {
     private const int ConnectTimeoutMilliseconds = 2500;
+    private static readonly JsonSerializerOptions SettingsJsonOptions = new();
     private readonly string pipeName;
     private readonly LengthPrefixedJsonCodec codec = new();
 
@@ -80,7 +81,8 @@ public sealed class AgentPipeProjectionClient : IVirtualizedPageSource<EventStac
     /// <inheritdoc />
     public async ValueTask<UserSettings> LoadUserSettingsAsync(CancellationToken cancellationToken = default)
     {
-        var snapshot = await GetSettingsSnapshotAsync(cancellationToken).ConfigureAwait(false);
+        var response = await SendAsync("SettingsSnapshotRequest", new SettingsSnapshotRequest(), cancellationToken).ConfigureAwait(false);
+        var snapshot = IpcProtocol.Read<SettingsSnapshot>(response);
         return JsonSerializer.Deserialize<UserSettings>(snapshot.User.GetRawText())
             ?? throw new InvalidDataException("The Agent returned an empty user-settings snapshot.");
     }
@@ -89,54 +91,29 @@ public sealed class AgentPipeProjectionClient : IVirtualizedPageSource<EventStac
     public async ValueTask<SettingsApplyResult> ApplyUserSettingsAsync(UserSettings settings, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        return await ApplySettingsAsync(SettingsScope.User, settings, cancellationToken).ConfigureAwait(false);
+        var payload = JsonSerializer.SerializeToElement(settings, SettingsJsonOptions);
+        var response = await SendAsync("SettingsUpdateRequest", new SettingsUpdateRequest(SettingsScope.User, payload), cancellationToken).ConfigureAwait(false);
+        return JsonSerializer.Deserialize<SettingsApplyResult>(response.Payload.GetRawText(), SettingsJsonOptions)
+            ?? throw new InvalidDataException("The Agent returned an empty user-settings apply result.");
     }
 
-    /// <inheritdoc />
-    async ValueTask<SettingsLoadResult<MachineSettings>> IAgentSettingsGateway.LoadMachineSettingsAsync(CancellationToken cancellationToken)
+    /// <summary>Sends one versioned request through the authenticated Agent pipe transport.</summary>
+    /// <remarks>This transport boundary is shared by projection and typed Agent gateways.</remarks>
+    public ValueTask<IpcEnvelope> SendRequestAsync<T>(string messageType, T request, CancellationToken cancellationToken = default)
     {
-        var snapshot = await GetSettingsSnapshotAsync(cancellationToken).ConfigureAwait(false);
-        var settings = JsonSerializer.Deserialize<MachineSettings>(snapshot.Machine.GetRawText())
-            ?? throw new InvalidDataException("The Agent returned an empty machine-settings snapshot.");
-        return new(settings, !string.IsNullOrWhiteSpace(snapshot.MachineWarning), false, snapshot.MachineWarning);
-    }
-
-    /// <inheritdoc />
-    async ValueTask<SettingsLoadResult<UserSettings>> IAgentSettingsGateway.LoadUserSettingsAsync(CancellationToken cancellationToken)
-    {
-        var snapshot = await GetSettingsSnapshotAsync(cancellationToken).ConfigureAwait(false);
-        var settings = JsonSerializer.Deserialize<UserSettings>(snapshot.User.GetRawText())
-            ?? throw new InvalidDataException("The Agent returned an empty user-settings snapshot.");
-        return new(settings, !string.IsNullOrWhiteSpace(snapshot.UserWarning), false, snapshot.UserWarning);
-    }
-
-    /// <inheritdoc />
-    ValueTask<SettingsApplyResult> IAgentSettingsGateway.ApplyMachineSettingsAsync(MachineSettings settings, CancellationToken cancellationToken) =>
-        ApplySettingsAsync(SettingsScope.Machine, settings, cancellationToken);
-
-    /// <inheritdoc />
-    ValueTask<SettingsApplyResult> IAgentSettingsGateway.ApplyUserSettingsAsync(UserSettings settings, CancellationToken cancellationToken) =>
-        ApplySettingsAsync(SettingsScope.User, settings, cancellationToken);
-
-    private async ValueTask<SettingsSnapshot> GetSettingsSnapshotAsync(CancellationToken cancellationToken)
-    {
-        var response = await SendAsync("SettingsSnapshotRequest", new SettingsSnapshotRequest(), cancellationToken).ConfigureAwait(false);
-        return IpcProtocol.Read<SettingsSnapshot>(response);
-    }
-
-    private async ValueTask<SettingsApplyResult> ApplySettingsAsync<TSettings>(SettingsScope scope, TSettings settings, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(settings);
-        var payload = JsonSerializer.SerializeToElement(settings);
-        var response = await SendAsync("SettingsUpdateRequest", new SettingsUpdateRequest(scope, payload), cancellationToken).ConfigureAwait(false);
-        return JsonSerializer.Deserialize<SettingsApplyResult>(response.Payload.GetRawText())
-            ?? throw new InvalidDataException("The Agent returned an empty settings-apply result.");
+        ArgumentException.ThrowIfNullOrWhiteSpace(messageType);
+        ArgumentNullException.ThrowIfNull(request);
+        return SendAsync(messageType, request, cancellationToken);
     }
 
     private async ValueTask<IpcEnvelope> SendAsync<T>(string messageType, T request, CancellationToken cancellationToken)
     {
         await using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
         await pipe.ConnectAsync(ConnectTimeoutMilliseconds, cancellationToken).ConfigureAwait(false);
+        var hello = IpcProtocol.Create("ClientHello", new IpcClientHello(IpcClientRole.DesktopUi, System.Diagnostics.Process.GetCurrentProcess().SessionId));
+        var helloFrame = codec.Encode(hello, IpcProtocol.Major, IpcProtocol.Minor);
+        await pipe.WriteAsync(helloFrame, cancellationToken).ConfigureAwait(false);
+        await pipe.FlushAsync(cancellationToken).ConfigureAwait(false);
         var frame = codec.Encode(IpcProtocol.Create(messageType, request), IpcProtocol.Major, IpcProtocol.Minor);
         await pipe.WriteAsync(frame, cancellationToken).ConfigureAwait(false);
         await pipe.FlushAsync(cancellationToken).ConfigureAwait(false);

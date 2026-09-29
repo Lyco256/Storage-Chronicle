@@ -45,7 +45,13 @@ internal sealed class ClipboardMessageWindow : IDisposable
     private static readonly NativeWindowProc WindowProcDelegate = WindowProc;
     private static readonly string WindowClassName = $"StorageChronicleClipboardListener-{Environment.ProcessId}";
 
-    private readonly Channel<ClipboardNotification> notifications = Channel.CreateUnbounded<ClipboardNotification>(new UnboundedChannelOptions { SingleReader = false, SingleWriter = true });
+    private readonly Channel<ClipboardNotification> notifications = Channel.CreateBounded<ClipboardNotification>(new BoundedChannelOptions(256)
+    {
+        FullMode = BoundedChannelFullMode.DropOldest,
+        SingleReader = false,
+        SingleWriter = true,
+        AllowSynchronousContinuations = false
+    });
     private readonly ISessionClock clock;
     private readonly Thread thread;
     private readonly CancellationTokenSource stop = new();

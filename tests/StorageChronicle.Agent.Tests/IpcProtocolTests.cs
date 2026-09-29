@@ -42,4 +42,16 @@ public sealed class IpcProtocolTests
         Assert.Equal(["txt", "doc"], decoded.AnyFilters);
         Assert.Equal(["temporary"], decoded.ExcludeFilters);
     }
+
+    [Fact]
+    public void ClientHelloRoundTripsItsRoleAndSession()
+    {
+        var codec = new LengthPrefixedJsonCodec();
+        var frame = codec.Encode(IpcProtocol.Create("ClientHello", new IpcClientHello(IpcClientRole.SessionAgent, 42)), IpcProtocol.Major, IpcProtocol.Minor);
+        var envelope = codec.Decode<IpcEnvelope>(frame, IpcProtocol.Major);
+        var hello = IpcProtocol.Read<IpcClientHello>(envelope);
+
+        Assert.Equal(IpcClientRole.SessionAgent, hello.Role);
+        Assert.Equal(42, hello.SessionId);
+    }
 }

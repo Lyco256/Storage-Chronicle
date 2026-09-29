@@ -1,5 +1,43 @@
 # AgentPipeProjectionClient.cs
 
-In addition to bounded projections, this single client implements the canonical settings gateway over `SettingsSnapshotRequest` and scoped `SettingsUpdateRequest` messages. Machine/User settings and recovery warnings are returned from one Agent snapshot; machine writes remain Agent-authorized and UI code has no direct settings-store dependency.
+This client is the UI's only Agent boundary. It authenticates each connection as the Desktop UI role, then sends bounded length-prefixed requests for Event Stack, rich Diff View, details, health, settings, and explicit reconciliation decisions, rejects oversized/error frames, and never performs direct history or filesystem I/O. `SendRequestAsync` lets typed gateways share this transport without defining substitute IPC contracts. The client also implements `IUserSettingsClient` for Event Stack preferences using the same versioned settings snapshot/update messages. Health responses carry per-volume continuity and one-time-presented pending gap decisions; the Execute decision delegates selected-volume reconciliation to the Agent runner.
 
-This client is the UI's only Agent boundary. It sends bounded length-prefixed requests for Event Stack, rich Diff View, details, health, user settings, and explicit reconciliation decisions, rejects oversized/error frames, and never performs direct history or settings-file I/O. User-settings writes use the Agent's validated User scope. Health responses carry per-volume continuity and one-time-presented pending gap decisions; the decision call delegates recovery to the Agent lifecycle.
+## Role
+
+This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle.
+
+## Public types and responsibilities
+
+Public types preserve source facts and the explicitly owned responsibility; UI interpretation and correlation remain outside this boundary.
+
+## Inputs and outputs
+
+Inputs and outputs are the declared contracts of the source file. File contents and file-content hashes are never an input or output.
+
+## Dependencies
+
+Dependencies are limited to the referenced project contracts and platform services shown by the source file.
+
+## Invariants
+
+The source keeps canonical facts distinguishable from reconstructed state and does not synthesize descendant events.
+
+## Threading and lifetime
+
+Callers own cancellation and lifetime; asynchronous work must not outlive the owning pipeline or UI scope.
+
+## Failure behavior
+
+Failure, corruption, cancellation, and recovery remain observable and are not converted into a false successful observation.
+
+## Tests
+
+Validated by tests/StorageChronicle.Integration.Tests and the affected integration tests.
+
+## OS constraints
+
+Platform-neutral behavior remains portable; Windows-only APIs are isolated in the Windows platform projects.
+
+## Change-sensitive contracts
+
+Public names, serialized fields, persistence boundaries, and the mirrored path are compatibility-sensitive contracts.

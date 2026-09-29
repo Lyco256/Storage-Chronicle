@@ -13,6 +13,7 @@ public static class SettingsValidator
         ValidatePaths(settings.MonitoringPaths, "MonitoringPaths", errors);
         ValidatePaths(settings.ExcludedPaths, "ExcludedPaths", errors);
         ValidatePath(settings.LogStoragePath, "LogStoragePath", errors);
+        ValidateLogStorageIsolation(settings, errors);
         if (settings.FlushIntervalSeconds is < 1 or > 60)
         {
             errors.Add(new("FlushIntervalSeconds", "Flush interval must be between 1 and 60 seconds."));
@@ -103,6 +104,58 @@ public static class SettingsValidator
         {
             errors.Add(new(property, "The path must be absolute."));
         }
+    }
+
+    private static void ValidateLogStorageIsolation(MachineSettings settings, List<SettingsValidationError> errors)
+    {
+        var storagePath = settings.LogStoragePath;
+        if (string.IsNullOrWhiteSpace(storagePath) || !Path.IsPathRooted(storagePath)) return;
+        if (storagePath.StartsWith("\\\\", StringComparison.Ordinal) || storagePath.StartsWith("//", StringComparison.Ordinal))
+        {
+            errors.Add(new("LogStoragePath", "History storage must be a local path; network/UNC locations are not accepted."));
+            return;
+        }
+
+        foreach (var monitoringPath in settings.MonitoringPaths)
+        {
+            if (string.IsNullOrWhiteSpace(monitoringPath) || !Path.IsPathRooted(monitoringPath)) continue;
+            try
+            {
+                if (PathsOverlap(storagePath, monitoringPath))
+                {
+                    errors.Add(new("LogStoragePath", $"History storage must not equal, contain, or be contained by monitored path '{monitoringPath}'."));
+                }
+            }
+            catch (ArgumentException)
+            {
+                // The regular path validator reports malformed paths independently.
+            }
+            catch (NotSupportedException)
+            {
+                // The regular path validator reports malformed paths independently.
+            }
+            catch (PathTooLongException)
+            {
+                // The regular path validator reports malformed paths independently.
+            }
+        }
+    }
+
+    private static bool PathsOverlap(string left, string right)
+    {
+        var leftFull = Path.GetFullPath(left);
+        var rightFull = Path.GetFullPath(right);
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return IsSameOrDescendant(leftFull, rightFull, comparison) || IsSameOrDescendant(rightFull, leftFull, comparison);
+    }
+
+    private static bool IsSameOrDescendant(string path, string possibleParent, StringComparison comparison)
+    {
+        if (string.Equals(path, possibleParent, comparison)) return true;
+        var parentPrefix = Path.EndsInDirectorySeparator(possibleParent)
+            ? possibleParent
+            : possibleParent + Path.DirectorySeparatorChar;
+        return path.StartsWith(parentPrefix, comparison);
     }
 
     private static void ThrowIfInvalid(SettingsValidationResult result)

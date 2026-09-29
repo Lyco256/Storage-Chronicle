@@ -2,16 +2,40 @@
 
 ## Role
 
-Defines the Avalonia desktop composition root and references the platform-neutral Event Stack, Diff View, shared Agent IPC client, and settings dialog projects.
+This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle.
 
-## Public types
+## Public types and responsibilities
 
-The project compiles the public desktop shell and window types; it introduces no extra shared contracts.
+Public types preserve source facts and the explicitly owned responsibility; UI interpretation and correlation remain outside this boundary.
 
-## Invariants and dependencies
+## Inputs and outputs
 
-UI code depends on Agent IPC and projections, not on direct storage or collector APIs. The Settings UI references the canonical Settings contract and `StorageChronicle.UI.Settings`.
+Inputs and outputs are the declared contracts of the source file. File contents and file-content hashes are never an input or output.
 
-## Failure behavior and tests
+## Dependencies
 
-Build fails on warnings and nullable warnings. `tests/StorageChronicle.UI.Headless.Tests` validates shell and modal construction; desktop build validates Avalonia compilation.
+Dependencies are limited to the referenced project contracts and platform services shown by the source file.
+
+## Invariants
+
+The source keeps canonical facts distinguishable from reconstructed state and does not synthesize descendant events.
+
+## Threading and lifetime
+
+Callers own cancellation and lifetime; asynchronous work must not outlive the owning pipeline or UI scope.
+
+## Failure behavior
+
+Failure, corruption, cancellation, and recovery remain observable and are not converted into a false successful observation.
+
+## Tests
+
+Validated by tests/StorageChronicle.Integration.Tests and the affected integration tests.
+
+## OS constraints
+
+Platform-neutral behavior remains portable; Windows-only APIs are isolated in the Windows platform projects.
+
+## Change-sensitive contracts
+
+Public names, serialized fields, persistence boundaries, and the mirrored path are compatibility-sensitive contracts.

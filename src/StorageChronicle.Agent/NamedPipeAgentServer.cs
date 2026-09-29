@@ -25,20 +25,20 @@ public sealed class NamedPipeAgentServer : BackgroundService
     private readonly AgentSettingsService? settings;
     private readonly AgentHealthState health;
     private readonly IEventNormalizer normalizer;
-    private readonly IMonitoringLifecycle? monitoringLifecycle;
+    private readonly IConfirmedReconciliationRunner? reconciliationRunner;
     private readonly ConcurrentDictionary<string, byte> clipboardDedup = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<string> clipboardDedupOrder = new();
     private const int ClipboardDedupCapacity = 4096;
 
     /// <summary>Initializes the named pipe server.</summary>
-    public NamedPipeAgentServer(IProjectionService projection, AppendOnlyStorageEngine store, AgentHealthState health, IEventNormalizer normalizer, AgentSettingsService? settings = null, IMonitoringLifecycle? monitoringLifecycle = null)
+    public NamedPipeAgentServer(IProjectionService projection, AppendOnlyStorageEngine store, AgentHealthState health, IEventNormalizer normalizer, AgentSettingsService? settings = null, IMonitoringLifecycle? monitoringLifecycle = null, IConfirmedReconciliationRunner? reconciliationRunner = null)
     {
         this.projection = projection ?? throw new ArgumentNullException(nameof(projection));
         this.store = store ?? throw new ArgumentNullException(nameof(store));
         this.health = health ?? throw new ArgumentNullException(nameof(health));
         this.normalizer = normalizer ?? throw new ArgumentNullException(nameof(normalizer));
         this.settings = settings;
-        this.monitoringLifecycle = monitoringLifecycle;
+        this.reconciliationRunner = reconciliationRunner;
     }
 
     /// <inheritdoc />
@@ -87,6 +87,31 @@ public sealed class NamedPipeAgentServer : BackgroundService
             await WriteEnvelopeAsync(pipe, IpcProtocol.Create("Error", new AgentHealth("Rejected", "The Agent could not authenticate the named-pipe client.", store.Status.LastSequence, Array.Empty<VolumeHealth>(), Array.Empty<PendingReconciliationRequest>())), cancellationToken).ConfigureAwait(false);
             return;
         }
+        IpcClientHello hello;
+        try
+        {
+            var helloFrame = await ReadFrameAsync(pipe, cancellationToken).ConfigureAwait(false);
+            if (helloFrame is null) return;
+            var helloEnvelope = new LengthPrefixedJsonCodec().Decode<IpcEnvelope>(helloFrame, IpcProtocol.Major);
+            if (!string.Equals(helloEnvelope.MessageType, "ClientHello", StringComparison.Ordinal))
+            {
+                await WriteEnvelopeAsync(pipe, Rejected("The named-pipe client must authenticate its role before sending requests."), cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            hello = IpcProtocol.Read<IpcClientHello>(helloEnvelope);
+            if (!IsAllowedClientRole(hello, identity))
+            {
+                await WriteEnvelopeAsync(pipe, Rejected("The named-pipe client role is not permitted for its authenticated process or session."), cancellationToken).ConfigureAwait(false);
+                return;
+            }
+        }
+        catch (Exception exception) when (exception is InvalidDataException or JsonException or ArgumentException)
+        {
+            await WriteEnvelopeAsync(pipe, Rejected("The named-pipe client role handshake was invalid."), cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         while (pipe.IsConnected && !cancellationToken.IsCancellationRequested)
         {
             var frame = await ReadFrameAsync(pipe, cancellationToken).ConfigureAwait(false);
@@ -99,6 +124,13 @@ public sealed class NamedPipeAgentServer : BackgroundService
             catch (InvalidDataException)
             {
                 await WriteEnvelopeAsync(pipe, IpcProtocol.Create("Error", new AgentHealth("ProtocolError", "Invalid IPC frame or protocol version.", store.Status.LastSequence, Array.Empty<VolumeHealth>(), Array.Empty<PendingReconciliationRequest>())), cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            if ((hello.Role == IpcClientRole.SessionAgent && !string.Equals(request.MessageType, "ClipboardCandidate", StringComparison.Ordinal)) ||
+                (hello.Role == IpcClientRole.DesktopUi && string.Equals(request.MessageType, "ClipboardCandidate", StringComparison.Ordinal)))
+            {
+                await WriteEnvelopeAsync(pipe, Rejected("The requested IPC message is not permitted for the authenticated client role."), cancellationToken).ConfigureAwait(false);
                 return;
             }
 
@@ -145,9 +177,10 @@ public sealed class NamedPipeAgentServer : BackgroundService
             if (!health.TryGetPending(value.RequestId, out var pendingRequest)) return Rejected("The reconciliation request is no longer pending.");
             if (value.Execute)
             {
-                if (monitoringLifecycle is null) return Rejected("Monitoring lifecycle is unavailable.");
-                await monitoringLifecycle.RestartAsync(cancellationToken).ConfigureAwait(false);
                 health.TryResolve(pendingRequest.RequestId);
+                if (reconciliationRunner is null) return Rejected("Confirmed reconciliation is unavailable.");
+                var summary = await reconciliationRunner.ExecuteAsync(pendingRequest, cancellationToken).ConfigureAwait(false);
+                if (!summary.Completed) return IpcProtocol.Create("AgentHealth", health.Snapshot(store.Status));
                 return IpcProtocol.Create("AgentHealth", health.Snapshot(store.Status));
             }
 
@@ -219,6 +252,16 @@ public sealed class NamedPipeAgentServer : BackgroundService
         return Rejected($"Unsupported message type: {request.MessageType}");
     }
 
+    private static bool IsAllowedClientRole(IpcClientHello hello, NamedPipeClientIdentity identity) =>
+        hello.SessionId == identity.SessionId &&
+        identity.IsCurrentUserSession &&
+        hello.Role switch
+        {
+            IpcClientRole.DesktopUi => !identity.IsSessionAgentProcess,
+            IpcClientRole.SessionAgent => identity.IsSessionAgentProcess,
+            _ => false
+        };
+
     private async ValueTask<SettingsApplyResult> ApplySettingsAsync(SettingsUpdateRequest request, CancellationToken cancellationToken)
     {
         using var document = request.Settings.ValueKind == JsonValueKind.Undefined
@@ -245,6 +288,8 @@ public sealed class NamedPipeAgentServer : BackgroundService
         properties["reconciliationDecision"] = "Declined";
         properties["userDeclined"] = "true";
         properties["reconciliationReason"] = request.Reason;
+        properties["uncertainFromUtc"] = (request.GapStartUtc ?? request.DiscoveredUtc).ToUniversalTime().ToString("O");
+        properties["uncertainToUtc"] = now.ToUniversalTime().ToString("O");
         var source = new SourceEvent(EventId.New(), EventSchemaVersion.Current, EventOrigin.DirectoryReconciliation,
             request.VolumeId, null, null, null, null, CanonicalOperation.UnverifiedGap, null,
             new EventTime(now, now.Offset, null, now, new SourceSequence(Math.Max(1, request.SourceSequence ?? 1)), new MountSequence(Math.Max(1, request.SourceSequence ?? 1))),
@@ -314,6 +359,9 @@ public sealed class NamedPipeAgentServer : BackgroundService
 /// <summary>Captures the authenticated SID and Windows session of a named-pipe client.</summary>
 public sealed record NamedPipeClientIdentity(string Sid, int SessionId, bool IsCurrentUserSession, bool IsAdministrator)
 {
+    /// <summary>Indicates that the authenticated client process is the published Session Agent executable.</summary>
+    public bool IsSessionAgentProcess { get; init; }
+
     /// <summary>Reads client identity while impersonating the connected pipe client.</summary>
     public static NamedPipeClientIdentity Read(NamedPipeServerStream pipe)
     {
@@ -348,10 +396,25 @@ public sealed record NamedPipeClientIdentity(string Sid, int SessionId, bool IsC
         var processId = 0u;
         _ = NativePipeMethods.GetNamedPipeClientProcessId(pipe.SafePipeHandle.DangerousGetHandle(), out processId);
         var sessionId = -1;
-        try { if (processId != 0) sessionId = System.Diagnostics.Process.GetProcessById((int)processId).SessionId; } catch (ArgumentException) { }
+        var isSessionAgentProcess = false;
+        try
+        {
+            if (processId != 0)
+            {
+                using var process = System.Diagnostics.Process.GetProcessById((int)processId);
+                sessionId = process.SessionId;
+                isSessionAgentProcess = string.Equals(Path.GetFileName(process.MainModule?.FileName), "StorageChronicle.SessionAgent.exe", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        catch (ArgumentException) { }
+        catch (InvalidOperationException) { }
+        catch (Win32Exception) { }
         var activeSession = NativePipeMethods.WTSGetActiveConsoleSessionId();
         if (activeSession == uint.MaxValue) activeSession = (uint)System.Diagnostics.Process.GetCurrentProcess().SessionId;
-        return new NamedPipeClientIdentity(sid, sessionId, sessionId >= 0 && sessionId == (int)activeSession, isAdministrator);
+        return new NamedPipeClientIdentity(sid, sessionId, sessionId >= 0 && sessionId == (int)activeSession, isAdministrator)
+        {
+            IsSessionAgentProcess = isSessionAgentProcess
+        };
     }
 }
 

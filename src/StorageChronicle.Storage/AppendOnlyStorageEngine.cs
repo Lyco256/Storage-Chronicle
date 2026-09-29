@@ -9,6 +9,10 @@ namespace StorageChronicle.Storage;
 /// <summary>Provides immutable append storage with a rebuildable SQLite index and state cache.</summary>
 public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDisposable
 {
+    private const int MaxCanonicalBatchSize = 512;
+    private const string OwnershipMarkerName = ".storage-chronicle-history-owner.json";
+    private const string OwnershipSchema = "StorageChronicle.HistoryOwnership.v1";
+    private static readonly string[] OwnedSegmentSuffixes = [".open", ".zst", ".manifest.json", ".zst.tmp"];
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.General);
     private StorageEngineOptions _options;
     private SegmentLog _segments;
@@ -29,7 +33,9 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
         options.Validate();
         _options = options;
         _flushIntervalTicks = options.FlushInterval.Ticks;
+        EnsureNoReparsePoints(options.StorageDirectory);
         Directory.CreateDirectory(options.StorageDirectory);
+        EnsureOwnedHistoryDirectory(options.StorageDirectory);
         _segments = new SegmentLog(options);
         _segments.SegmentSkipped += issue => SegmentSkipped?.Invoke(issue);
         try
@@ -95,6 +101,62 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
         if (value.Operation is CanonicalOperation.Delete or CanonicalOperation.Rename or CanonicalOperation.Move)
         {
             await FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Appends a bounded canonical-event batch while retaining immutable segment ordering and one SQLite durability transaction.</summary>
+    public async ValueTask AppendCanonicalBatchAsync(IReadOnlyList<CanonicalEvent> values, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        if (values.Count == 0) return;
+        if (values.Count > MaxCanonicalBatchSize) throw new ArgumentOutOfRangeException(nameof(values), $"A canonical batch cannot contain more than {MaxCanonicalBatchSize} events.");
+        EnsureRunning();
+        await _writerGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var unique = new List<CanonicalEvent>(values.Count);
+            var seen = new HashSet<EventId>();
+            foreach (var value in values)
+            {
+                ArgumentNullException.ThrowIfNull(value);
+                if (value.IsReadOnlyObservation) throw new InvalidOperationException("Read-only observations are not durable events.");
+                if (seen.Add(value.EventId)) unique.Add(value);
+            }
+
+            var existing = await _index.FindExistingEventIdsAsync(StorageRecordKind.CanonicalEvent, unique.Select(value => value.EventId).ToArray(), cancellationToken).ConfigureAwait(false);
+            var records = new List<EventIndexRecord>(unique.Count);
+            var lastSourceSequence = _lastSourceSequence;
+            try
+            {
+                foreach (var value in unique)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (existing.Contains(value.EventId.ToString())) continue;
+                    await EnsureCapacityAsync(cancellationToken).ConfigureAwait(false);
+                    var sequence = checked(++_nextSequence);
+                    var payload = JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions);
+                    await _segments.AppendAsync(StorageRecordKind.CanonicalEvent, value.SchemaVersion.Major, value.SchemaVersion.Minor, sequence, payload, cancellationToken).ConfigureAwait(false);
+                    lastSourceSequence = Math.Max(lastSourceSequence, value.Time.SourceSequence.Value);
+                    _lastSourceSequence = lastSourceSequence;
+                    records.Add(new EventIndexRecord(StorageRecordKind.CanonicalEvent, sequence, value.EventId, value.SchemaVersion, value.Time, value.FileId, value.ParentFileId, value.Name, payload));
+                }
+
+                await _index.AppendEventsAsync(records, CancellationToken.None).ConfigureAwait(false);
+                await _index.StoreFinalSequenceAsync(_nextSequence, _lastSourceSequence, RecordingState.Running, null, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException)
+            {
+                var capacity = exception is StorageCapacityException || IsCapacityFailure(exception);
+                var status = new RecordingStatus(capacity ? RecordingState.CapacityStopped : RecordingState.Stopped, records.Count == 0 ? _nextSequence : records[^1].Sequence, lastSourceSequence, exception.Message);
+                SetStatus(status);
+                await TryStoreStatusAsync(status).ConfigureAwait(false);
+                if (capacity) throw new StorageCapacityException("Recording stopped because durable storage capacity was exhausted.", exception);
+                throw new StorageException("Recording stopped after a durable storage failure.", exception);
+            }
+        }
+        finally
+        {
+            _writerGate.Release();
         }
     }
 
@@ -180,25 +242,31 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
         ArgumentException.ThrowIfNullOrWhiteSpace(storageDirectory);
         var destination = Path.GetFullPath(storageDirectory);
         if (string.Equals(destination, _options.StorageDirectory, StringComparison.OrdinalIgnoreCase)) return;
+        if (destination.StartsWith("\\\\", StringComparison.Ordinal) || destination.StartsWith("//", StringComparison.Ordinal)) throw new IOException("History relocation must use a local path.");
         if (IsSameOrDescendant(destination, _options.StorageDirectory))
         {
             throw new IOException("The new history directory cannot be inside the current history directory.");
         }
+        if (Directory.Exists(destination) || File.Exists(destination)) throw new IOException("The new history directory must not already exist; existing paths are never adopted or removed.");
+        EnsureNoReparsePoints(destination);
 
         await _writerGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             EnsureRunning();
             await FlushCoreAsync(cancellationToken).ConfigureAwait(false);
-            if (Directory.Exists(destination) && Directory.EnumerateFileSystemEntries(destination).Any())
+            if (Directory.Exists(destination))
             {
-                throw new IOException("The new history directory must not already contain files.");
+                throw new IOException("The new history directory must not already exist; choose a new, unused path so relocation cannot remove or adopt an existing directory.");
             }
 
             var parent = Path.GetDirectoryName(destination) ?? throw new IOException("The new history directory has no parent.");
+            EnsureNoReparsePoints(parent);
             Directory.CreateDirectory(parent);
             var staging = destination + ".moving-" + Guid.NewGuid().ToString("N");
+            if (Directory.Exists(staging) || File.Exists(staging)) throw new IOException("The unique history staging path already exists; refusing to adopt it.");
             Directory.CreateDirectory(staging);
+            EnsureOwnedHistoryDirectory(staging);
             try
             {
                 foreach (var path in Directory.EnumerateFiles(_options.StorageDirectory, "segment-*", SearchOption.TopDirectoryOnly))
@@ -215,7 +283,6 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
                     await stagingIndex.StoreFinalSequenceAsync(_nextSequence, _lastSourceSequence, _status.State, _status.Reason, cancellationToken).ConfigureAwait(false);
                 }
 
-                if (Directory.Exists(destination)) Directory.Delete(destination);
                 Directory.Move(staging, destination);
                 var relocatedOptions = CloneOptions(destination);
                 var relocatedSegments = new SegmentLog(relocatedOptions);
@@ -296,6 +363,8 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
         try
         {
             await _index.RecreateAsync(cancellationToken).ConfigureAwait(false);
+            var indexBatch = new List<EventIndexRecord>(512);
+            var canonicalBatch = new List<CanonicalEvent>(512);
             foreach (var record in _segments.ReadAllRecords())
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -304,7 +373,7 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
                     var source = JsonSerializer.Deserialize<SourceEvent>(record.Payload, JsonOptions);
                     if (source is not null)
                     {
-                        await _index.AppendEventAsync(record.Kind, record.Sequence, source.EventId, source.SchemaVersion, source.Time, source.FileId, source.ParentFileId, source.Name, record.Payload, cancellationToken).ConfigureAwait(false);
+                        indexBatch.Add(new EventIndexRecord(record.Kind, record.Sequence, source.EventId, source.SchemaVersion, source.Time, source.FileId, source.ParentFileId, source.Name, record.Payload));
                     }
                 }
                 else
@@ -312,11 +381,15 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
                     var canonical = JsonSerializer.Deserialize<CanonicalEvent>(record.Payload, JsonOptions);
                     if (canonical is not null)
                     {
-                        await _index.AppendEventAsync(record.Kind, record.Sequence, canonical.EventId, canonical.SchemaVersion, canonical.Time, canonical.FileId, canonical.ParentFileId, canonical.Name, record.Payload, cancellationToken).ConfigureAwait(false);
-                        await _index.ApplyCanonicalAsync(canonical, cancellationToken).ConfigureAwait(false);
+                        indexBatch.Add(new EventIndexRecord(record.Kind, record.Sequence, canonical.EventId, canonical.SchemaVersion, canonical.Time, canonical.FileId, canonical.ParentFileId, canonical.Name, record.Payload));
+                        canonicalBatch.Add(canonical);
                     }
                 }
+
+                if (indexBatch.Count >= 512) await FlushRebuildBatchAsync(_index, indexBatch, canonicalBatch, cancellationToken).ConfigureAwait(false);
             }
+
+            await FlushRebuildBatchAsync(_index, indexBatch, canonicalBatch, cancellationToken).ConfigureAwait(false);
 
             await _index.StoreFinalSequenceAsync(_nextSequence, _lastSourceSequence, _status.State, _status.Reason, cancellationToken).ConfigureAwait(false);
         }
@@ -428,6 +501,8 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
 
     private async ValueTask RebuildIndexAsync(SegmentLog segments, SqliteIndex index, CancellationToken cancellationToken)
     {
+        var indexBatch = new List<EventIndexRecord>(512);
+        var canonicalBatch = new List<CanonicalEvent>(512);
         foreach (var record in segments.ReadAllRecords())
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -436,7 +511,7 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
                 var source = JsonSerializer.Deserialize<SourceEvent>(record.Payload, JsonOptions);
                 if (source is not null)
                 {
-                    await index.AppendEventAsync(record.Kind, record.Sequence, source.EventId, source.SchemaVersion, source.Time, source.FileId, source.ParentFileId, source.Name, record.Payload, cancellationToken).ConfigureAwait(false);
+                    indexBatch.Add(new EventIndexRecord(record.Kind, record.Sequence, source.EventId, source.SchemaVersion, source.Time, source.FileId, source.ParentFileId, source.Name, record.Payload));
                 }
             }
             else
@@ -444,11 +519,24 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
                 var canonical = JsonSerializer.Deserialize<CanonicalEvent>(record.Payload, JsonOptions);
                 if (canonical is not null)
                 {
-                    await index.AppendEventAsync(record.Kind, record.Sequence, canonical.EventId, canonical.SchemaVersion, canonical.Time, canonical.FileId, canonical.ParentFileId, canonical.Name, record.Payload, cancellationToken).ConfigureAwait(false);
-                    await index.ApplyCanonicalAsync(canonical, cancellationToken).ConfigureAwait(false);
+                    indexBatch.Add(new EventIndexRecord(record.Kind, record.Sequence, canonical.EventId, canonical.SchemaVersion, canonical.Time, canonical.FileId, canonical.ParentFileId, canonical.Name, record.Payload));
+                    canonicalBatch.Add(canonical);
                 }
             }
+
+            if (indexBatch.Count >= 512) await FlushRebuildBatchAsync(index, indexBatch, canonicalBatch, cancellationToken).ConfigureAwait(false);
         }
+
+        await FlushRebuildBatchAsync(index, indexBatch, canonicalBatch, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask FlushRebuildBatchAsync(SqliteIndex index, List<EventIndexRecord> indexBatch, List<CanonicalEvent> canonicalBatch, CancellationToken cancellationToken)
+    {
+        if (indexBatch.Count == 0) return;
+        await index.AppendEventsAsync(indexBatch, cancellationToken).ConfigureAwait(false);
+        await index.ApplyCanonicalBatchAsync(canonicalBatch, cancellationToken).ConfigureAwait(false);
+        indexBatch.Clear();
+        canonicalBatch.Clear();
     }
 
     private StorageEngineOptions CloneOptions(string directory) => new(directory)
@@ -559,6 +647,102 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
             if (File.Exists(path)) File.Delete(path);
         }
     }
+
+    private static void EnsureOwnedHistoryDirectory(string directory)
+    {
+        var fullPath = Path.GetFullPath(directory);
+        EnsureNoReparsePoints(fullPath);
+        var markerPath = Path.Combine(fullPath, OwnershipMarkerName);
+        EnsureNoReparsePoints(markerPath);
+        if (File.Exists(markerPath))
+        {
+            using var markerStream = new FileStream(markerPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var marker = JsonSerializer.Deserialize<HistoryOwnershipMarker>(markerStream, JsonOptions);
+            if (marker is null || !string.Equals(marker.Schema, OwnershipSchema, StringComparison.Ordinal))
+            {
+                throw new IOException("The history ownership marker is invalid; refusing to modify this directory.");
+            }
+
+            ValidateOwnedHistoryEntries(fullPath);
+            return;
+        }
+
+        if (Directory.EnumerateFileSystemEntries(fullPath).Any())
+        {
+            throw new IOException("The history directory contains files but has no Storage Chronicle ownership marker; refusing to adopt, overwrite, or delete existing data.");
+        }
+
+        var payload = JsonSerializer.SerializeToUtf8Bytes(new HistoryOwnershipMarker(OwnershipSchema), JsonOptions);
+        try
+        {
+            using var markerStream = new FileStream(markerPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough);
+            markerStream.Write(payload);
+            markerStream.Flush(flushToDisk: true);
+        }
+        catch (IOException) when (File.Exists(markerPath))
+        {
+            // A competing initializer may have established ownership first. Validate its
+            // marker without replacing it; malformed or foreign data remains untouched.
+            using var markerStream = new FileStream(markerPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var marker = JsonSerializer.Deserialize<HistoryOwnershipMarker>(markerStream, JsonOptions);
+            if (marker is null || !string.Equals(marker.Schema, OwnershipSchema, StringComparison.Ordinal)) throw new IOException("A competing process created an invalid history ownership marker.");
+        }
+    }
+
+    private static void EnsureNoReparsePoints(string path)
+    {
+        var current = Path.GetFullPath(path);
+        while (!string.IsNullOrEmpty(current))
+        {
+            if (Directory.Exists(current) || File.Exists(current))
+            {
+                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                {
+                    throw new IOException($"History paths may not traverse a reparse point: {current}");
+                }
+            }
+
+            var parent = Directory.GetParent(current)?.FullName;
+            if (string.IsNullOrEmpty(parent) || string.Equals(parent, current, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) break;
+            current = parent;
+        }
+    }
+
+    private static void ValidateOwnedHistoryEntries(string directory)
+    {
+        foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+        {
+            var name = Path.GetFileName(entry);
+            if ((File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0) throw new IOException($"A history entry is a reparse point and cannot be treated as product-owned: {entry}");
+            var isSqliteEntry = name.Equals("index.sqlite", StringComparison.OrdinalIgnoreCase) ||
+                                name.Equals("index.sqlite-wal", StringComparison.OrdinalIgnoreCase) ||
+                                name.Equals("index.sqlite-shm", StringComparison.OrdinalIgnoreCase) ||
+                                name.Equals("index.sqlite-journal", StringComparison.OrdinalIgnoreCase);
+            var isSegmentEntry = IsOwnedSegmentFileName(name);
+            if (!name.Equals(OwnershipMarkerName, StringComparison.OrdinalIgnoreCase) && !isSqliteEntry && !isSegmentEntry)
+            {
+                throw new IOException($"An unrecognized entry exists in the product history directory; refusing to modify it: {entry}");
+            }
+
+            if (Directory.Exists(entry)) throw new IOException($"Unexpected directory exists in the product history directory: {entry}");
+        }
+    }
+
+    private static bool IsOwnedSegmentFileName(string name)
+    {
+        const string prefix = "segment-";
+        if (!name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+        foreach (var suffix in OwnedSegmentSuffixes)
+        {
+            if (!name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) continue;
+            var idLength = name.Length - prefix.Length - suffix.Length;
+            return idLength == 32 && Guid.TryParseExact(name.AsSpan(prefix.Length, idLength), "N", out _);
+        }
+
+        return false;
+    }
+
+    private sealed record HistoryOwnershipMarker(string Schema);
 
     /// <inheritdoc />
     public async ValueTask DisposeAsync()

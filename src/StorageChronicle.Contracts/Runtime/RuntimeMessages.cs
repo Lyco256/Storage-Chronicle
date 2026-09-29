@@ -27,7 +27,9 @@ public sealed record PendingReconciliationRequest(
     string Reason,
     long? SourceSequence,
     DateTimeOffset DiscoveredUtc,
-    bool Presented = false);
+    bool Presented = false,
+    string FileSystem = "Unknown",
+    DateTimeOffset? GapStartUtc = null);
 
 /// <summary>Reports non-user-editable agent health state.</summary>
 public sealed record AgentHealth(
@@ -119,7 +121,13 @@ public sealed record EventDetailsResponse(EventDetailsSnapshot? Details);
 public sealed record SettingsSnapshotRequest;
 
 /// <summary>Identifies a settings scope in an IPC request.</summary>
-public enum SettingsScope { Machine, User }
+public enum SettingsScope
+{
+    /// <summary>Machine-wide Agent-owned settings.</summary>
+    Machine,
+    /// <summary>Interactive-user settings.</summary>
+    User
+}
 
 /// <summary>Requests a validated settings update. The Agent maps this DTO to its internal settings model.</summary>
 public sealed record SettingsUpdateRequest(SettingsScope Scope, JsonElement Settings);

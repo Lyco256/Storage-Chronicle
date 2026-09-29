@@ -41,7 +41,21 @@ public static class NtfsControlCode
 }
 
 /// <summary>Classifies expected NTFS API failures so one inaccessible volume does not stop the agent.</summary>
-public enum NtfsApiStatus { Success, JournalNotCreated, AccessDenied, MediaRemoved, InvalidData, Failure }
+public enum NtfsApiStatus
+{
+    /// <summary>The operation succeeded.</summary>
+    Success,
+    /// <summary>No journal exists; the collector does not create one.</summary>
+    JournalNotCreated,
+    /// <summary>Access was denied.</summary>
+    AccessDenied,
+    /// <summary>The media was removed.</summary>
+    MediaRemoved,
+    /// <summary>The returned data was invalid.</summary>
+    InvalidData,
+    /// <summary>An unclassified native failure occurred.</summary>
+    Failure
+}
 
 /// <summary>Returns status and native error information from one NTFS control call.</summary>
 public sealed record NtfsApiCallResult(NtfsApiStatus Status, int BytesReturned, int Win32Error)

@@ -15,11 +15,15 @@ public sealed class AgentPipelineTests
         var store = new FakeStore();
         var state = new FakeState();
         var source = Source(1);
-        await new AgentPipeline(store, state, new EventNormalizer(), 1).RunAsync(new FakeCollector(source));
+        var committed = new List<SourceEvent>();
+        var pipeline = new AgentPipeline(store, state, new EventNormalizer(), 1);
+        pipeline.SourceCommitted += committed.Add;
+        await pipeline.RunAsync(new FakeCollector(source));
         Assert.Single(store.Sources);
         Assert.Single(store.Canonicals);
         Assert.Single(state.Values);
         Assert.Equal(source.EventId, store.Sources[0].EventId);
+        Assert.Equal([source.EventId], committed.Select(value => value.EventId));
     }
 
     [Fact]

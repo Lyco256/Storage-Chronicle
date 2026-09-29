@@ -52,8 +52,31 @@ public interface IVolumeEnumerator
     ValueTask<IReadOnlyList<VolumeDescriptor>> EnumerateAsync(CancellationToken cancellationToken = default);
 }
 
+/// <summary>Protected operating-system roles observed for one volume.</summary>
+[Flags]
+public enum ProtectedVolumeRoles
+{
+    /// <summary>No protected role was reported by a complete authoritative classification.</summary>
+    None = 0,
+    /// <summary>The volume contains boot-manager/system-start files.</summary>
+    System = 1,
+    /// <summary>The volume contains the running Windows installation.</summary>
+    Boot = 2,
+    /// <summary>The volume is a recognized Windows recovery partition.</summary>
+    Recovery = 4,
+    /// <summary>The volume is an EFI System Partition.</summary>
+    Efi = 8,
+    /// <summary>One or more protected roles could not be determined.</summary>
+    Unknown = 16
+}
+
 /// <summary>Describes a local volume without requiring a drive letter.</summary>
-public sealed record VolumeDescriptor(VolumeId Id, string FileSystem, IReadOnlyList<string> MountPoints, bool IsReadOnly, bool IsExternal, bool IsSystem, bool SupportsUsn, bool IsDirectoryReadable);
+public sealed record VolumeDescriptor(VolumeId Id, string FileSystem, IReadOnlyList<string> MountPoints, bool IsReadOnly, bool IsExternal, ProtectedVolumeRoles ProtectedRoles, bool SupportsUsn, bool IsDirectoryReadable, bool IsProtectedRoleClassificationComplete = false)
+{
+    /// <summary>Gets whether this volume contains boot-manager/system-start files.</summary>
+    public bool IsSystem => ProtectedRoles.HasFlag(ProtectedVolumeRoles.System);
+
+}
 
 /// <summary>Provides capability detection for Windows-version-specific APIs.</summary>
 public interface IPlatformCapabilities

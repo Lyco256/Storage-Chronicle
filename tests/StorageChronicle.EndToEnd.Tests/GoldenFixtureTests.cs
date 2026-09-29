@@ -13,12 +13,15 @@ namespace StorageChronicle.EndToEnd.Tests;
 public sealed class GoldenFixtureTests
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private static readonly string[] SqliteIndexFileNames = ["index.sqlite", "index.sqlite-wal", "index.sqlite-shm"];
 
     [Fact]
     public async Task CreationDeleteGoldenFixtureSurvivesAgentRestartAndSqliteRebuild()
     {
         var fixture = await LoadFixtureAsync("creation-delete.json", TestContext.Current.CancellationToken);
-        var directory = CreateOwnedFixture("StorageChronicle.Golden");
+        var fixtureRoot = CreateFixtureRoot(out var runId);
+        var directory = Path.Combine(fixtureRoot, "history");
+        Directory.CreateDirectory(directory);
         try
         {
             await using (var first = new AppendOnlyStorageEngine(new StorageEngineOptions(directory) { FlushInterval = TimeSpan.FromMinutes(1) }))
@@ -27,7 +30,11 @@ public sealed class GoldenFixtureTests
                 await first.StopAsync(TestContext.Current.CancellationToken);
             }
 
-            foreach (var sqliteFile in Directory.EnumerateFiles(directory, "*.db*")) DeleteOwnedFixtureFile(directory, sqliteFile);
+            foreach (var sqliteFile in SqliteIndexFileNames.Select(name => Path.Combine(directory, name)).Where(File.Exists))
+            {
+                Assert.True(IsOwnedFixture(fixtureRoot, runId), "Only the current marked test fixture may have its rebuildable SQLite index files removed.");
+                File.Delete(sqliteFile);
+            }
 
             await using var restarted = new AppendOnlyStorageEngine(new StorageEngineOptions(directory) { FlushInterval = TimeSpan.FromMinutes(1) });
             await restarted.RebuildSqliteAsync(TestContext.Current.CancellationToken);
@@ -40,14 +47,16 @@ public sealed class GoldenFixtureTests
         }
         finally
         {
-            RemoveOwnedFixture(directory);
+            DeleteFixtureRoot(fixtureRoot, runId);
         }
     }
 
     [Fact]
     public async Task CapacityFailureIsExplicitAndDoesNotSilentlyDropSourceQuality()
     {
-        var directory = CreateOwnedFixture("StorageChronicle.Capacity");
+        var fixtureRoot = CreateFixtureRoot(out var runId);
+        var directory = Path.Combine(fixtureRoot, "history");
+        Directory.CreateDirectory(directory);
         try
         {
             await using var store = new AppendOnlyStorageEngine(new StorageEngineOptions(directory) { MinimumFreeBytes = long.MaxValue, FlushInterval = TimeSpan.FromMinutes(1) });
@@ -56,7 +65,43 @@ public sealed class GoldenFixtureTests
         }
         finally
         {
-            RemoveOwnedFixture(directory);
+            DeleteFixtureRoot(fixtureRoot, runId);
+        }
+    }
+
+    private static string CreateFixtureRoot(out string runId)
+    {
+        runId = Guid.NewGuid().ToString("N");
+        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.EndToEnd.Tests", runId);
+        Directory.CreateDirectory(root);
+        using var marker = new FileStream(Path.Combine(root, ".test-owner.json"), FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+        JsonSerializer.Serialize(marker, new { Schema = "StorageChronicle.TestFixtureOwner.v1", RunId = runId });
+        return root;
+    }
+
+    private static bool IsOwnedFixture(string root, string runId)
+    {
+        var fullRoot = Path.GetFullPath(root);
+        if (!string.Equals(Path.GetDirectoryName(fullRoot), Path.Combine(Path.GetTempPath(), "StorageChronicle.EndToEnd.Tests"), StringComparison.OrdinalIgnoreCase) || Path.GetFileName(fullRoot) != runId)
+            return false;
+        using var marker = JsonDocument.Parse(File.ReadAllText(Path.Combine(fullRoot, ".test-owner.json")));
+        return marker.RootElement.GetProperty("Schema").GetString() == "StorageChronicle.TestFixtureOwner.v1" && marker.RootElement.GetProperty("RunId").GetString() == runId;
+    }
+
+    private static void DeleteFixtureRoot(string root, string runId)
+    {
+        if (!Directory.Exists(root)) return;
+        if (!IsOwnedFixture(root, runId)) throw new IOException("The end-to-end fixture ownership marker does not match this run.");
+        EnsureNoReparsePoints(root);
+        Directory.Delete(Path.GetFullPath(root), recursive: true);
+    }
+
+    private static void EnsureNoReparsePoints(string directory)
+    {
+        foreach (var entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
+        {
+            if ((File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0) throw new IOException($"A reparse point was found in the owned end-to-end fixture: {entry}");
+            if (Directory.Exists(entry)) EnsureNoReparsePoints(entry);
         }
     }
 
@@ -74,51 +119,6 @@ public sealed class GoldenFixtureTests
         var path = Path.Combine(AppContext.BaseDirectory, "Golden", fileName);
         await using var stream = File.OpenRead(path);
         return await JsonSerializer.DeserializeAsync<GoldenFixture>(stream, JsonOptions, cancellationToken) ?? throw new InvalidDataException(path);
-    }
-
-    private static string CreateOwnedFixture(string category)
-    {
-        var runId = Guid.NewGuid().ToString("N");
-        var directory = Path.Combine(Path.GetTempPath(), category, runId);
-        Directory.CreateDirectory(directory);
-        File.WriteAllText(Path.Combine(directory, ".test-owner"), runId);
-        return directory;
-    }
-
-    private static void DeleteOwnedFixtureFile(string directory, string file)
-    {
-        ValidateOwnedFixture(directory);
-        var target = Path.GetFullPath(file);
-        var boundary = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        if (!target.StartsWith(boundary, StringComparison.OrdinalIgnoreCase) || !File.Exists(target) || (File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0)
-            throw new InvalidOperationException("Refusing to delete a database outside the owned end-to-end fixture.");
-        File.Delete(target);
-    }
-
-    private static void RemoveOwnedFixture(string directory)
-    {
-        if (!Directory.Exists(directory)) return;
-        ValidateOwnedFixture(directory);
-        Directory.Delete(directory, recursive: true);
-    }
-
-    private static void ValidateOwnedFixture(string directory)
-    {
-        var target = Path.GetFullPath(directory);
-        var category = Path.GetDirectoryName(target);
-        var runId = Path.GetFileName(target);
-        if (category is null || !Guid.TryParseExact(runId, "N", out _) || !string.Equals(Path.GetDirectoryName(category), Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Refusing to modify an end-to-end fixture outside its run-specific temporary root.");
-        var owner = Path.Combine(target, ".test-owner");
-        if (!File.Exists(owner) || !string.Equals(File.ReadAllText(owner), runId, StringComparison.Ordinal))
-            throw new InvalidOperationException("Refusing to modify an end-to-end fixture without its owner marker.");
-        var boundary = target.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        foreach (var entry in Directory.EnumerateFileSystemEntries(target, "*", SearchOption.AllDirectories))
-        {
-            var resolved = Path.GetFullPath(entry);
-            if (!resolved.StartsWith(boundary, StringComparison.OrdinalIgnoreCase) || (File.GetAttributes(resolved) & FileAttributes.ReparsePoint) != 0)
-                throw new InvalidOperationException("Refusing to modify an end-to-end fixture with an out-of-root path or reparse point.");
-        }
     }
 
     private static async Task<List<T>> ToListAsync<T>(IAsyncEnumerable<T> source, CancellationToken cancellationToken)

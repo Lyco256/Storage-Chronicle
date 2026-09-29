@@ -29,6 +29,7 @@ internal sealed class FakeFileNative(Func<string, NativeFileMetadataRecord>? met
         : metadata;
     public List<string> OpenedPaths { get; } = [];
     public NativeFileMetadataRecord ReadMetadata(string path, string? parentPath = null) => metadata(path);
+    public SafeFileHandle OpenMetadata(string path, bool directory) { OpenedPaths.Add(path); return new SafeFileHandle(new IntPtr(1234), ownsHandle: false); }
     public SafeFileHandle OpenDirectory(string path) { OpenedPaths.Add(path); return new SafeFileHandle(new IntPtr(1234), ownsHandle: false); }
 }
 

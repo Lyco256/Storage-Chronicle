@@ -110,6 +110,7 @@ internal sealed class SegmentLog : IAsyncDisposable
 
         var candidates = ReadHealthySegments()
             .Where(static segment => !segment.Info.IsCompressed && segment.Info.Path.EndsWith(".open", StringComparison.OrdinalIgnoreCase))
+            .Where(static segment => segment.IsAppendable)
             .OrderByDescending(static segment => segment.Info.LastSequence)
             .ToArray();
         if (candidates.Length > 0)
@@ -151,7 +152,8 @@ internal sealed class SegmentLog : IAsyncDisposable
         }
 
         var raw = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
-        var parsed = ParseRaw(raw, path, allowTailTruncation: false);
+        var parsed = ParseRaw(raw);
+        if (parsed.HasIncompleteTail) throw new InvalidDataException("The active segment has an incomplete tail and will be preserved without modification.");
         var finalPath = path;
         var compressed = false;
         if (_options.CompressClosedSegments)
@@ -161,13 +163,14 @@ internal sealed class SegmentLog : IAsyncDisposable
             if (!raw.AsSpan().SequenceEqual(roundTrip)) throw new StorageFlushException($"Closed segment verification failed: {path}");
             finalPath = CompressedPath(_currentId);
             var temporaryPath = finalPath + ".tmp";
-            await File.WriteAllBytesAsync(temporaryPath, compressedBytes, cancellationToken).ConfigureAwait(false);
-            using (var temporary = new FileStream(temporaryPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None, 64 * 1024, FileOptions.SequentialScan))
+            await using (var temporary = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024, FileOptions.Asynchronous | FileOptions.WriteThrough))
             {
+                await temporary.WriteAsync(compressedBytes, cancellationToken).ConfigureAwait(false);
+                await temporary.FlushAsync(cancellationToken).ConfigureAwait(false);
                 temporary.Flush(flushToDisk: true);
             }
 
-            File.Move(temporaryPath, finalPath, overwrite: true);
+            File.Move(temporaryPath, finalPath);
             File.Delete(path);
             compressed = true;
         }
@@ -193,10 +196,12 @@ internal sealed class SegmentLog : IAsyncDisposable
                 var compressed = path.EndsWith(".zst", StringComparison.OrdinalIgnoreCase);
                 var bytes = File.ReadAllBytes(path);
                 var raw = compressed ? Decompress(bytes) : bytes;
-                var parsed = ParseRaw(raw, path, allowTailTruncation: !compressed);
+                var parsed = ParseRaw(raw);
+                if (compressed && parsed.HasIncompleteTail) throw new InvalidDataException("A compressed segment has an incomplete tail.");
                 var id = parsed.SegmentId;
                 var info = CreateInfo(id, path, compressed, parsed.Records);
-                result.Add(new ParsedSegment(info, parsed.Records));
+                if (parsed.HasIncompleteTail) SegmentSkipped?.Invoke(new SegmentIssue(path, "Incomplete tail retained unchanged; complete records before it remain readable, and this segment is not appendable."));
+                result.Add(new ParsedSegment(info, parsed.Records, !parsed.HasIncompleteTail));
             }
             catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or FormatException or ZstdException)
             {
@@ -221,7 +226,7 @@ internal sealed class SegmentLog : IAsyncDisposable
             reference = info.ManifestReference
         };
         var path = ManifestPath(info.SegmentId);
-        await using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read, 16 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 16 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
         await JsonSerializer.SerializeAsync(stream, manifest, cancellationToken: cancellationToken).ConfigureAwait(false);
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         stream.Flush(flushToDisk: true);
@@ -261,38 +266,30 @@ internal sealed class SegmentLog : IAsyncDisposable
         return frame;
     }
 
-    private static ParsedRawSegment ParseRaw(byte[] bytes, string path, bool allowTailTruncation)
+    private static ParsedRawSegment ParseRaw(byte[] bytes)
     {
-        if (bytes.Length < HeaderSize)
-        {
-            if (allowTailTruncation)
-            {
-                File.WriteAllBytes(path, BuildHeader(Guid.NewGuid(), DateTimeOffset.UtcNow.UtcTicks));
-                bytes = File.ReadAllBytes(path);
-            }
-            else throw new InvalidDataException("Segment header is incomplete.");
-        }
+        if (bytes.Length < HeaderSize) throw new InvalidDataException("Segment header is incomplete; the original bytes were retained.");
 
         if (!bytes.AsSpan(0, 4).SequenceEqual(Magic)) throw new InvalidDataException("Segment magic is invalid.");
         if (BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(4, 4)) != FormatVersion) throw new InvalidDataException("Segment format version is unsupported.");
         var id = new Guid(bytes.AsSpan(8, 16));
         var records = new List<SegmentRecord>();
         var offset = HeaderSize;
+        var hasIncompleteTail = false;
         while (offset < bytes.Length)
         {
             if (bytes.Length - offset < sizeof(int))
             {
-                if (!allowTailTruncation) throw new InvalidDataException("Segment has an incomplete record length.");
-                File.WriteAllBytes(path, bytes.AsSpan(0, offset).ToArray());
+                hasIncompleteTail = true;
                 break;
             }
 
             var frameLength = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset, sizeof(int)));
             if (frameLength < MinimumFrameSize || frameLength > bytes.Length - offset - sizeof(int))
             {
-                if (frameLength >= MinimumFrameSize && allowTailTruncation)
+                if (frameLength >= MinimumFrameSize && frameLength > bytes.Length - offset - sizeof(int))
                 {
-                    File.WriteAllBytes(path, bytes.AsSpan(0, offset).ToArray());
+                    hasIncompleteTail = true;
                     break;
                 }
 
@@ -314,7 +311,7 @@ internal sealed class SegmentLog : IAsyncDisposable
             offset += sizeof(int) + frameLength;
         }
 
-        return new ParsedRawSegment(id, records);
+        return new ParsedRawSegment(id, records, hasIncompleteTail);
     }
 
     private static byte[] Compress(byte[] bytes)
@@ -339,6 +336,6 @@ internal sealed class SegmentLog : IAsyncDisposable
         _gate.Dispose();
     }
 
-    private sealed record ParsedRawSegment(Guid SegmentId, IReadOnlyList<SegmentRecord> Records);
-    private sealed record ParsedSegment(SegmentInfo Info, IReadOnlyList<SegmentRecord> Records);
+    private sealed record ParsedRawSegment(Guid SegmentId, IReadOnlyList<SegmentRecord> Records, bool HasIncompleteTail);
+    private sealed record ParsedSegment(SegmentInfo Info, IReadOnlyList<SegmentRecord> Records, bool IsAppendable);
 }

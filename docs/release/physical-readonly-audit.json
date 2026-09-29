@@ -1,0 +1,203 @@
+{
+  "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
+  "targetCommit": "330a348",
+  "workingTreeChanges": [
+    "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
+    "src/StorageChronicle.Settings/SettingsValidation.cs",
+    "tests/StorageChronicle.Settings.Tests/SettingsTests.cs",
+    "docs/src/StorageChronicle.Settings/SettingsValidation.cs.md",
+    "src/StorageChronicle.Storage/AppendOnlyStorageEngine.cs",
+    "src/StorageChronicle.Storage/SegmentLog.cs",
+    "tests/StorageChronicle.Storage.Tests/StorageEngineTests.cs",
+    "docs/src/StorageChronicle.Storage/AppendOnlyStorageEngine.cs.md",
+    "docs/src/StorageChronicle.Storage/SegmentLog.cs.md",
+    "src/StorageChronicle.ExternalMedia/ExternalMediaContracts.cs",
+    "src/StorageChronicle.ExternalMedia/MediaImport.cs",
+    "src/StorageChronicle.Contracts/Ports.cs",
+    "src/StorageChronicle.Platform.Windows.FileSystem/Volumes/WindowsVolumeEnumerator.cs",
+    "src/StorageChronicle.ExternalMedia/ExternalMediaStore.cs",
+    "tests/StorageChronicle.ExternalMedia.Tests/ExternalMediaTests.cs",
+    "docs/src/StorageChronicle.ExternalMedia/ExternalMediaStore.cs.md",
+    "src/StorageChronicle.ExternalMedia/MediaRecovery.cs",
+    "src/StorageChronicle.Agent/ExternalMediaCollector.cs",
+    "src/StorageChronicle.Agent/MediaMirrorCoordinator.cs",
+    "tests/StorageChronicle.ExternalMedia.Tests/ExternalMediaTests.cs",
+    "tests/StorageChronicle.Agent.Tests/ExternalMediaCollectorTests.cs",
+    "tests/StorageChronicle.Agent.Tests/ConfirmedReconciliationRunnerTests.cs",
+    "docs/src/StorageChronicle.ExternalMedia/ExternalMediaContracts.cs.md",
+    "docs/src/StorageChronicle.ExternalMedia/MediaImport.cs.md",
+    "docs/src/StorageChronicle.Contracts/Ports.cs.md",
+    "docs/src/StorageChronicle.Platform.Windows.FileSystem/Volumes/WindowsVolumeEnumerator.cs.md",
+    "docs/src/StorageChronicle.ExternalMedia/ExternalMediaStore.cs.md",
+    "docs/src/StorageChronicle.ExternalMedia/MediaRecovery.cs.md",
+    "docs/src/StorageChronicle.Agent/ExternalMediaCollector.cs.md",
+    "docs/src/StorageChronicle.Agent/MediaMirrorCoordinator.cs.md",
+    "tests/StorageChronicle.Platform.Windows.FileSystem.Tests/VolumeAndMediaTests.cs",
+    "docs/release/main-readiness.md",
+    "docs/release/physical-readonly-audit.md",
+    "build/Test-Privileged.ps1",
+    "build/Test-WindowsPrivileged.ps1",
+    "tests/StorageChronicle.Installer.Tests/InstallerManifestTests.cs",
+    "tools/PhysicalAcceptance/Cleanup-RealMachineInstallerAcceptance.ps1",
+    "docs/build/quality/Test-Privileged.ps1.md",
+    "docs/build/Test-WindowsPrivileged.ps1.md",
+    "docs/tools/PhysicalAcceptance/Cleanup-RealMachineInstallerAcceptance.ps1.md",
+    "build/package/Test-Installer.ps1",
+    "tools/PhysicalAcceptance/Run-RealMachineInstallerAcceptance.ps1",
+    "tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1",
+    "tools/PhysicalAcceptance/Probe-WriteAccess.ps1",
+    "docs/build/package/Test-Installer.ps1.md",
+    "docs/tools/PhysicalAcceptance/Run-RealMachineInstallerAcceptance.ps1.md",
+    "docs/tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1.md",
+    "docs/tools/PhysicalAcceptance/Probe-WriteAccess.ps1.md",
+    "tests/StorageChronicle.Installer.Tests/InstallerManifestTests.cs",
+    "docs/release/physical-readonly-audit.json",
+    "docs/release/physical-readonly-audit.md",
+    "docs/release/main-readiness.md",
+    "Directory.Packages.props",
+    "src/StorageChronicle.Platform.Windows.FileSystem/Interop/WindowsNativeApi.cs",
+    "src/StorageChronicle.Platform.Windows.FileSystem/Interop/WindowsNativeContracts.cs",
+    "src/StorageChronicle.Platform.Windows.FileSystem/StorageChronicle.Platform.Windows.FileSystem.csproj",
+    "src/StorageChronicle.Platform.Windows.FileSystem/Volumes/WindowsVolumeRoleClassifier.cs",
+    "docs/src/StorageChronicle.Platform.Windows.FileSystem/Interop/WindowsNativeApi.cs.md",
+    "docs/src/StorageChronicle.Platform.Windows.FileSystem/Interop/WindowsNativeContracts.cs.md",
+    "docs/src/StorageChronicle.Platform.Windows.FileSystem/StorageChronicle.Platform.Windows.FileSystem.csproj.md",
+    "docs/src/StorageChronicle.Platform.Windows.FileSystem/Volumes/WindowsVolumeRoleClassifier.cs.md",
+    "tests/StorageChronicle.Platform.Windows.FileSystem.Tests/VolumeAndMediaTests.cs",
+    "tests/StorageChronicle.Agent.Tests/ExternalMediaCollectorTests.cs",
+    "src/StorageChronicle.Platform.Windows.FileSystem/Interop/WindowsVolumeDirectorySession.cs",
+    "docs/src/StorageChronicle.Platform.Windows.FileSystem/Interop/WindowsVolumeDirectorySession.cs.md",
+    "tests/StorageChronicle.Platform.Windows.FileSystem.Tests/VolumeAndMediaTests.cs"
+  ],
+  "overallStatus": "NOT_EXECUTED",
+  "decision": "DO_NOT_RUN",
+  "productStarted": false,
+  "privilegedRunnerStarted": false,
+  "installerStarted": false,
+  "hostPreflight": "NOT_EXECUTED",
+  "processWriteMonitoring": "NOT_EXECUTED",
+  "findings": [
+    {
+      "id": "privileged-vhdx-identity-and-cleanup",
+      "status": "PARTIAL",
+      "path": "build/Test-Privileged.ps1",
+      "lines": [416, 484, 508, 536, 699, 721],
+      "summary": "Creation requires a new GUID-named VHDX, explicit confirmation, a local fixed NTFS root with 40 GiB free, and no reparse ancestors. Before storage mutations, the exact attached image and its unique-ID disk lookup are re-resolved and matched to the same file-backed disk. System/Boot/pagefile/crash-dump roles are checked before state changes and initialization; RAW style and no-partition conditions are required. The unique partition and volume are rechecked immediately before formatting, and the resulting Volume GUID is recorded. After any create attempt the exact image is detached and verified; unverifiable detach fails acceptance. No automatic deletion occurs. DiskPart create/attach and filesystem TOCTOU/OS effects, direct API behavior on Windows 10 22H2, independent write monitoring, and ownership-verified destroy remain unverified."
+    },
+    {
+      "id": "evidence-under-repository",
+      "status": "PARTIAL",
+      "path": "build/Test-Privileged.ps1",
+      "lines": [32, 58, 63, 67, 71, 109],
+      "summary": "Runner now requires a new explicit local NTFS evidence root outside the repository and rejects UNC/OneDrive/Documents/existing roots. Parent reparse ancestry, approved-root consent, and independent runtime monitoring remain unverified."
+    },
+    {
+      "id": "installer-mutation-scope",
+      "status": "PARTIAL",
+      "path": "tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1",
+      "summary": "Physical/local-only execution now requires a separately reviewed hash-manifest fingerprint, safe unique bundle-relative hashes, exact selected MSI/driver correspondence to fingerprinted bundle payloads even on direct harness invocation, matching Workload/NTFS markers and volume identity, fixture roots outside system/application/repository/bundle/synchronized roots, canonical Program Files/ProgramData install/history paths, a clean product/service/install/ProgramData boundary, exact dedicated-PC/run confirmation, run-owned receipt and one-case nonce; evidence uses create-new. Residuals: complete source-to-sink and installed-state discovery across profiles, trusted release signing, race/TOCTOU proof, independent runtime write monitoring, and proof of physical hardware. Installer effects are inherently mutating. Runtime remains NOT_EXECUTED; DO_NOT_RUN."
+    },
+    {
+      "id": "cleanup-ownership-proof",
+      "status": "PARTIAL",
+      "path": "tools/PhysicalAcceptance/Cleanup-RealMachineInstallerAcceptance.ps1",
+      "lines": [11, 12],
+      "summary": "Product uninstall and VHDX removal are now rejected without performing changes. Exact run-ownership cleanup remains unimplemented."
+    },
+    {
+      "id": "usn-mft-read-only-handle-mask",
+      "status": "PASS",
+      "scope": "Static source review of NtfsApi.OpenVolume and query/read/enumerate call paths only",
+      "path": "src/StorageChronicle.Platform.Windows.Ntfs/NtfsApi.cs",
+      "lines": [133, 180],
+      "summary": "Uses GENERIC_READ and OPEN_EXISTING; no journal creation/resizing call was found in reviewed call paths. Does not prove device identity, other collectors, or runtime effects."
+    },
+    {
+      "id": "directory-metadata-read-only-handle-mask",
+      "status": "PASS",
+      "scope": "Static source review of reviewed WindowsNativeApi open/read paths only",
+      "path": "src/StorageChronicle.Platform.Windows.FileSystem/Interop/WindowsNativeApi.cs",
+      "lines": [120, 156, 272, 279],
+      "summary": "Uses existing directory-list/read-attributes handles. Does not prove absence of OS last-access effects or path-swap races."
+    },
+    {
+      "id": "configurable-history-path-ownership",
+      "status": "PASS",
+      "path": "src/StorageChronicle.Settings/SettingsValidation.cs",
+      "summary": "Working tree rejects UNC and lexical overlap with MonitoringPaths; storage engine also requires owned/new-empty root and rejects reparse/unknown entries before recovery. 17 Settings and 12 Storage tests passed. Mapped/network identity, runtime TOCTOU, and pre-marker history migration remain unverified."
+    },
+    {
+      "id": "external-media-volume-binding",
+      "status": "PARTIAL",
+      "path": "src/StorageChronicle.Agent/MediaMirrorCoordinator.cs",
+      "summary": "WindowsNativeApi queries MSFT_Partition read-only and the pure classifier fails closed for missing/ambiguous/unknown data; deterministic role cases are covered, but live WMI remains unverified. IsVolumeIdentityBound was removed. ExternalMediaStore, collector, import, and recovery require the volume-bound filesystem contract; Windows production I/O uses verified handles, create-only file creation, and session-issued no-replace publication. Existing unmarked roots and unknown root/writer entries fail closed. Focused fixture tests: Windows filesystem 21 passed; ExternalMedia 20 passed. Independent review confirms publication-stream reuse is closed and identified the disposal-registration race, now addressed by session-lock serialization but pending rebuild/retest. Plain JSON marker authenticity remains forgeable, and ancestor DELETE_CHILD resistance is unproven. Physical/runtime identity validation has not run."
+    },
+    {
+      "id": "external-media-temp-ownership",
+      "status": "PASS",
+      "path": "src/StorageChronicle.ExternalMedia/ExternalMediaStore.cs",
+      "summary": "Only GUID-named segment temps are considered recoverable; unknown and invalid/partial temps are retained and fail closed, while complete temps are finalized without overwrite. Root/writer markers gate writes and import reads. ExternalMedia tests passed 20/20; physical ownership attestation remains unverified."
+    },
+    {
+      "id": "history-relocation-and-segment-mutation-boundaries",
+      "status": "PASS",
+      "path": "src/StorageChronicle.Storage/AppendOnlyStorageEngine.cs",
+      "lines": [234, 292, 633, 638],
+      "summary": "Relocation now refuses existing destinations and establishes an owned staging root; recovery runs only after owned-root/entry validation. Targeted Storage tests pass. Mapped-volume identity and runtime TOCTOU remain unverified."
+    },
+    {
+      "id": "external-media-import-read-ownership",
+      "status": "PASS",
+      "path": "src/StorageChronicle.ExternalMedia/ExternalMediaStore.cs",
+      "lines": [34, 377, 403],
+      "summary": "Read-only importer stores validate root and writer ownership markers, reparse points, and recognized entries before reading; missing roots remain a read-only no-op. Regression test confirms an unmarked existing directory and its bytes remain unchanged. ExternalMedia tests: 19 passed."
+    },
+    {
+      "id": "local-open-segment-tail-preservation",
+      "status": "PASS",
+      "path": "src/StorageChronicle.Storage/SegmentLog.cs",
+      "summary": "Incomplete .open tails are no longer truncated. Complete prefix records remain readable; damaged segments are excluded from append, and new records use a new segment. Regression test verifies byte-for-byte preservation and new-segment creation. Storage tests passed 12/12."
+    },
+    {
+      "id": "media-import-ledger-overwrite-and-corruption",
+      "status": "PASS",
+      "path": "src/StorageChronicle.ExternalMedia/MediaImport.cs",
+      "summary": "Ledger reads/writes require a marked owned directory; unowned paths, reparse points, and unexpected entries fail closed. Corrupt bytes are retained and import stops; unique create-new temps are used and prior hash sets cannot be dropped. ExternalMedia tests verify byte preservation and unowned directory refusal. Cross-process concurrency and physical fault injection remain unverified."
+    },
+    {
+      "id": "media-mount-identity-at-write-time",
+      "status": "NOT_EXECUTED",
+      "path": "src/StorageChronicle.ExternalMedia/ExternalMediaStore.cs",
+      "lines": [62, 76],
+      "summary": "Role classification logic is implemented and deterministically tested, but the actual Windows WMI query has not run on a supported host. The caller-settable identity boolean and path-based store I/O have been removed; a handle-bound session is wired through Store, collection, recovery, and import. A verified product root is pinned and no-replace publication is tested on local fixtures. Independent review found forgeable marker authenticity and unproven resistance to ancestor DELETE_CHILD operations. Live volume-role evidence, physical runtime monitoring, and end-to-end physical media acceptance remain NOT_EXECUTED."
+    },
+    {
+      "id": "finalized-segment-overwrite-prevention",
+      "status": "PASS",
+      "path": "src/StorageChronicle.Storage/SegmentLog.cs",
+      "summary": "Compression temps and manifests use create-new; finalized compressed segments are published without overwrite. Targeted Storage tests pass; physical crash/fault injection remains NOT_EXECUTED."
+    },
+    {
+      "id": "reconciliation-hints-and-system-configuration-effects",
+      "status": "NOT_EXECUTED",
+      "path": "src/StorageChronicle.Platform.Windows.FileSystem/Snapshot/WindowsReconciliationInfrastructure.cs",
+      "lines": [235, 265],
+      "summary": "SetFileInformationByHandle applies I/O priority metadata to candidate handles; ETW trace and service recovery configuration have not been covered by runtime side-effect audit."
+    },
+    {
+      "id": "collector-read-only-callgraph",
+      "status": "NOT_EXECUTED",
+      "summary": "Full source-to-sink review of collector, P/Invoke, service, IPC and OS command paths is incomplete."
+    },
+    {
+      "id": "product-owned-write-boundaries",
+      "status": "NOT_EXECUTED",
+      "summary": "Canonical-path/reparse/volume isolation and all storage configuration call sites have not been proven."
+    },
+    {
+      "id": "runtime-write-audit",
+      "status": "NOT_EXECUTED",
+      "summary": "No independent process-attributed runtime write monitor or before/after inventory has run."
+    }
+  ]
+}

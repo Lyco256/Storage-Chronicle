@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RootNamespace>StorageChronicle.LiveCorrelationValidator</RootNamespace>
+    <AssemblyName>StorageChronicle.LiveCorrelationValidator</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\StorageChronicle.Storage\StorageChronicle.Storage.csproj" />
+    <ProjectReference Include="..\..\src\StorageChronicle.Domain\StorageChronicle.Domain.csproj" />
+  </ItemGroup>
+</Project>

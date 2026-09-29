@@ -27,7 +27,7 @@ public sealed class AgentPipeSettingsClientTests
             return IpcProtocol.Create("SettingsSnapshot", snapshot);
         });
 
-        IAgentSettingsGateway gateway = new AgentPipeProjectionClient(pipeName);
+        IAgentSettingsGateway gateway = new AgentPipeSettingsGateway(new AgentPipeProjectionClient(pipeName));
         var loadedMachine = await gateway.LoadMachineSettingsAsync();
         var requestSeen = await server;
 
@@ -53,7 +53,7 @@ public sealed class AgentPipeSettingsClientTests
             return IpcProtocol.Create("SettingsApplyResult", JsonSerializer.SerializeToElement(new SettingsApplyResult(true, true, true, null)));
         });
 
-        IAgentSettingsGateway gateway = new AgentPipeProjectionClient(pipeName);
+        IAgentSettingsGateway gateway = new AgentPipeSettingsGateway(new AgentPipeProjectionClient(pipeName));
         var result = await gateway.ApplyMachineSettingsAsync(proposed);
         var requestSeen = await server;
 
@@ -120,6 +120,11 @@ public sealed class AgentPipeSettingsClientTests
         await using var server = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
         await server.WaitForConnectionAsync();
         var codec = new LengthPrefixedJsonCodec();
+        var hello = await ReadEnvelopeAsync(server, codec);
+        Assert.Equal("ClientHello", hello.MessageType);
+        var identity = IpcProtocol.Read<IpcClientHello>(hello);
+        Assert.Equal(IpcClientRole.DesktopUi, identity.Role);
+        Assert.Equal(System.Diagnostics.Process.GetCurrentProcess().SessionId, identity.SessionId);
         var request = await ReadEnvelopeAsync(server, codec);
         var response = respond(request);
         var frame = codec.Encode(response, IpcProtocol.Major, IpcProtocol.Minor);

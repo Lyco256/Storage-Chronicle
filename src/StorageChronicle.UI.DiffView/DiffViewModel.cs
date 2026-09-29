@@ -234,4 +234,22 @@ public sealed class DiffViewModel : IFeatureView
 }
 
 /// <summary>All Explorer presentation modes required by the product.</summary>
-public enum ExplorerViewMode { ExtraLargeIcons, LargeIcons, MediumIcons, SmallIcons, List, Details, Tiles, Content }
+public enum ExplorerViewMode
+{
+    /// <summary>Displays items using extra-large icons.</summary>
+    ExtraLargeIcons,
+    /// <summary>Displays items using large icons.</summary>
+    LargeIcons,
+    /// <summary>Displays items using medium icons.</summary>
+    MediumIcons,
+    /// <summary>Displays items using small icons.</summary>
+    SmallIcons,
+    /// <summary>Displays items in a compact list.</summary>
+    List,
+    /// <summary>Displays items in a details table.</summary>
+    Details,
+    /// <summary>Displays items as tiles.</summary>
+    Tiles,
+    /// <summary>Displays items using the content layout.</summary>
+    Content,
+}

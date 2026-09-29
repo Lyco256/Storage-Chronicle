@@ -57,8 +57,9 @@ public sealed class EventNormalizer : IEventNormalizer
             "clipboardGeneration", "clipboardIntent", "clipboardEffect", "sourcePathAvailable",
             "destinationPathAvailable", "copySourceFileId", "copyCorrelationQuality",
             "cutCorrelationQuality", "cutCorrelationRejected", "copyScope", "explorerOperation",
-            "correlationQuality", "reconciliationReason", "mountReason", "volumeChange",
+            "correlationQuality", "reconciliationReason", "reconciliationRunId", "reconciliationStatus", "reconciliationRequestId", "reconciliationDecision", "userDeclined", "uncertainFromUtc", "uncertainToUtc", "metadataQuality", "scanSequence", "mountReason", "volumeChange",
             "sourceRoute", "destinationRoute", "isRootChange", "path", "oldPath", "process.name", "process.executable", "process.parentInstanceId",
+            "fileSystem",
             "media.logicalMediaId", "media.quality", "media.branch", "media.segment", "media.importedFromPc", "media.removed", "media.recovery");
 
     private readonly object gate = new();
@@ -166,6 +167,11 @@ public sealed class EventNormalizer : IEventNormalizer
 
     private static CanonicalOperation DetermineOperation(SourceEvent source)
     {
+        if (source.Hint == CanonicalOperation.UnverifiedGap || source.Quality == EventQuality.UnverifiedGap)
+        {
+            return CanonicalOperation.UnverifiedGap;
+        }
+
         if (source.Origin is EventOrigin.MftReconciliation or EventOrigin.DirectoryReconciliation)
         {
             return CanonicalOperation.ReconciliationDiscovered;

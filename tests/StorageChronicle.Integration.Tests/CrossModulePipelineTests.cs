@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text.Json;
 using StorageChronicle.Application;
 using StorageChronicle.Contracts;
 using StorageChronicle.Domain.Contracts;
@@ -14,9 +15,12 @@ public sealed class CrossModulePipelineTests
     public async Task CollectorToAppendLogAndStateIsRecoverable()
     {
         var runId = Guid.NewGuid().ToString("N");
-        var directory = Path.Combine(Path.GetTempPath(), "StorageChronicle.Integration", runId);
+        var fixtureRoot = Path.Combine(Path.GetTempPath(), "StorageChronicle.Integration", runId);
+        Directory.CreateDirectory(fixtureRoot);
+        using (var marker = new FileStream(Path.Combine(fixtureRoot, ".test-owner.json"), FileMode.CreateNew, FileAccess.Write, FileShare.Read))
+            JsonSerializer.Serialize(marker, new { Schema = "StorageChronicle.TestFixtureOwner.v1", RunId = runId });
+        var directory = Path.Combine(fixtureRoot, "history");
         Directory.CreateDirectory(directory);
-        await File.WriteAllTextAsync(Path.Combine(directory, ".test-owner"), runId, TestContext.Current.CancellationToken);
         try
         {
             await using var store = new AppendOnlyStorageEngine(new StorageEngineOptions(directory) { FlushInterval = TimeSpan.FromMinutes(1) });
@@ -28,25 +32,17 @@ public sealed class CrossModulePipelineTests
         }
         finally
         {
-            CleanupFixture(directory);
+            if (Directory.Exists(fixtureRoot))
+            {
+                using var marker = JsonDocument.Parse(File.ReadAllText(Path.Combine(fixtureRoot, ".test-owner.json")));
+                Assert.Equal("StorageChronicle.TestFixtureOwner.v1", marker.RootElement.GetProperty("Schema").GetString());
+                Assert.Equal(runId, marker.RootElement.GetProperty("RunId").GetString());
+                Assert.Equal(runId, Path.GetFileName(fixtureRoot));
+                Assert.Equal(Path.Combine(Path.GetTempPath(), "StorageChronicle.Integration"), Path.GetDirectoryName(fixtureRoot));
+                EnsureNoReparsePoints(fixtureRoot);
+                Directory.Delete(fixtureRoot, recursive: true);
+            }
         }
-    }
-
-    private static void CleanupFixture(string directory)
-    {
-        if (!Directory.Exists(directory)) return;
-        var owner = Path.Combine(directory, ".test-owner");
-        if (!string.Equals(Path.GetDirectoryName(Path.GetFullPath(directory)), Path.GetFullPath(Path.Combine(Path.GetTempPath(), "StorageChronicle.Integration")), StringComparison.OrdinalIgnoreCase) ||
-            !Guid.TryParseExact(Path.GetFileName(directory), "N", out _) || !File.Exists(owner) || !string.Equals(File.ReadAllText(owner), Path.GetFileName(directory), StringComparison.Ordinal))
-            throw new InvalidOperationException("Refusing to clean an integration fixture without its run owner marker.");
-        var boundary = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        foreach (var entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.AllDirectories))
-        {
-            var resolved = Path.GetFullPath(entry);
-            if (!resolved.StartsWith(boundary, StringComparison.OrdinalIgnoreCase) || (File.GetAttributes(resolved) & FileAttributes.ReparsePoint) != 0)
-                throw new InvalidOperationException("Refusing to clean an integration fixture with an out-of-root path or reparse point.");
-        }
-        Directory.Delete(directory, recursive: true);
     }
 
     private static SourceEvent CreateSource()
@@ -73,5 +69,14 @@ public sealed class CrossModulePipelineTests
         var result = new List<T>();
         await foreach (var value in values) result.Add(value);
         return result;
+    }
+
+    private static void EnsureNoReparsePoints(string directory)
+    {
+        foreach (var entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
+        {
+            if ((File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0) throw new IOException($"A reparse point was found in the owned integration fixture: {entry}");
+            if (Directory.Exists(entry)) EnsureNoReparsePoints(entry);
+        }
     }
 }

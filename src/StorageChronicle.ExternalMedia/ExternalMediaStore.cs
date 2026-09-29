@@ -3,35 +3,71 @@ using System.Collections.Immutable;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using StorageChronicle.Contracts;
 using StorageChronicle.Domain.Contracts;
 
 namespace StorageChronicle.ExternalMedia;
 
 /// <summary>Writes, validates, and reads immutable media-related event segments.</summary>
-public sealed class ExternalMediaStore
+public sealed class ExternalMediaStore : IDisposable
 {
     private const string DirectoryName = ".StorageChronicle";
-    private const string OwnershipFileName = "owner.json";
-    private const string ProductOwnershipId = "StorageChronicle.ExternalMedia";
+    private const string OwnershipMarkerName = ".storage-chronicle-owner.json";
+    private const string WriterMarkerName = ".writer-owner.json";
+    private const string OwnershipSchema = "StorageChronicle.MediaOwnership.v1";
     private const int MaxRecordBytes = 64 * 1024 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true, WriteIndented = false };
     private readonly string mediaRoot;
     private readonly string root;
     private readonly string writerId;
     private readonly IMediaClock clock;
+    private readonly IVolumeBoundMediaFileSystem fileSystem;
+    private readonly bool ownsFileSystem;
 
-    /// <summary>Initializes a store for one media root and writer PC.</summary>
-    public ExternalMediaStore(string mediaRoot, string writerId, IMediaClock? clock = null, bool createIfMissing = true)
+    /// <summary>Initializes a store over an already opened, identity-verified media filesystem session.</summary>
+    /// <param name="mediaRoot">Current mount point, used for UI and monitoring-exclusion reporting only.</param>
+    /// <param name="writerId">Writer PC identifier.</param>
+    /// <param name="expectedVolumeId">Identity required for all file operations in the supplied session.</param>
+    /// <param name="fileSystem">Pinned volume filesystem session; path-based fallbacks are not accepted.</param>
+    /// <param name="clock">Optional clock for deterministic manifest timestamps.</param>
+    /// <param name="createIfMissing">Whether a missing, exclusively created owned layout should be initialized.</param>
+    public ExternalMediaStore(string mediaRoot, string writerId, VolumeId expectedVolumeId, IVolumeBoundMediaFileSystem fileSystem, IMediaClock? clock = null, bool createIfMissing = true)
+        : this(mediaRoot, writerId, expectedVolumeId, fileSystem, clock, createIfMissing, ownsFileSystem: true)
+    {
+    }
+
+    private ExternalMediaStore(string mediaRoot, string writerId, VolumeId expectedVolumeId, IVolumeBoundMediaFileSystem fileSystem, IMediaClock? clock, bool createIfMissing, bool ownsFileSystem)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(mediaRoot);
         ArgumentException.ThrowIfNullOrWhiteSpace(writerId);
+        ArgumentNullException.ThrowIfNull(fileSystem);
+        if (fileSystem.VolumeId != expectedVolumeId)
+        {
+            if (ownsFileSystem) fileSystem.Dispose();
+            throw new IOException("The media filesystem session is bound to a different volume identity.");
+        }
         this.mediaRoot = Path.GetFullPath(mediaRoot);
-        if (createIfMissing && !Directory.Exists(this.mediaRoot)) throw new DirectoryNotFoundException("The configured media root does not exist; it was not created.");
-        EnsureNoReparsePoints(this.mediaRoot);
         this.writerId = ValidateComponent(writerId, nameof(writerId));
         this.clock = clock ?? new SystemMediaClock();
+        this.fileSystem = fileSystem;
+        this.ownsFileSystem = ownsFileSystem;
         root = Path.Combine(this.mediaRoot, DirectoryName);
-        if (createIfMissing) EnsureOwnedWriterDirectory();
+        try
+        {
+            if (createIfMissing) EnsureOwnedLayout();
+            else ValidateExistingOwnedLayout();
+        }
+        catch
+        {
+            if (ownsFileSystem) fileSystem.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>Disposes the bound filesystem session owned by this store.</summary>
+    public void Dispose()
+    {
+        if (ownsFileSystem) fileSystem.Dispose();
     }
 
     /// <summary>Absolute media root supplied to the store.</summary>
@@ -43,8 +79,21 @@ public sealed class ExternalMediaStore
     /// <summary>Writer PC identifier.</summary>
     public string WriterPcId => writerId;
 
-    /// <summary>Initializes this writer's directory only beneath an existing, verified media root.</summary>
-    public void InitializeForWriting() => EnsureOwnedWriterDirectory();
+    internal IReadOnlyList<ExternalMediaStore> OpenWriterStores()
+    {
+        var writersRoot = Path.Combine(DirectoryName, "writers");
+        if (!fileSystem.DirectoryExists(writersRoot)) return Array.Empty<ExternalMediaStore>();
+        var stores = new List<ExternalMediaStore>();
+        foreach (var entry in fileSystem.EnumerateEntries(writersRoot))
+        {
+            if ((entry.Attributes & FileAttributes.ReparsePoint) != 0) throw new IOException($"A media writer entry is a reparse point: {entry.Name}");
+            if ((entry.Attributes & FileAttributes.Directory) == 0) throw new IOException($"An unexpected file exists in the media writers directory: {entry.Name}");
+            var writer = ValidateComponent(entry.Name, nameof(entry.Name));
+            stores.Add(new ExternalMediaStore(mediaRoot, writer, fileSystem.VolumeId, fileSystem, clock, createIfMissing: false, ownsFileSystem: false));
+        }
+
+        return stores;
+    }
 
     /// <summary>Returns the dedicated log directory and registers it for monitoring exclusion.</summary>
     public string RegisterMonitoringExclusion(IMediaMonitoringExclusionRegistrar registrar)
@@ -57,75 +106,57 @@ public sealed class ExternalMediaStore
     public static MediaMirrorConfiguration ValidateMirrorConfiguration(MediaMirrorConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
-        if (configuration.Enabled && !configuration.IsAllowed) throw new InvalidOperationException("System, boot, recovery, and EFI volumes cannot contain a media mirror.");
+        if (configuration.Enabled && !configuration.IsAllowed) throw new InvalidOperationException("A media mirror requires complete protected-volume role classification, a write-time volume identity binding, and a non-protected target volume.");
         if (configuration.Enabled) ArgumentException.ThrowIfNullOrWhiteSpace(configuration.MediaRoot);
         return configuration with { MediaRoot = configuration.Enabled ? Path.GetFullPath(configuration.MediaRoot) : configuration.MediaRoot };
     }
 
-    /// <summary>Requires a mirror path to resolve beneath a mount point reported for the current volume.</summary>
-    public static void ValidateMediaRootOnVolume(string mediaRoot, IReadOnlyList<string>? mountPoints)
+    /// <summary>Requires an opted-in mirror root to exactly match a mount point of the connected volume.</summary>
+    public static string ValidateMediaRoot(string mediaRoot, IReadOnlyList<string> mountPoints)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(mediaRoot);
-        if (mountPoints is null || mountPoints.Count == 0) throw new IOException("The current media volume has no authoritative mount points; mirror access was denied.");
-        var fullRoot = Path.GetFullPath(mediaRoot);
-        if (!Path.IsPathFullyQualified(fullRoot) || IsNetworkUncPath(fullRoot)) throw new IOException("Only fully qualified local media paths are accepted for a verified media volume.");
-        foreach (var mountPoint in mountPoints)
+        ArgumentNullException.ThrowIfNull(mountPoints);
+        if (mediaRoot.StartsWith("\\\\", StringComparison.Ordinal) || mediaRoot.StartsWith("//", StringComparison.Ordinal)) throw new InvalidOperationException("External-media history cannot be written to a network or UNC path.");
+        if (mountPoints.Count == 0) throw new InvalidOperationException("The connected media has no verified mount point; refusing to use its mirror configuration.");
+        var fullRoot = NormalizePath(mediaRoot);
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (!mountPoints.Any(point => string.Equals(NormalizePath(point), fullRoot, comparison)))
         {
-            if (string.IsNullOrWhiteSpace(mountPoint) || !Path.IsPathFullyQualified(mountPoint) || IsNetworkUncPath(mountPoint)) continue;
-            var fullMountPoint = Path.GetFullPath(mountPoint);
-            var volumeBoundary = fullMountPoint.EndsWith(Path.DirectorySeparatorChar) || fullMountPoint.EndsWith(Path.AltDirectorySeparatorChar)
-                ? fullMountPoint
-                : fullMountPoint + Path.DirectorySeparatorChar;
-            if (string.Equals(fullRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), fullMountPoint.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase) ||
-                fullRoot.StartsWith(volumeBoundary, StringComparison.OrdinalIgnoreCase)) return;
+            throw new InvalidOperationException("The configured media mirror root must exactly match a current mount point of the connected media.");
         }
-        throw new IOException("The configured media history path is not beneath a mount point of the currently connected volume; no media path was changed.");
-    }
 
-    private static bool IsNetworkUncPath(string path) => path.StartsWith("\\\\", StringComparison.Ordinal) &&
-        !path.StartsWith("\\\\?\\Volume{", StringComparison.OrdinalIgnoreCase) &&
-        !path.StartsWith("\\\\.\\Volume{", StringComparison.OrdinalIgnoreCase);
+        return fullRoot;
+    }
 
     /// <summary>Appends canonical events to a temporary segment and atomically finalizes it.</summary>
     public async ValueTask<MediaSegment> AppendSegmentAsync(IReadOnlyList<CanonicalEvent> events, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(events);
         if (events.Count == 0) throw new ArgumentException("A media segment must contain at least one event.", nameof(events));
-        EnsureOwnedWriterDirectory();
+        fileSystem.EnsureDirectory(WriterRelativeDirectory);
         var id = Guid.NewGuid().ToString("N");
-        var temporary = Path.Combine(WriterDirectory, id + ".tmp");
-        var final = Path.Combine(WriterDirectory, id + ".seg");
-        var temporaryCreated = false;
-        try
+        var temporary = RelativeWriterPath(id + ".tmp");
+        var final = RelativeWriterPath(id + ".seg");
+        await using (var stream = fileSystem.CreateNew(temporary))
         {
-            await using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024, FileOptions.WriteThrough | FileOptions.Asynchronous))
+            foreach (var value in events)
             {
-                temporaryCreated = true;
-                foreach (var value in events)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var payload = JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions);
-                    if (payload.Length > MaxRecordBytes) throw new InvalidDataException("A media record exceeds the bounded segment record size.");
-                    var length = new byte[sizeof(int)];
-                    BinaryPrimitives.WriteInt32LittleEndian(length, payload.Length);
-                    await stream.WriteAsync(length, cancellationToken).ConfigureAwait(false);
-                    await stream.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
-                    await stream.WriteAsync(MediaCrc32C.Compute(payload), cancellationToken).ConfigureAwait(false);
-                }
-
-                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                var payload = JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions);
+                if (payload.Length > MaxRecordBytes) throw new InvalidDataException("A media record exceeds the bounded segment record size.");
+                var length = new byte[sizeof(int)];
+                BinaryPrimitives.WriteInt32LittleEndian(length, payload.Length);
+                await stream.WriteAsync(length, cancellationToken).ConfigureAwait(false);
+                await stream.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
+                await stream.WriteAsync(MediaCrc32C.Compute(payload), cancellationToken).ConfigureAwait(false);
             }
 
-            File.Move(temporary, final);
-            var sha = await ComputeSha256Async(final, cancellationToken).ConfigureAwait(false);
-            var lengthOnDisk = new FileInfo(final).Length;
-            return new MediaSegment(Path.GetFileName(final), sha, events.Count, writerId, lengthOnDisk);
+            await FlushDurablyAsync(stream, cancellationToken).ConfigureAwait(false);
+            fileSystem.MoveCreatedFile(stream, final);
         }
-        catch
-        {
-            if (temporaryCreated) TryDelete(temporary);
-            throw;
-        }
+        await using var finalized = fileSystem.OpenRead(final);
+        var sha = await ComputeSha256Async(finalized, cancellationToken).ConfigureAwait(false);
+        return new MediaSegment(id + ".seg", sha, events.Count, writerId, finalized.Length);
     }
 
     /// <summary>Reads and verifies one finalized segment, including record CRC32C and segment SHA-256.</summary>
@@ -133,15 +164,15 @@ public sealed class ExternalMediaStore
     {
         ArgumentNullException.ThrowIfNull(segment);
         EnsureSafeFileName(segment.FileName, ".seg");
-        var path = Path.Combine(WriterDirectory, segment.FileName);
-        EnsureNoReparsePoints(path);
-        if (!File.Exists(path)) throw new FileNotFoundException("The referenced media segment is missing.", path);
+        var path = RelativeWriterPath(segment.FileName);
+        if (!fileSystem.FileExists(path)) throw new FileNotFoundException("The referenced media segment is missing.", segment.FileName);
         if (string.IsNullOrWhiteSpace(segment.Sha256) || segment.Sha256.Length != 64 || !segment.Sha256.All(Uri.IsHexDigit)) throw new InvalidDataException("The media segment SHA-256 is malformed.");
-        var actualSha = await ComputeSha256Async(path, cancellationToken).ConfigureAwait(false);
-        if (!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(actualSha), Convert.FromHexString(segment.Sha256))) throw new InvalidDataException("The media segment SHA-256 does not match its manifest.");
-
         var events = new List<CanonicalEvent>(segment.RecordCount);
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await using var stream = fileSystem.OpenRead(path);
+        var actualSha = await ComputeSha256Async(stream, cancellationToken).ConfigureAwait(false);
+        if (!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(actualSha), Convert.FromHexString(segment.Sha256))) throw new InvalidDataException("The media segment SHA-256 does not match its manifest.");
+        if (!stream.CanSeek) throw new IOException("The bound media stream is not seekable and cannot be verified consistently.");
+        stream.Position = 0;
         var lengthBuffer = new byte[sizeof(int)];
         while (true)
         {
@@ -168,7 +199,6 @@ public sealed class ExternalMediaStore
     {
         ValidateLogicalIdentity(logicalMediaId, mountSessionId);
         ArgumentNullException.ThrowIfNull(segments);
-        EnsureOwnedWriterDirectory();
         foreach (var segment in segments)
         {
             EnsureSafeFileName(segment.FileName, ".seg");
@@ -178,19 +208,15 @@ public sealed class ExternalMediaStore
         var manifest = new MediaManifest(MediaFormatVersions.Format, MediaFormatVersions.Schema, logicalMediaId, writerId, mountSessionId, parentManifestSha256, segments.ToArray(), clock.UtcNow, null, MediaFormatVersions.Projection);
         var sealedManifest = manifest with { Sha256 = ComputeManifestSha256(manifest) };
         var slot = await SelectWriteSlotAsync(cancellationToken).ConfigureAwait(false);
-        var temporary = Path.Combine(WriterDirectory, $"manifest-{slot}-{Guid.NewGuid():N}.tmp");
-        var final = Path.Combine(WriterDirectory, $"manifest-{slot}.json");
+        var generation = Guid.NewGuid().ToString("N");
+        var temporary = RelativeWriterPath($"manifest-{slot}-{generation}.tmp");
+        var final = RelativeWriterPath($"manifest-{slot}-{generation}.json");
         var bytes = JsonSerializer.SerializeToUtf8Bytes(sealedManifest, JsonOptions);
-        await using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough | FileOptions.Asynchronous))
+        await using (var stream = fileSystem.CreateNew(temporary))
         {
             await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
-            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-        }
-        try { File.Move(temporary, final, true); }
-        catch
-        {
-            TryDelete(temporary);
-            throw;
+            await FlushDurablyAsync(stream, cancellationToken).ConfigureAwait(false);
+            fileSystem.MoveCreatedFile(stream, final);
         }
         return sealedManifest;
     }
@@ -205,16 +231,16 @@ public sealed class ExternalMediaStore
     /// <summary>Reads every valid manifest from this writer's A/B slots, newest first.</summary>
     public async ValueTask<IReadOnlyList<MediaManifest>> ReadManifestCandidatesAsync(CancellationToken cancellationToken = default)
     {
-        if (!Directory.Exists(root)) return Array.Empty<MediaManifest>();
+        if (!fileSystem.DirectoryExists(WriterRelativeDirectory)) return Array.Empty<MediaManifest>();
         var values = new List<MediaManifest>();
-        foreach (var slot in new[] { "A", "B" })
+        foreach (var entry in fileSystem.EnumerateEntries(WriterRelativeDirectory))
         {
-            var path = Path.Combine(WriterDirectory, $"manifest-{slot}.json");
-            EnsureNoReparsePoints(path);
-            if (!File.Exists(path)) continue;
+            if ((entry.Attributes & FileAttributes.Directory) != 0 || (entry.Attributes & FileAttributes.ReparsePoint) != 0 || !TryGetManifestSlot(entry.Name, out _)) continue;
+            var path = RelativeWriterPath(entry.Name);
             try
             {
-                var manifest = JsonSerializer.Deserialize<MediaManifest>(await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false), JsonOptions);
+                await using var stream = fileSystem.OpenRead(path);
+                var manifest = JsonSerializer.Deserialize<MediaManifest>(stream, JsonOptions);
                 if (manifest is not null)
                 {
                     var validation = ValidateManifest(manifest);
@@ -269,110 +295,57 @@ public sealed class ExternalMediaStore
     /// <summary>Recovers the single temporary segment left by one interrupted write.</summary>
     public async ValueTask<InterruptedSegmentRecovery?> RecoverInterruptedWriteAsync(CancellationToken cancellationToken = default)
     {
-        if (!Directory.Exists(WriterDirectory)) return null;
-        EnsureOwnedWriterDirectory();
-        var temporaryFiles = Directory.EnumerateFiles(WriterDirectory, "*.tmp", SearchOption.TopDirectoryOnly)
-            .Where(path => Guid.TryParseExact(Path.GetFileNameWithoutExtension(path), "N", out _)).ToArray();
+        if (!fileSystem.DirectoryExists(WriterRelativeDirectory)) return null;
+        var temporaryFiles = fileSystem.EnumerateEntries(WriterRelativeDirectory)
+            .Where(entry => (entry.Attributes & FileAttributes.Directory) == 0 && entry.Name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
+            .Select(entry => entry.Name)
+            .Where(name => !IsManifestGenerationFile(name))
+            .ToArray();
         if (temporaryFiles.Length == 0) return null;
         if (temporaryFiles.Length > 1) throw new InvalidDataException("More than one unfinalized media segment was found; recovery is ambiguous.");
-        var temporary = temporaryFiles[0];
-        var fileName = Path.GetFileName(temporary);
-        try
+        var fileName = temporaryFiles[0];
+        if (!Guid.TryParseExact(Path.GetFileNameWithoutExtension(fileName), "N", out _) || !string.Equals(Path.GetExtension(fileName), ".tmp", StringComparison.OrdinalIgnoreCase))
         {
-            EnsureNoReparsePoints(temporary);
-            var bytes = await File.ReadAllBytesAsync(temporary, cancellationToken).ConfigureAwait(false);
-            var valid = TryValidateSegmentBytes(bytes, out var recordCount);
-            if (!valid)
-            {
-                TryDelete(temporary);
-                return new InterruptedSegmentRecovery(fileName, false, true, "The incomplete segment was discarded after CRC/record-boundary validation failed.");
-            }
+            throw new InvalidDataException("An unrecognized temporary file exists in the owned writer directory; it was retained without modification.");
+        }
 
-            var final = Path.Combine(WriterDirectory, Path.GetFileNameWithoutExtension(fileName) + ".seg");
-            File.Move(temporary, final);
-            return new InterruptedSegmentRecovery(fileName, true, false, $"The complete temporary segment was finalized with {recordCount} records.");
-        }
-        catch (EndOfStreamException)
+        var temporary = RelativeWriterPath(fileName);
+        await using var input = fileSystem.OpenTemporaryForRecovery(temporary);
+        byte[] bytes;
+        using (var buffer = new MemoryStream())
         {
-            TryDelete(temporary);
-            return new InterruptedSegmentRecovery(fileName, false, true, "The incomplete segment was discarded.");
+            await input.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
+            bytes = buffer.ToArray();
         }
+        var valid = TryValidateSegmentBytes(bytes, out var recordCount);
+        if (!valid)
+        {
+            throw new InvalidDataException("The incomplete media segment was retained unchanged because CRC/record-boundary validation failed.");
+        }
+
+        var final = RelativeWriterPath(Path.GetFileNameWithoutExtension(fileName) + ".seg");
+        fileSystem.MoveCreatedFile(input, final);
+        return new InterruptedSegmentRecovery(fileName, true, false, $"The complete temporary segment was finalized with {recordCount} records.");
     }
 
     private async ValueTask<string> SelectWriteSlotAsync(CancellationToken cancellationToken)
     {
-        var current = await ReadManifestSlotAsync(cancellationToken).ConfigureAwait(false);
-        return current is null ? "A" : "B";
-    }
-
-    private void EnsureOwnedWriterDirectory()
-    {
-        if (!Directory.Exists(mediaRoot)) throw new DirectoryNotFoundException("The configured media root does not exist; it was not created.");
-        EnsureNoReparsePoints(mediaRoot);
-        if (Directory.Exists(root))
+        var valid = new List<(string Slot, MediaManifest Manifest)>();
+        foreach (var entry in fileSystem.EnumerateEntries(WriterRelativeDirectory))
         {
-            EnsureNoReparsePoints(root);
-            ValidateOwnershipMarker();
-            EnsureNoReparsePoints(WriterDirectory);
-            if (Directory.Exists(WriterDirectory)) return;
-            Directory.CreateDirectory(WriterDirectory);
-            return;
-        }
-
-        if (File.Exists(root)) throw new IOException("The media history path is an existing file and will not be changed.");
-        EnsureNoReparsePoints(root);
-        var staging = Path.Combine(mediaRoot, ".StorageChronicle-init-" + Guid.NewGuid().ToString("N"));
-        try
-        {
-            Directory.CreateDirectory(Path.Combine(staging, "writers", writerId));
-            var marker = JsonSerializer.SerializeToUtf8Bytes(new OwnershipDocument(ProductOwnershipId, 1), JsonOptions);
-            using (var stream = new FileStream(Path.Combine(staging, OwnershipFileName), FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            if (!TryGetManifestSlot(entry.Name, out var slot)) continue;
+            cancellationToken.ThrowIfCancellationRequested();
+            try
             {
-                stream.Write(marker);
-                stream.Flush(true);
+                await using var stream = fileSystem.OpenRead(RelativeWriterPath(entry.Name));
+                var manifest = JsonSerializer.Deserialize<MediaManifest>(stream, JsonOptions);
+                if (manifest is not null && ValidateManifest(manifest).IsValid) valid.Add((slot, manifest));
             }
-            Directory.Move(staging, root);
+            catch (Exception exception) when (exception is IOException or JsonException or InvalidDataException or FormatException) { }
         }
-        catch
-        {
-            // The staging directory name is generated for this operation and is never reused.
-            TryDeleteOwnedTree(staging);
-            if (!Directory.Exists(root)) throw;
-            ValidateOwnershipMarker();
-            if (!Directory.Exists(WriterDirectory)) Directory.CreateDirectory(WriterDirectory);
-        }
-    }
 
-    private void ValidateOwnershipMarker()
-    {
-        var markerPath = Path.Combine(root, OwnershipFileName);
-        EnsureNoReparsePoints(markerPath);
-        if (!File.Exists(markerPath)) throw new IOException("The existing media history directory has no Storage Chronicle ownership marker; it was left untouched.");
-        try
-        {
-            var marker = JsonSerializer.Deserialize<OwnershipDocument>(File.ReadAllBytes(markerPath), JsonOptions);
-            if (marker is null || marker.ProductId != ProductOwnershipId || marker.Version != 1)
-                throw new IOException("The existing media history directory has an unrecognized ownership marker; it was left untouched.");
-        }
-        catch (JsonException exception)
-        {
-            throw new IOException("The existing media history ownership marker is corrupt; the directory was left untouched.", exception);
-        }
-    }
-
-    private sealed record OwnershipDocument(string ProductId, int Version);
-
-    private static void EnsureNoReparsePoints(string path)
-    {
-        var current = new DirectoryInfo(Path.GetFullPath(path));
-        while (current is not null)
-        {
-            if (current.Exists && (File.GetAttributes(current.FullName) & FileAttributes.ReparsePoint) != 0)
-                throw new IOException($"A reparse point was found in the media history path and the path was left untouched: {current.FullName}");
-            current = current.Parent;
-        }
-        if (File.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
-            throw new IOException($"A reparse point was found in the media history file and the path was left untouched: {path}");
+        var newest = valid.OrderByDescending(value => value.Manifest.CreatedUtc).ThenByDescending(value => value.Manifest.Sha256, StringComparer.Ordinal).FirstOrDefault();
+        return newest.Manifest is null || newest.Slot == "B" ? "A" : "B";
     }
 
     private static string ComputeManifestSha256(MediaManifest manifest)
@@ -381,10 +354,15 @@ public sealed class ExternalMediaStore
         return Convert.ToHexString(SHA256.HashData(bytes));
     }
 
-    private static async ValueTask<string> ComputeSha256Async(string path, CancellationToken cancellationToken)
+    private static async ValueTask<string> ComputeSha256Async(Stream stream, CancellationToken cancellationToken)
     {
-        await using var stream = File.OpenRead(path);
         return Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false));
+    }
+
+    private static async ValueTask FlushDurablyAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        if (stream is FileStream fileStream) fileStream.Flush(flushToDisk: true);
     }
 
     private static async ValueTask<int> ReadAtMostAsync(Stream stream, Memory<byte> buffer, CancellationToken cancellationToken)
@@ -441,13 +419,129 @@ public sealed class ExternalMediaStore
         if (string.IsNullOrWhiteSpace(fileName) || fileName != Path.GetFileName(fileName) || !fileName.EndsWith(extension, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("A media file path is not a safe finalized segment name.");
     }
 
-    private void EnsureSafeFileName(string fileName, string extension)
+    private static void EnsureSafeFileName(string fileName, string extension) => EnsureSafeFileNameStatic(fileName, extension);
+
+    private string RootRelativePath => DirectoryName;
+    private string WriterRelativeDirectory => Path.Combine(DirectoryName, "writers", writerId);
+    private string RelativeWriterPath(string name) => Path.Combine(WriterRelativeDirectory, name);
+
+    private void EnsureOwnedLayout()
     {
-        EnsureSafeFileNameStatic(fileName, extension);
-        EnsureNoReparsePoints(Path.Combine(WriterDirectory, fileName));
+        EnsureOwnedDirectory(RootRelativePath, OwnershipMarkerName, writerId: null);
+        fileSystem.EnsureDirectory(Path.Combine(DirectoryName, "writers"));
+        EnsureOwnedDirectory(WriterRelativeDirectory, WriterMarkerName, writerId);
     }
-    private static void TryDelete(string path) { try { if (File.Exists(path)) File.Delete(path); } catch (IOException) { } }
-    private static void TryDeleteOwnedTree(string path) { try { if (Directory.Exists(path)) Directory.Delete(path, true); } catch (IOException) { } }
+
+    private void ValidateExistingOwnedLayout()
+    {
+        if (!fileSystem.DirectoryExists(RootRelativePath)) return;
+        ValidateExistingOwnedDirectory(RootRelativePath, OwnershipMarkerName, writerId: null);
+        var writersRoot = Path.Combine(DirectoryName, "writers");
+        if (fileSystem.DirectoryExists(writersRoot)) ValidateWriterDirectories(writersRoot);
+        if (fileSystem.DirectoryExists(WriterRelativeDirectory)) ValidateExistingOwnedDirectory(WriterRelativeDirectory, WriterMarkerName, writerId);
+    }
+
+    private void EnsureOwnedDirectory(string path, string markerName, string? writerId)
+    {
+        if (!fileSystem.TryCreateDirectory(path))
+        {
+            ValidateExistingOwnedDirectory(path, markerName, writerId);
+            return;
+        }
+
+        var newMarkerPath = Path.Combine(path, markerName);
+        var payload = JsonSerializer.SerializeToUtf8Bytes(new MediaOwnershipMarker(OwnershipSchema, writerId), JsonOptions);
+        using var output = fileSystem.CreateNew(newMarkerPath);
+        output.Write(payload);
+        if (output is FileStream fileStream) fileStream.Flush(flushToDisk: true);
+        output.Dispose();
+        ValidateExistingOwnedDirectory(path, markerName, writerId);
+    }
+
+    private void ValidateExistingOwnedDirectory(string path, string markerName, string? writerId)
+    {
+        var markerPath = Path.Combine(path, markerName);
+        if (!fileSystem.FileExists(markerPath)) throw new IOException($"The existing media directory is not marked as Storage Chronicle-owned: {path}");
+        using var input = fileSystem.OpenRead(markerPath);
+        var existing = JsonSerializer.Deserialize<MediaOwnershipMarker>(input, JsonOptions);
+        if (existing is null || existing.Schema != OwnershipSchema || !string.Equals(existing.WriterId, writerId, StringComparison.Ordinal))
+        {
+            throw new IOException($"The media ownership marker is invalid or belongs to another writer: {markerPath}");
+        }
+
+        if (writerId is not null) ValidateWriterEntries(path, markerName);
+        else ValidateOwnedRootEntries(path, markerName);
+    }
+
+    private void ValidateOwnedRootEntries(string path, string markerName)
+    {
+        foreach (var entry in fileSystem.EnumerateEntries(path))
+        {
+            if ((entry.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new IOException($"A media root entry is a reparse point: {entry.Name}");
+            if (entry.Name.Equals(markerName, StringComparison.OrdinalIgnoreCase) || entry.Name.Equals("recovery-marker.json", StringComparison.OrdinalIgnoreCase))
+            {
+                if ((entry.Attributes & FileAttributes.Directory) != 0) throw new IOException("The media ownership marker must be a regular file.");
+                continue;
+            }
+            if (entry.Name.Equals("writers", StringComparison.OrdinalIgnoreCase) && (entry.Attributes & FileAttributes.Directory) != 0) continue;
+            throw new IOException($"An unrecognized entry exists in the media root and will not be modified: {entry.Name}");
+        }
+    }
+
+    private void ValidateWriterDirectories(string writersRoot)
+    {
+        foreach (var entry in fileSystem.EnumerateEntries(writersRoot))
+        {
+            if ((entry.Attributes & FileAttributes.ReparsePoint) != 0 || (entry.Attributes & FileAttributes.Directory) == 0)
+                throw new IOException($"An unexpected non-directory or reparse entry exists in the media writers directory: {entry.Name}");
+            ValidateComponent(entry.Name, nameof(entry.Name));
+        }
+    }
+
+    private static string NormalizePath(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+
+    private void ValidateWriterEntries(string directory, string markerName)
+    {
+        foreach (var entry in fileSystem.EnumerateEntries(directory))
+        {
+            var name = entry.Name;
+            if ((entry.Attributes & FileAttributes.ReparsePoint) != 0) throw new IOException($"A media writer entry is a reparse point: {name}");
+            var isSegment = IsGuidFileName(name, ".seg") || IsGuidFileName(name, ".tmp");
+            var isManifest = IsManifestGenerationFile(name);
+            if (!name.Equals(markerName, StringComparison.OrdinalIgnoreCase) && !isSegment && !isManifest)
+            {
+                throw new IOException($"An unrecognized entry exists in the media writer directory and will not be modified: {name}");
+            }
+
+            if ((entry.Attributes & FileAttributes.Directory) != 0) throw new IOException($"Unexpected directory exists in the media writer directory: {name}");
+        }
+    }
+
+    private static bool IsGuidFileName(string name, string extension) => name.EndsWith(extension, StringComparison.OrdinalIgnoreCase) && Guid.TryParseExact(name.AsSpan(0, name.Length - extension.Length), "N", out _);
+    private static bool IsManifestGenerationFile(string name) => TryGetManifestSlot(name, out _);
+
+    private static bool TryGetManifestSlot(string name, out string slot)
+    {
+        slot = string.Empty;
+        foreach (var legacySlot in new[] { "A", "B" })
+        {
+            if (name.Equals($"manifest-{legacySlot}.json", StringComparison.OrdinalIgnoreCase))
+            {
+                slot = legacySlot;
+                return true;
+            }
+        }
+
+        var parts = name.Split('-', StringSplitOptions.None);
+        if (parts.Length != 3 || !parts[0].Equals("manifest", StringComparison.OrdinalIgnoreCase) || parts[1] is not ("A" or "B")) return false;
+        var generation = Path.GetFileNameWithoutExtension(parts[2]);
+        var extension = Path.GetExtension(name);
+        if (extension is not (".json" or ".tmp") || !Guid.TryParseExact(generation, "N", out _)) return false;
+        slot = parts[1];
+        return true;
+    }
+    private sealed record MediaOwnershipMarker(string Schema, string? WriterId);
 }
 
 /// <summary>Result of validating one media manifest.</summary>

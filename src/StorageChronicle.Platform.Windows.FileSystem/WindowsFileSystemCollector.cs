@@ -75,7 +75,7 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
 
             if (!volume.IsDirectoryReadable)
             {
-                await output.WriteAsync(WindowsSourceEventFactory.Gap(volume.Id, "Volume cannot be enumerated as a directory", 0), cancellationToken).ConfigureAwait(false);
+                await output.WriteAsync(WindowsSourceEventFactory.Gap(volume.Id, "Volume cannot be enumerated as a directory", 0, volume.FileSystem), cancellationToken).ConfigureAwait(false);
                 return;
             }
 
@@ -105,12 +105,12 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
             var buffered = pending.Complete();
             while (initialGaps.TryDequeue(out var initialGap))
             {
-                await output.WriteAsync(WindowsSourceEventFactory.Gap(volume.Id, initialGap.Reason, sequence++), volumeToken).ConfigureAwait(false);
+                await output.WriteAsync(WindowsSourceEventFactory.Gap(volume.Id, initialGap.Reason, sequence++, volume.FileSystem), volumeToken).ConfigureAwait(false);
             }
 
             if (pending.IsOverflowed)
             {
-                await output.WriteAsync(WindowsSourceEventFactory.Gap(volume.Id, "Initial scan notification buffer exceeded its bound", sequence++), volumeToken).ConfigureAwait(false);
+                await output.WriteAsync(WindowsSourceEventFactory.Gap(volume.Id, "Initial scan notification buffer exceeded its bound", sequence++, volume.FileSystem), volumeToken).ConfigureAwait(false);
             }
 
             foreach (var notification in buffered)
@@ -125,7 +125,7 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
             {
                 if (read.Gap is not null)
                 {
-                    await output.WriteAsync(WindowsSourceEventFactory.Gap(volume.Id, read.Gap.Reason, sequence++), volumeToken).ConfigureAwait(false);
+                    await output.WriteAsync(WindowsSourceEventFactory.Gap(volume.Id, read.Gap.Reason, sequence++, volume.FileSystem), volumeToken).ConfigureAwait(false);
                 }
 
                 foreach (var notification in read.Notifications)
@@ -152,15 +152,15 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
         }
         catch (UnauthorizedAccessException)
         {
-            await output.WriteAsync(WindowsSourceEventFactory.Gap(volume.Id, "Access denied while collecting volume", 0), CancellationToken.None).ConfigureAwait(false);
+            await output.WriteAsync(WindowsSourceEventFactory.Gap(volume.Id, "Access denied while collecting volume", 0, volume.FileSystem), CancellationToken.None).ConfigureAwait(false);
         }
         catch (IOException)
         {
-            await output.WriteAsync(WindowsSourceEventFactory.Gap(volume.Id, "Volume was removed or became unavailable", 0), CancellationToken.None).ConfigureAwait(false);
+            await output.WriteAsync(WindowsSourceEventFactory.Gap(volume.Id, "Volume was removed or became unavailable", 0, volume.FileSystem), CancellationToken.None).ConfigureAwait(false);
         }
         catch (Win32Exception)
         {
-            await output.WriteAsync(WindowsSourceEventFactory.Gap(volume.Id, "Windows API denied or lost the volume", 0), CancellationToken.None).ConfigureAwait(false);
+            await output.WriteAsync(WindowsSourceEventFactory.Gap(volume.Id, "Windows API denied or lost the volume", 0, volume.FileSystem), CancellationToken.None).ConfigureAwait(false);
         }
         finally
         {

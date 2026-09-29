@@ -6,6 +6,7 @@ using StorageChronicle.Normalization;
 using StorageChronicle.Platform.Windows.FileSystem;
 using StorageChronicle.Platform.Windows.FileSystem.Policy;
 using StorageChronicle.Platform.Windows.FileSystem.Volumes;
+using StorageChronicle.Platform.Windows.FileSystem.Snapshot;
 using StorageChronicle.Platform.Windows.Ntfs;
 using StorageChronicle.Projection;
 using StorageChronicle.Settings;
@@ -17,20 +18,25 @@ namespace StorageChronicle.Agent;
 /// <summary>Builds the LocalSystem-compatible Windows Service host.</summary>
 public static class Program
 {
-    /// <summary>Starts the LocalSystem service with durable storage and the Windows filesystem collector.</summary>
-    public static Task Main(string[] args)
+    /// <summary>Starts the service/collector host or handles the MSI-only recovery configuration verb.</summary>
+    public static async Task<int> Main(string[] args)
     {
-        _ = WindowsServiceRecoveryConfigurator.TryConfigure();
+        if (args.Length > 0 && string.Equals(args[0], "--configure-service-recovery", StringComparison.OrdinalIgnoreCase))
+            return args.Length == 1 && WindowsServiceRecoveryConfigurator.TryConfigureInstalledService() ? 0 : 1;
+        var diagnosticMode = args.Any(value => string.Equals(value, "--diagnostic", StringComparison.OrdinalIgnoreCase));
+        var testLabMode = args.Any(value => string.Equals(value, "--testlab", StringComparison.OrdinalIgnoreCase));
+        if (diagnosticMode && testLabMode) throw new ArgumentException("--diagnostic and --testlab are mutually exclusive.");
         var builder = Host.CreateApplicationBuilder(args);
-        builder.Services.AddWindowsService(options => options.ServiceName = "Storage Chronicle Agent");
+        if (!diagnosticMode && !testLabMode) builder.Services.AddWindowsService(options => options.ServiceName = "Storage Chronicle Agent");
         var productRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Storage Chronicle");
         var defaultHistoryRoot = Path.Combine(productRoot, "history");
         var machineSettingsStore = new MachineSettingsStore();
         var initialMachineSettings = machineSettingsStore.Load().Settings;
         var storageDirectory = string.IsNullOrWhiteSpace(initialMachineSettings.LogStoragePath) ? defaultHistoryRoot : Path.GetFullPath(initialMachineSettings.LogStoragePath);
-        var flushSeconds = Math.Clamp(initialMachineSettings.FlushIntervalSeconds, 1, 3600);
+        var flushSeconds = Math.Clamp(initialMachineSettings.FlushIntervalSeconds, 1, 60);
         builder.Services.AddSingleton(new AppendOnlyStorageEngine(new StorageEngineOptions(storageDirectory) { FlushInterval = TimeSpan.FromSeconds(flushSeconds) }));
         builder.Services.AddSingleton<AgentHealthState>();
+        builder.Services.AddSingleton<ReconciliationLiveEventBuffer>();
         builder.Services.AddSingleton<IEventStore>(services => services.GetRequiredService<AppendOnlyStorageEngine>());
         builder.Services.AddSingleton<IStateStore>(services => services.GetRequiredService<AppendOnlyStorageEngine>());
         builder.Services.AddSingleton<IEventNormalizer, EventNormalizer>();
@@ -44,6 +50,7 @@ public static class Program
         builder.Services.AddSingleton<AgentSettingsService>();
         builder.Services.AddSingleton<IAgentSettingsGateway>(services => services.GetRequiredService<AgentSettingsService>());
         builder.Services.AddSingleton<IVolumeEnumerator, WindowsVolumeEnumerator>();
+        builder.Services.AddSingleton<IVolumeBoundMediaFileSystemFactory, WindowsVolumeDirectorySessionFactory>();
         builder.Services.AddSingleton<INtfsApi, WindowsNtfsApi>();
         builder.Services.AddSingleton(new WindowsExclusionPolicy(new WindowsFileSystemOptions
         {
@@ -54,13 +61,25 @@ public static class Program
         builder.Services.AddSingleton<IMediaMonitoringExclusionRegistrar, WindowsMediaExclusionRegistrar>();
         builder.Services.AddSingleton<ExternalMediaMirrorCoordinator>(services => new ExternalMediaMirrorCoordinator(
             services.GetRequiredService<ISettingsStore<MachineSettings>>(), Environment.MachineName,
-            services.GetRequiredService<IMediaMonitoringExclusionRegistrar>()));
+            services.GetRequiredService<IMediaMonitoringExclusionRegistrar>(),
+            services.GetRequiredService<IVolumeBoundMediaFileSystemFactory>()));
         builder.Services.AddSingleton<IMediaMirrorSessionCoordinator>(services => services.GetRequiredService<ExternalMediaMirrorCoordinator>());
         builder.Services.AddSingleton<ICanonicalEventSink>(services => services.GetRequiredService<ExternalMediaMirrorCoordinator>());
         builder.Services.AddSingleton<IExternalMediaChangeSource, WindowsExternalMediaChangeSource>();
+        builder.Services.AddSingleton<WindowsVolumeSnapshotReader>(services => new WindowsVolumeSnapshotReader(
+            services.GetRequiredService<WindowsExclusionPolicy>(),
+            new WindowsFileSystemOptions
+            {
+                StorageChronicleDataRoot = productRoot,
+                UserExcludedRoots = initialMachineSettings.ExcludedPaths,
+                MonitoredRoots = initialMachineSettings.MonitoringPaths
+            }));
+        builder.Services.AddSingleton<WindowsFileMetadataReader>();
+        builder.Services.AddSingleton<IConfirmedReconciliationRunner, ConfirmedReconciliationRunner>();
         builder.Services.AddSingleton<ISourceEventCollector>(services => new WindowsFileSystemCollector(
             services.GetRequiredService<IVolumeEnumerator>(),
             exclusionPolicy: services.GetRequiredService<WindowsExclusionPolicy>(),
+            snapshotReader: services.GetRequiredService<WindowsVolumeSnapshotReader>(),
             options: new WindowsFileSystemOptions
             {
                 StorageChronicleDataRoot = productRoot,
@@ -70,7 +89,8 @@ public static class Program
         builder.Services.AddSingleton<ISourceEventCollector>(services => new WindowsNtfsVolumeCollector(
             services.GetRequiredService<IVolumeEnumerator>(),
             services.GetRequiredService<INtfsApi>(),
-            exclusionPolicy: services.GetRequiredService<WindowsExclusionPolicy>()));
+            exclusionPolicy: services.GetRequiredService<WindowsExclusionPolicy>(),
+            initialSnapshotReader: services.GetRequiredService<WindowsVolumeSnapshotReader>()));
         builder.Services.AddSingleton<ISourceEventCollector, WindowsEtwFileIoCollector>();
         builder.Services.AddSingleton<ISourceEventCollector, WindowsShareCollector>();
         builder.Services.AddSingleton<ISourceEventCollector>(services => new WindowsExternalMediaCollector(
@@ -78,10 +98,12 @@ public static class Program
             services.GetRequiredService<IVolumeEnumerator>(),
             services.GetRequiredService<ISettingsStore<MachineSettings>>(),
             Environment.MachineName,
-            mirrorCoordinator: services.GetRequiredService<IMediaMirrorSessionCoordinator>()));
+            mirrorCoordinator: services.GetRequiredService<IMediaMirrorSessionCoordinator>(),
+            fileSystemFactory: services.GetRequiredService<IVolumeBoundMediaFileSystemFactory>()));
         builder.Services.AddSingleton<IProjectionService, AgentProjectionService>();
         builder.Services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService>(services => services.GetRequiredService<AgentWorker>());
         builder.Services.AddHostedService<NamedPipeAgentServer>();
-        return builder.Build().RunAsync();
+        await builder.Build().RunAsync();
+        return 0;
     }
 }

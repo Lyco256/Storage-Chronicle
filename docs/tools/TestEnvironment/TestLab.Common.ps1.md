@@ -1,0 +1,7 @@
+# TestLab.Common.ps1
+
+This helper is the compatibility entry point for the VirtualBox TestLab safety boundary. `VirtualBox.Common.ps1` loads the user-approved ignored `TestLab.local.psd1`, discovers and invokes `VBoxManage.exe`, validates the dedicated NTFS root and official local ISO paths, restricts VM names to `SC-Test-W11-VBox` and `SC-Test-W10-VBox`, enforces the 4 GiB/2-vCPU/offline safety profile, and owns Guest Additions/`guestcontrol` transfer helpers.
+
+It never enables Windows features, reboots, changes firmware, downloads an ISO, touches a host physical volume, or deletes an unvalidated path. Either ISO may remain unset until its corresponding target is selected; callers validate only the selected guest ISO. Mutating callers must pass their own explicit apply/confirmation switch and must keep every VM disk under the approved TestLab root. OS disks are dynamic VDI files; destructive acceptance data remains a guest-internal VHDX created by `build/Test-Privileged.ps1` through DiskPart and Windows Storage cmdlets. Artifact output is restricted to `artifacts/acceptance/testlab/<run>`.
+
+Relevant requirements: 21, 22, 25, 26, 28, 29, 31, and 32–36. The callers are `Initialize-TestLab.ps1`, `Reset-TestVm.ps1`, `New-TestDataVhdx.ps1`, `Remove-TestDataVhdx.ps1`, `Invoke-TestLabCommand.ps1`, the copy helpers, `Run-VirtualBoxInstallerAcceptance.ps1`, and `Invoke-WindowsTestLab.ps1`.

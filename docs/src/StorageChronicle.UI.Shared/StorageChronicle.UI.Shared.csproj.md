@@ -2,28 +2,40 @@
 
 ## Role
 
-Defines platform-neutral contracts and shared Agent IPC client code used by the desktop feature views.
+This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle.
 
 ## Public types and responsibilities
 
-The project compiles `IFeatureView`, `IUserSettingsClient`, bounded page contracts, semantic icon contracts, and the named-pipe projection/settings client.
+Public types preserve source facts and the explicitly owned responsibility; UI interpretation and correlation remain outside this boundary.
 
-## Invariants
+## Inputs and outputs
 
-UI consumers use the Agent boundary for settings and projections; they do not access history or settings files directly.
+Inputs and outputs are the declared contracts of the source file. File contents and file-content hashes are never an input or output.
 
 ## Dependencies
 
-References Domain, Contracts, Settings, Avalonia, and CommunityToolkit.Mvvm. It does not reference Storage or Windows collector projects.
+Dependencies are limited to the referenced project contracts and platform services shown by the source file.
+
+## Invariants
+
+The source keeps canonical facts distinguishable from reconstructed state and does not synthesize descendant events.
+
+## Threading and lifetime
+
+Callers own cancellation and lifetime; asynchronous work must not outlive the owning pipeline or UI scope.
 
 ## Failure behavior
 
-IPC and deserialization failures are returned to the async UI caller; no synthetic projection or settings snapshot is substituted.
+Failure, corruption, cancellation, and recovery remain observable and are not converted into a false successful observation.
 
-## Relevant tests
+## Tests
 
-Covered by the UI headless and Agent IPC contract tests.
+Validated by tests/StorageChronicle.Integration.Tests and the affected integration tests.
 
 ## OS constraints
 
-UI contracts are platform-neutral; the concrete named-pipe transport is Windows-specific at runtime.
+Platform-neutral behavior remains portable; Windows-only APIs are isolated in the Windows platform projects.
+
+## Change-sensitive contracts
+
+Public names, serialized fields, persistence boundaries, and the mirrored path are compatibility-sensitive contracts.

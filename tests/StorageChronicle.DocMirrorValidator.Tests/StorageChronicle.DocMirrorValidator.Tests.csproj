@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>StorageChronicle.DocMirrorValidator.Tests</RootNamespace>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\tools\StorageChronicle.DocMirrorValidator\StorageChronicle.DocMirrorValidator.csproj" />
+    <PackageReference Include="xunit.v3.mtp-v2" Version="3.2.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
+    <PackageReference Include="Microsoft.Testing.Platform" Version="2.3.0" />
+    <PackageReference Include="Microsoft.Testing.Platform.MSBuild" Version="2.3.0" />
+    <PackageReference Include="Microsoft.Testing.Extensions.Telemetry" Version="2.3.0" />
+    <PackageReference Include="Microsoft.Testing.Extensions.TrxReport.Abstractions" Version="2.3.0" />
+  </ItemGroup>
+</Project>
