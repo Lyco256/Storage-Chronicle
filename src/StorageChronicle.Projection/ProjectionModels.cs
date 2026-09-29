@@ -173,7 +173,8 @@ public sealed record ActivityGroupProjection(
     bool IsClosedByCompetingActivity,
     ActivityMetrics Metrics,
     IReadOnlyList<EventStackFileSummary> Files,
-    IReadOnlyList<CanonicalEvent> Events);
+    IReadOnlyList<CanonicalEvent> Events,
+    DateTimeOffset? CloseBoundaryUtc = null);
 
 /// <summary>Semantic primary operation used by a file-system diff row.</summary>
 public enum DiffPrimaryOperation

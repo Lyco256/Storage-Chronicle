@@ -37,3 +37,11 @@ Projectionは入力イベントとSource Eventを変更せず、ファイル内�
 - Regexは将来のIProjectionFilterMatcher差し込み契約だけを用意し、MVPのリテラルmatcherでは未対応例外にする。
 - パスは記録済みpath/parent関係から再構成し、Projection層からファイルシステムへ問い合わせない。
 - solution全体の他担当プロジェクトに存在する未解決ビルド問題はこの担当範囲外であり、Projection project単体の警告ゼロ検証には影響しない。
+
+## トップCodex統合補正（Diff View Activity Frames）
+
+- ActivityGrouperを複数active Activity対応へ変更し、同一Processの独立routeを同時保持し、interleavedイベントがtimeout内なら既存route groupへ復帰できるようにした。
+- 異なる既知Processが同一/祖先/子孫routeへ変更した場合だけ先行frameを閉じる。Unknown attribution同士のsource/volume/mount不一致は競合Processと推測しない。
+- `ActivityGroupProjection.CloseBoundaryUtc`を追加。競合境界は競合イベント時刻、timeout境界は最終イベント+timeout。まだactiveなGroupはnull。
+- 追加テスト: 独立route同時保持、timeout境界、UnknownとExact actorの非混合。Projection suite 17/17 pass、build 0 warnings/errors。
+- この追加はDiff View要件16.3向けで、canonical events/state/durable historyは変更しない。ファイル内容・内容hash・OS filesystemは参照しない。
