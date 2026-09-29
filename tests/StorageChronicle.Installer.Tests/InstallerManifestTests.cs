@@ -163,41 +163,31 @@ public sealed class InstallerManifestTests
     }
 
     [Fact]
-    public void FinalAcceptanceRequiresPhysicalAndVirtualBoxPrerequisites()
+    public void RetiredTestLabAndAgentModeFailClosedBeforeSideEffects()
     {
         var root = FindRoot();
-        var finalGate = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-FinalAcceptance.ps1"));
-        var resource = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-ResourceBudgetAcceptance.ps1"));
-        var mft = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-FullBenchmarkMatrix.ps1"));
-        var windows10Finalizer = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Finalize-Windows10PhysicalAcceptance.ps1"));
         var agent = File.ReadAllText(Path.Combine(root, "src", "StorageChronicle.Agent", "Program.cs"));
         var testLab = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Invoke-WindowsTestLab.ps1"));
 
-        Assert.Contains("Windows11VirtualBoxInstallerManifest", finalGate, StringComparison.Ordinal);
-        Assert.Contains("Assert-Windows11VirtualBoxInstallerPrerequisite", finalGate, StringComparison.Ordinal);
-        Assert.Contains("AgentIntegration-Windows11", finalGate, StringComparison.Ordinal);
-        Assert.Contains("IsPhysicalMachine", finalGate, StringComparison.Ordinal);
-        Assert.Contains("Configuration -ne 'Release'", finalGate, StringComparison.Ordinal);
-        Assert.Contains("SC_TEST_MFT_VOLUME", finalGate, StringComparison.Ordinal);
-        Assert.Contains("Windows 11 x64 physical release machine", resource, StringComparison.Ordinal);
-        Assert.Contains("STORAGE_CHRONICLE_MFT_VOLUME_LABEL", mft, StringComparison.Ordinal);
-        Assert.Contains("Get-RequiredInstallerCaseIds", windows10Finalizer, StringComparison.Ordinal);
-        Assert.Contains("Status -ne 'PASSED'", windows10Finalizer, StringComparison.Ordinal);
-        Assert.Contains("--testlab", agent, StringComparison.Ordinal);
-        Assert.Contains("--testlab", testLab, StringComparison.Ordinal);
-        Assert.Contains("ExecutionMode = 'TestLab'", testLab, StringComparison.Ordinal);
-        Assert.Contains("Diagnostic = $false", testLab, StringComparison.Ordinal);
-        Assert.Contains("not an eligible non-diagnostic TestLab execution", finalGate, StringComparison.Ordinal);
+        Assert.Contains("--testlab is retired", agent, StringComparison.Ordinal);
+        Assert.Contains("return 2;", agent, StringComparison.Ordinal);
+        Assert.Contains("This VM/guest TestLab runner is retired", testLab, StringComparison.Ordinal);
+        Assert.Contains("exit 2", testLab, StringComparison.Ordinal);
+        Assert.Contains("[Console]::Error.WriteLine", testLab, StringComparison.Ordinal);
+        Assert.True(testLab.IndexOf("exit 2", StringComparison.Ordinal) < testLab.IndexOf("TestLab.Common.ps1", StringComparison.Ordinal));
+        Assert.True(testLab.IndexOf("exit 2", StringComparison.Ordinal) < testLab.IndexOf("Invoke-GuestCommand", StringComparison.Ordinal));
     }
 
     [Fact]
-    public void FinalAcceptanceCorrelationRequiresLiveTestLabRowsAndArtifacts()
+    public void FinalAcceptanceCorrelationRequiresLivePhysicalRowsAndArtifacts()
     {
         var root = FindRoot();
         var finalGate = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-FinalAcceptance.ps1"));
         var wrapper = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-CorrelationMetrics.ps1"));
 
-        Assert.Contains("SC-Test-W11-VBox", finalGate, StringComparison.Ordinal);
+        Assert.Contains("TargetKind -ne 'PhysicalMachine'", finalGate, StringComparison.Ordinal);
+        Assert.Contains("ExecutionMode -ne 'Local'", finalGate, StringComparison.Ordinal);
+        Assert.Contains("AgentHostMode -ne 'Service'", finalGate, StringComparison.Ordinal);
         Assert.Contains("AgentHistoryPath", finalGate, StringComparison.Ordinal);
         Assert.Contains("WorkloadExecutablePath", finalGate, StringComparison.Ordinal);
         Assert.Contains("FalseAttributionCount", finalGate, StringComparison.Ordinal);
@@ -209,6 +199,24 @@ public sealed class InstallerManifestTests
         Assert.Contains("FileStateCorrectness", wrapper, StringComparison.Ordinal);
         Assert.Contains("SourceEventCount", finalGate, StringComparison.Ordinal);
         Assert.Contains("FailureReasons", finalGate, StringComparison.Ordinal);
+        Assert.DoesNotContain("VirtualBoxInstallerAcceptance", finalGate, StringComparison.Ordinal);
+        Assert.DoesNotContain("WindowsTestLabExecution", finalGate, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FinalAcceptanceRequiresCurrentPhysicalSafetyAuditAndRejectsVmEvidence()
+    {
+        var root = FindRoot();
+        var finalGate = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-FinalAcceptance.ps1"));
+
+        Assert.Contains("PhysicalReadOnlyAuditManifest", finalGate, StringComparison.Ordinal);
+        Assert.Contains("Name = 'PhysicalSafety'", finalGate, StringComparison.Ordinal);
+        Assert.Contains("rev-parse HEAD", finalGate, StringComparison.Ordinal);
+        Assert.Contains("status --porcelain", finalGate, StringComparison.Ordinal);
+        Assert.Contains("independentWriteMonitoring", finalGate, StringComparison.Ordinal);
+        Assert.Contains("overallStatus -ne 'PASS'", finalGate, StringComparison.Ordinal);
+        Assert.DoesNotContain("Windows11VirtualBoxInstallerManifest", finalGate, StringComparison.Ordinal);
+        Assert.DoesNotContain("TestLabAndRealIo", finalGate, StringComparison.Ordinal);
     }
 
     [Fact]

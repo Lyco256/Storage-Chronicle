@@ -24,11 +24,14 @@ public static class Program
     {
         if (args.Length > 0 && string.Equals(args[0], "--configure-service-recovery", StringComparison.OrdinalIgnoreCase))
             return args.Length == 1 && WindowsServiceRecoveryConfigurator.TryConfigureInstalledService() ? 0 : 1;
+        if (args.Any(value => string.Equals(value, "--testlab", StringComparison.OrdinalIgnoreCase)))
+        {
+            Console.Error.WriteLine("--testlab is retired. Physical acceptance requires the audited physical-only workflow; no Agent components were started.");
+            return 2;
+        }
         var diagnosticMode = args.Any(value => string.Equals(value, "--diagnostic", StringComparison.OrdinalIgnoreCase));
-        var testLabMode = args.Any(value => string.Equals(value, "--testlab", StringComparison.OrdinalIgnoreCase));
-        if (diagnosticMode && testLabMode) throw new ArgumentException("--diagnostic and --testlab are mutually exclusive.");
         var builder = Host.CreateApplicationBuilder(args);
-        if (!diagnosticMode && !testLabMode) builder.Services.AddWindowsService(options => options.ServiceName = "Storage Chronicle Agent");
+        if (!diagnosticMode) builder.Services.AddWindowsService(options => options.ServiceName = "Storage Chronicle Agent");
         var productRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Storage Chronicle");
         var defaultHistoryRoot = Path.Combine(productRoot, "history");
         var machineSettingsStore = new MachineSettingsStore();

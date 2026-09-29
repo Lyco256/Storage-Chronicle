@@ -1,13 +1,12 @@
 [CmdletBinding()]
 param(
-    [string]$TestLabManifest,
+    [string]$PhysicalReadOnlyAuditManifest,
     [string]$ReconciliationManifest,
     [string]$PrivilegedManifest,
     [string]$Windows10Manifest,
     [string]$ResourceEvidence,
     [string]$BenchmarkManifest,
     [string]$InstallerManifest,
-    [string]$Windows11VirtualBoxInstallerManifest,
     [string]$CorrelationManifest,
     [string]$BranchManifest,
     [string]$OutputPath
@@ -52,57 +51,25 @@ function Assert-InstallerCaseRows {
     }
 }
 
-function Assert-Windows11VirtualBoxInstallerPrerequisite {
-    param([Parameter(Mandatory = $true)][string]$Path)
-
-    $wrapper = Read-ReferencedJson -Path $Path -Label 'Windows 11 VirtualBox installer acceptance manifest'
-    if ([string]$wrapper.Schema -ne 'StorageChronicle.VirtualBoxInstallerAcceptance.v1' -or
-        [string]$wrapper.Target -ne 'Windows11' -or
-        [string]$wrapper.TargetOs -ne 'Windows11' -or
-        [string]$wrapper.Status -ne 'PASSED' -or
-        -not [bool]$wrapper.AcceptanceEligible) {
-        throw 'Windows 11 VirtualBox installer acceptance is not an eligible passed artifact.'
-    }
-    $generic = Read-ReferencedJson -Path ([string]$wrapper.InstallerManifestPath) -Label 'Windows 11 VirtualBox generic installer manifest'
-    if ([string]$generic.Schema -ne 'storage-chronicle.installer-acceptance.v1' -or
-        [string]$generic.TargetOs -ne 'Windows11' -or
-        [string]$generic.TargetKind -ne 'VirtualBoxVm' -or
-        [string]$generic.ExecutionMode -ne 'VM' -or
-        [string]$generic.Status -ne 'PASSED' -or
-        -not [bool]$generic.AcceptanceEligible) {
-        throw 'Windows 11 VirtualBox generic installer evidence is not eligible.'
-    }
-    Assert-InstallerCaseRows -Value $generic -Label 'Windows 11 VirtualBox generic installer evidence'
-}
-
 function Assert-GroupEvidence {
     param([Parameter(Mandatory = $true)][string]$Name, [Parameter(Mandatory = $true)]$Value)
 
     $schema = if ($null -ne $Value.PSObject.Properties['Schema']) { [string]$Value.Schema } else { '' }
-    if ($Name -ne 'BranchIntegration' -and ($null -eq $Value.PSObject.Properties['AcceptanceEligible'] -or -not [bool]$Value.AcceptanceEligible)) { throw "$Name evidence is not marked AcceptanceEligible=true." }
+    if ($Name -notin @('BranchIntegration', 'PhysicalSafety') -and ($null -eq $Value.PSObject.Properties['AcceptanceEligible'] -or -not [bool]$Value.AcceptanceEligible)) { throw "$Name evidence is not marked AcceptanceEligible=true." }
     switch ($Name) {
-        'TestLabAndRealIo' {
-            if ($schema -ne 'StorageChronicle.WindowsTestLabExecution.v2' -or
-                [string]$Value.Status -ne 'COMPLETED_REAL_IO_ACCEPTANCE' -or
-                [string]$Value.ExecutionMode -ne 'TestLab' -or
-                $null -eq $Value.PSObject.Properties['Diagnostic'] -or
-                [bool]$Value.Diagnostic) { throw 'TestLab evidence is not an eligible non-diagnostic TestLab execution.' }
-            if ([string]$Value.Target -notin @('Windows11', 'Both')) { throw 'TestLab evidence does not include the required Windows 11 target.' }
-            if (@($Value.Stages).Count -eq 0) { throw 'TestLab evidence has no execution stages.' }
-            if (-not [bool]$Value.AgentIntegrationExecuted -or -not [bool]$Value.RealIoAcceptance) { throw 'TestLab evidence does not prove the real Agent and Oracle comparison path.' }
-            $agentStages = @($Value.Stages | Where-Object { [string]$_.Name -like 'AgentIntegration-*' })
-            if ($agentStages.Count -eq 0) { throw 'TestLab evidence has no Agent integration stages.' }
-            $windows11AgentStages = @($agentStages | Where-Object { [string]$_.Name -eq 'AgentIntegration-Windows11' })
-            if ($windows11AgentStages.Count -ne 1) { throw 'TestLab evidence does not contain exactly one Windows 11 Agent integration stage.' }
-            foreach ($stage in $agentStages) {
-                if ([string]$stage.Status -ne 'PASSED') { throw "Agent integration stage is not PASSED: $($stage.Name)" }
-                $evidencePath = [string]$stage.Evidence
-                if ([string]::IsNullOrWhiteSpace($evidencePath) -or -not (Test-Path -LiteralPath $evidencePath -PathType Leaf)) { throw "Agent integration evidence is missing: $($stage.Name)" }
-                $realIo = Get-Content -Raw -Encoding UTF8 -LiteralPath $evidencePath | ConvertFrom-Json
-                if ([string]$realIo.Schema -ne 'StorageChronicle.WindowsTestLabRealIoEvidence.v1' -or [string]$realIo.Status -ne 'PASSED' -or -not [bool]$realIo.AcceptanceEligible) { throw "Real-I/O evidence is not eligible: $evidencePath" }
-                foreach ($field in @('OracleOperationCount', 'SourceEventCount', 'CanonicalEventCount', 'FinalStateCount', 'Checks', 'FailureReasons', 'HistoryPath')) { if ($null -eq $realIo.PSObject.Properties[$field]) { throw "Real-I/O evidence is missing ${field}: $evidencePath" } }
-                if ([int64]$realIo.OracleOperationCount -le 0 -or [int64]$realIo.SourceEventCount -le 0 -or [int64]$realIo.CanonicalEventCount -le 0 -or [int64]$realIo.FinalStateCount -le 0 -or @($realIo.FailureReasons).Count -ne 0 -or @($realIo.Checks).Count -eq 0 -or @($realIo.Checks | Where-Object { [string]$_.Status -ne 'PASSED' }).Count -ne 0 -or -not (Test-Path -LiteralPath ([string]$realIo.HistoryPath) -PathType Container)) { throw "Real-I/O evidence contains incomplete durable counts, failed checks, or a missing history path: $evidencePath" }
+        'PhysicalSafety' {
+            if ($schema -ne 'StorageChronicle.PhysicalReadOnlyAudit.v1') { throw 'Physical safety audit has an unexpected schema.' }
+            if (-not [bool]$Value.AcceptanceEligible) { throw 'Physical safety audit does not declare AcceptanceEligible=true.' }
+            $currentCommit = (& git -C $root rev-parse HEAD).Trim()
+            if ([string]$Value.targetCommit -ne $currentCommit) { throw 'Physical safety audit does not target the current commit.' }
+            $workingChanges = @(& git -C $root status --porcelain)
+            if ($LASTEXITCODE -ne 0 -or $workingChanges.Count -ne 0 -or -not [bool]$Value.workingTreeClean) { throw 'Physical safety audit does not prove a clean audited working tree.' }
+            if ([string]$Value.overallStatus -ne 'PASS' -or [string]$Value.decision -ne 'ALLOW_RUN') { throw 'Physical safety audit is not a complete approval for execution.' }
+            foreach ($field in @('staticSourceAudit', 'hostPreflight', 'independentWriteMonitoring')) {
+                if ([string]$Value.$field -ne 'PASS') { throw "Physical safety audit gate is not PASS: $field" }
             }
+            if ($null -eq $Value.PSObject.Properties['findings'] -or @($Value.findings | Where-Object { [string]$_.status -ne 'PASS' }).Count -ne 0) { throw 'Physical safety audit has missing or non-PASS findings.' }
+            if (-not [bool]$Value.productStarted -or -not [bool]$Value.independentRuntimeAuditCompleted) { throw 'Physical safety audit does not include independent runtime write-monitor evidence.' }
         }
         'ConfirmedReconciliation' {
             if ($schema -ne 'StorageChronicle.ConfirmedReconciliationAcceptance.v1') { throw 'Confirmed reconciliation evidence has an unexpected schema.' }
@@ -180,7 +147,7 @@ function Assert-GroupEvidence {
             if ([string]$Value.TargetOs -ne 'Windows10-22H2') { throw 'Windows 10 evidence does not identify Windows10-22H2.' }
             foreach ($field in @('StageA', 'StageB')) { if ($null -eq $Value.PSObject.Properties[$field]) { throw "Windows 10 evidence is missing $field." } }
             $stageA = Read-ReferencedJson -Path ([string]$Value.StageA.ManifestPath) -Label 'Windows 10 Stage A manifest'
-            if ([string]$stageA.Schema -ne 'StorageChronicle.Windows10StageAAcceptance.v1' -or [string]$stageA.TargetOs -ne 'Windows10-22H2' -or [string]$stageA.TargetKind -ne 'VirtualBoxVm' -or [string]$stageA.VmName -ne 'SC-Test-W10-VBox' -or [string]$stageA.ExecutionMode -ne 'VM' -or [string]$stageA.Status -ne 'PASSED' -or -not [bool]$stageA.AcceptanceEligible) { throw 'Windows 10 Stage A is not an eligible real acceptance artifact.' }
+            if ([string]$stageA.Schema -ne 'StorageChronicle.Windows10StageAAcceptance.v1' -or [string]$stageA.TargetOs -ne 'Windows10-22H2' -or [string]$stageA.TargetKind -ne 'PhysicalMachine' -or [string]$stageA.ExecutionMode -ne 'Local' -or [string]$stageA.Status -ne 'PASSED' -or -not [bool]$stageA.AcceptanceEligible) { throw 'Windows 10 Stage A is not an eligible physical-machine acceptance artifact.' }
             if (@($stageA.Checks).Count -ne $requiredWindows10StageAChecks.Count) { throw 'Windows 10 Stage A does not contain exactly the required check count.' }
             $stageACheckNames = @($stageA.Checks | ForEach-Object { [string]$_.Name })
             if (@($stageACheckNames | Sort-Object -Unique).Count -ne $requiredWindows10StageAChecks.Count -or @($requiredWindows10StageAChecks | Where-Object { $stageACheckNames -notcontains $_ }).Count -ne 0) { throw 'Windows 10 Stage A checks are missing, duplicated, or contain an unexpected name.' }
@@ -221,7 +188,7 @@ function Assert-GroupEvidence {
                 -not (Test-Path -LiteralPath ([string]$Value.Host.MftMarkerPath) -PathType Leaf) -or
                 [string]$Value.Host.WindowsProductName -notmatch 'Windows 11' -or
                 [string]::IsNullOrWhiteSpace([string]$Value.MftEvidencePath) -or
-                -not (Test-Path -LiteralPath ([string]$Value.MftEvidencePath) -PathType Leaf)) { throw 'MFT performance evidence does not prove the dedicated Windows 11 TestLab volume and connected evidence path.' }
+                -not (Test-Path -LiteralPath ([string]$Value.MftEvidencePath) -PathType Leaf)) { throw 'MFT performance evidence does not prove the dedicated Windows 11 physical test volume and connected evidence path.' }
             $requiredSuites = [ordered]@{
                 CoreProjectionState = @('ReconstructSinglePointPath1M', 'GroupedGeneration100K', 'EventStackPage100K', 'PeriodDiff100K')
                 LargeFolderMove = @('RecordLargeFolderMove')
@@ -251,7 +218,6 @@ function Assert-GroupEvidence {
             if ([string]$Value.Status -ne 'PASSED') { throw 'Installer evidence status is not PASSED.' }
             if ([string]$Value.TargetOs -ne 'Windows11' -or [string]$Value.TargetKind -ne 'PhysicalMachine' -or [string]$Value.ExecutionMode -ne 'Local') { throw 'Installer evidence is not from the required Windows 11 physical-machine acceptance path.' }
             Assert-InstallerCaseRows -Value $Value -Label 'Windows 11 physical installer evidence'
-            Assert-Windows11VirtualBoxInstallerPrerequisite -Path $Windows11VirtualBoxInstallerManifest
         }
         'AgentExplorerCorrelation' {
             if ($schema -ne 'StorageChronicle.AgentExplorerCorrelationEvidence.v1') { throw 'Agent/Explorer correlation evidence has an unexpected schema.' }
@@ -259,10 +225,10 @@ function Assert-GroupEvidence {
             if ($null -eq $Value.PSObject.Properties['FalseExactCount'] -or [int]$Value.FalseExactCount -ne 0) { throw 'Agent/Explorer evidence does not prove false Exact attribution is zero.' }
             foreach ($field in @('ProcessAttribution', 'ExplorerSourceCorrelation', 'FileStateCorrectness', 'WorkloadOraclePath', 'Environment', 'SourceEventCount', 'CanonicalEventCount', 'FinalStateCount', 'Failures')) { if ($null -eq $Value.PSObject.Properties[$field]) { throw "Agent/Explorer evidence is missing $field." } }
             if ([string]$Value.Environment.TargetOs -ne 'Windows11' -or
-                [string]$Value.Environment.VmName -ne 'SC-Test-W11-VBox' -or
-                [string]$Value.Environment.ExecutionMode -ne 'TestLab' -or
-                [string]$Value.Environment.AgentHostMode -ne 'TestLab' -or
-                [bool]$Value.Environment.Diagnostic) { throw 'Agent/Explorer evidence does not prove a non-diagnostic Windows 11 TestLab Agent run.' }
+                [string]$Value.Environment.TargetKind -ne 'PhysicalMachine' -or
+                [string]$Value.Environment.ExecutionMode -ne 'Local' -or
+                [string]$Value.Environment.AgentHostMode -ne 'Service' -or
+                [bool]$Value.Environment.Diagnostic) { throw 'Agent/Explorer evidence does not prove a non-diagnostic Windows 11 physical Agent run.' }
             foreach ($path in @([string]$Value.WorkloadOraclePath, [string]$Value.Environment.AgentExecutablePath, [string]$Value.Environment.WorkloadExecutablePath, [string]$Value.Environment.WorkloadOraclePath, [string]$Value.Environment.ExplorerEvidencePath)) {
                 if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Agent/Explorer evidence references a missing real artifact: $path" }
             }
@@ -314,7 +280,7 @@ function Assert-GroupEvidence {
 }
 
 $groups = @(
-    [ordered]@{ Name = 'TestLabAndRealIo'; Path = $TestLabManifest },
+    [ordered]@{ Name = 'PhysicalSafety'; Path = $PhysicalReadOnlyAuditManifest },
     [ordered]@{ Name = 'ConfirmedReconciliation'; Path = $ReconciliationManifest },
     [ordered]@{ Name = 'WindowsPrivileged'; Path = $PrivilegedManifest },
     [ordered]@{ Name = 'Windows10_22H2'; Path = $Windows10Manifest },
@@ -349,7 +315,7 @@ foreach ($group in $groups) {
         $eligible = $null -ne $eligibleProperty -and [bool]$eligibleProperty.Value
         $statusProperty = $value.PSObject.Properties['Status']
         $executionStatusProperty = $value.PSObject.Properties['ExecutionStatus']
-        $status = if ($null -ne $statusProperty) { [string]$statusProperty.Value } elseif ($null -ne $executionStatusProperty) { [string]$executionStatusProperty.Value } else { 'UNKNOWN' }
+        $status = if ($null -ne $statusProperty) { [string]$statusProperty.Value } elseif ($null -ne $executionStatusProperty) { [string]$executionStatusProperty.Value } elseif ($group.Name -eq 'PhysicalSafety') { [string]$value.overallStatus } else { 'UNKNOWN' }
         if (-not $eligible) {
             $result.Reason = 'Artifact is present but AcceptanceEligible is not true.'
             $blocking.Add("$($group.Name):ineligible")

@@ -1,5 +1,9 @@
 # Physical read-only audit
 
+## Current state (2026-09-29 continuation)
+
+The audit is invalidated for the current working tree by changes to `src/StorageChronicle.Agent/Program.cs`, `tools/TestEnvironment/Invoke-WindowsTestLab.ps1`, its test, and mirrored docs. `--testlab` now fails before Agent host/settings/collector initialization, and the old VM runner exits before loading helpers or creating artifacts. This is a containment fix only, not the replacement physical runner or a source-to-sink audit. The machine-readable audit artifact remains stale and must not be used as current-commit evidence. Final acceptance still contains VM-dependent contracts and is not eligible. No product, VM, installer, service, or privileged script was run.
+
 The 2026-09-29 Activity Frame/ProcessStop integration changes projection, ETW lifecycle handling, and IPC. Prior source review is not approval for this new tree. These edits have not undergone the complete source-to-sink audit, and no product/collector/privileged physical execution is authorized by the current evidence.
 
 ## Current decision

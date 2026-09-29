@@ -16,6 +16,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+# Retired by Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md. Keep the legacy
+# parameters parseable, but fail before creating artifacts, touching VirtualBox,
+# changing guest settings, or starting any workload.
+[Console]::Error.WriteLine('This VM/guest TestLab runner is retired. Physical acceptance must use the audited physical-only workflow; no changes were made.')
+exit 2
+
 . (Join-Path $PSScriptRoot 'TestLab.Common.ps1')
 
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
