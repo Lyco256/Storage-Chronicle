@@ -1,13 +1,15 @@
 using System.Buffers.Binary;
 using System.IO.Pipes;
+using System.Text.Json;
 using StorageChronicle.Contracts;
 using StorageChronicle.Contracts.Runtime;
 using StorageChronicle.Domain.Contracts;
+using StorageChronicle.Settings;
 
 namespace StorageChronicle.UI.Shared;
 
 /// <summary>Reads bounded projections from the local Agent named pipe.</summary>
-public sealed class AgentPipeProjectionClient : IVirtualizedPageSource<EventStackRow>, IProjectionService
+public sealed class AgentPipeProjectionClient : IVirtualizedPageSource<EventStackRow>, IProjectionService, IUserSettingsClient, IAgentSettingsGateway
 {
     private const int ConnectTimeoutMilliseconds = 2500;
     private readonly string pipeName;
@@ -73,6 +75,62 @@ public sealed class AgentPipeProjectionClient : IVirtualizedPageSource<EventStac
         ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
         var response = await SendAsync("ReconciliationDecision", new ReconciliationDecision(requestId, execute), cancellationToken).ConfigureAwait(false);
         return IpcProtocol.Read<AgentHealth>(response);
+    }
+
+    /// <inheritdoc />
+    public async ValueTask<UserSettings> LoadUserSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        var snapshot = await GetSettingsSnapshotAsync(cancellationToken).ConfigureAwait(false);
+        return JsonSerializer.Deserialize<UserSettings>(snapshot.User.GetRawText())
+            ?? throw new InvalidDataException("The Agent returned an empty user-settings snapshot.");
+    }
+
+    /// <inheritdoc />
+    public async ValueTask<SettingsApplyResult> ApplyUserSettingsAsync(UserSettings settings, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        return await ApplySettingsAsync(SettingsScope.User, settings, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    async ValueTask<SettingsLoadResult<MachineSettings>> IAgentSettingsGateway.LoadMachineSettingsAsync(CancellationToken cancellationToken)
+    {
+        var snapshot = await GetSettingsSnapshotAsync(cancellationToken).ConfigureAwait(false);
+        var settings = JsonSerializer.Deserialize<MachineSettings>(snapshot.Machine.GetRawText())
+            ?? throw new InvalidDataException("The Agent returned an empty machine-settings snapshot.");
+        return new(settings, !string.IsNullOrWhiteSpace(snapshot.MachineWarning), false, snapshot.MachineWarning);
+    }
+
+    /// <inheritdoc />
+    async ValueTask<SettingsLoadResult<UserSettings>> IAgentSettingsGateway.LoadUserSettingsAsync(CancellationToken cancellationToken)
+    {
+        var snapshot = await GetSettingsSnapshotAsync(cancellationToken).ConfigureAwait(false);
+        var settings = JsonSerializer.Deserialize<UserSettings>(snapshot.User.GetRawText())
+            ?? throw new InvalidDataException("The Agent returned an empty user-settings snapshot.");
+        return new(settings, !string.IsNullOrWhiteSpace(snapshot.UserWarning), false, snapshot.UserWarning);
+    }
+
+    /// <inheritdoc />
+    ValueTask<SettingsApplyResult> IAgentSettingsGateway.ApplyMachineSettingsAsync(MachineSettings settings, CancellationToken cancellationToken) =>
+        ApplySettingsAsync(SettingsScope.Machine, settings, cancellationToken);
+
+    /// <inheritdoc />
+    ValueTask<SettingsApplyResult> IAgentSettingsGateway.ApplyUserSettingsAsync(UserSettings settings, CancellationToken cancellationToken) =>
+        ApplySettingsAsync(SettingsScope.User, settings, cancellationToken);
+
+    private async ValueTask<SettingsSnapshot> GetSettingsSnapshotAsync(CancellationToken cancellationToken)
+    {
+        var response = await SendAsync("SettingsSnapshotRequest", new SettingsSnapshotRequest(), cancellationToken).ConfigureAwait(false);
+        return IpcProtocol.Read<SettingsSnapshot>(response);
+    }
+
+    private async ValueTask<SettingsApplyResult> ApplySettingsAsync<TSettings>(SettingsScope scope, TSettings settings, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        var payload = JsonSerializer.SerializeToElement(settings);
+        var response = await SendAsync("SettingsUpdateRequest", new SettingsUpdateRequest(scope, payload), cancellationToken).ConfigureAwait(false);
+        return JsonSerializer.Deserialize<SettingsApplyResult>(response.Payload.GetRawText())
+            ?? throw new InvalidDataException("The Agent returned an empty settings-apply result.");
     }
 
     private async ValueTask<IpcEnvelope> SendAsync<T>(string messageType, T request, CancellationToken cancellationToken)

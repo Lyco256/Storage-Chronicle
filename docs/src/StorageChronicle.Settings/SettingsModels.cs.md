@@ -1,5 +1,9 @@
 # SettingsModels.cs
 
+## Event Stack mode compatibility
+
+`EventStackInitialMode` is the canonical persisted initial mode contract. `Source`, `Grouped`, and `Normalized` correspond to the Event Stack UI modes. Numeric values 0, 1, and 2 retain compatibility with legacy `Timeline`, `ActivityGroup`, and `File` values; the legacy activity/file modes open the current Grouped view. `Normalized` is additive at value 3. The default is Grouped. User settings stay in the versioned settings document and are applied through the Agent IPC boundary.
+
 ## ??
 
 Machine Settings ? User Settings ? versioned JSON payload ??????????????????????Agent ????????????????????????????????????

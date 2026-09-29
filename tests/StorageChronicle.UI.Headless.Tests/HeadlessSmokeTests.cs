@@ -36,6 +36,16 @@ public sealed class HeadlessSmokeTests
         }
     }
 
+    [AvaloniaFact]
+    public void SettingsEditorIsConstructedAsASeparateModalWindow()
+    {
+        var dialog = new SettingsDialogWindow(new AgentPipeProjectionClient("settings-dialog-test"));
+
+        Assert.Equal("Storage Chronicle Settings", dialog.Title);
+        Assert.NotNull(dialog.Content);
+        Assert.Null(dialog.Owner);
+    }
+
     private sealed class StubSource : IVirtualizedPageSource<EventStackRow>
     {
         public ValueTask<ProjectionPage<EventStackRow>> GetPageAsync(int page, int pageSize, CancellationToken cancellationToken = default) =>

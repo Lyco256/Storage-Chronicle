@@ -13,6 +13,7 @@ public sealed class SettingsTests
         Assert.Equal(2, user.ActivityGroupTimeoutSeconds);
         Assert.Equal(5, user.PaneTimeoutSeconds);
         Assert.Equal(250, user.EventStackPageSize);
+        Assert.Equal(EventStackInitialMode.Grouped, user.InitialEventStackMode);
         Assert.Equal(100, user.DiffZoomPercent);
         Assert.Equal(5, new MachineSettings().FlushIntervalSeconds);
     }
@@ -83,6 +84,22 @@ public sealed class SettingsTests
         Assert.Equal(expected.DiffZoomPercent, actual.DiffZoomPercent);
         Assert.Equal(expected.DiffColumns, actual.DiffColumns);
         Assert.Equal(expected.SavedFilters, actual.SavedFilters);
+    }
+
+    [Fact]
+    public void EventStackInitialModesPreserveLegacyNumericValuesAndAddNormalizedMode()
+    {
+        Assert.Equal(0, (int)EventStackInitialMode.Source);
+        Assert.Equal(1, (int)EventStackInitialMode.Grouped);
+        Assert.Equal(2, (int)EventStackInitialMode.File);
+        Assert.Equal(3, (int)EventStackInitialMode.Normalized);
+        Assert.Equal(EventStackInitialMode.Source, EventStackInitialMode.Timeline);
+        Assert.Equal(EventStackInitialMode.Grouped, EventStackInitialMode.ActivityGroup);
+
+        using var fixture = new SettingsFixture();
+        var expected = new UserSettings { InitialEventStackMode = EventStackInitialMode.Normalized };
+        fixture.User.Save(expected);
+        Assert.Equal(EventStackInitialMode.Normalized, fixture.User.Load().Settings.InitialEventStackMode);
     }
 
     [Fact]

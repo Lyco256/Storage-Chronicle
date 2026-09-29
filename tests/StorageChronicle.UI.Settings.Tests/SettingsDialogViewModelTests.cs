@@ -7,12 +7,12 @@ namespace StorageChronicle.UI.Settings.Tests;
 public sealed class SettingsDialogViewModelTests
 {
     [Fact]
-    public void LoadUsesAgentValuesAndSurfacesRecoveryWarning()
+    public async Task LoadUsesAgentValuesAndSurfacesRecoveryWarning()
     {
         var gateway = new FakeGateway { MachineWarning = "machine recovered" };
         var viewModel = new SettingsDialogViewModel(gateway);
 
-        viewModel.Load();
+        await viewModel.LoadAsync();
 
         Assert.Equal(gateway.Machine, viewModel.MachineDraft);
         Assert.Equal(gateway.User, viewModel.UserDraft);
@@ -40,7 +40,7 @@ public sealed class SettingsDialogViewModelTests
     {
         var gateway = new FakeGateway { MachineResult = SettingsApplyResult.Failed("permission denied") };
         var viewModel = new SettingsDialogViewModel(gateway);
-        viewModel.Load();
+        await viewModel.LoadAsync();
 
         await viewModel.ApplyCommand.ExecuteAsync(null);
 
@@ -54,7 +54,7 @@ public sealed class SettingsDialogViewModelTests
     {
         var gateway = new FakeGateway { MachineResult = new(true, true, true, null) };
         var viewModel = new SettingsDialogViewModel(gateway);
-        viewModel.Load();
+        await viewModel.LoadAsync();
 
         await viewModel.ApplyCommand.ExecuteAsync(null);
 
@@ -69,8 +69,10 @@ public sealed class SettingsDialogViewModelTests
         public string? MachineWarning { get; init; }
         public SettingsApplyResult MachineResult { get; init; } = new(true, false, false, null);
         public int ApplyCalls { get; private set; }
-        public SettingsLoadResult<MachineSettings> LoadMachineSettings() => new(Machine, MachineWarning is not null, false, MachineWarning);
-        public SettingsLoadResult<UserSettings> LoadUserSettings() => new(User, false, false, null);
+        public ValueTask<SettingsLoadResult<MachineSettings>> LoadMachineSettingsAsync(CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(new SettingsLoadResult<MachineSettings>(Machine, MachineWarning is not null, false, MachineWarning));
+        public ValueTask<SettingsLoadResult<UserSettings>> LoadUserSettingsAsync(CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(new SettingsLoadResult<UserSettings>(User, false, false, null));
         public ValueTask<SettingsApplyResult> ApplyMachineSettingsAsync(MachineSettings settings, CancellationToken cancellationToken = default)
         {
             ApplyCalls++;

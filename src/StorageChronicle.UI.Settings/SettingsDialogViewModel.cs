@@ -68,10 +68,10 @@ public sealed class SettingsDialogViewModel : ObservableObject
     public IAsyncRelayCommand ApplyCommand { get; }
 
     /// <summary>Loads both settings scopes through the Agent.</summary>
-    public void Load()
+    public async ValueTask LoadAsync(CancellationToken cancellationToken = default)
     {
-        var machine = gateway.LoadMachineSettings();
-        var user = gateway.LoadUserSettings();
+        var machine = await gateway.LoadMachineSettingsAsync(cancellationToken).ConfigureAwait(false);
+        var user = await gateway.LoadUserSettingsAsync(cancellationToken).ConfigureAwait(false);
         MachineDraft = machine.Settings;
         UserDraft = user.Settings;
         var warnings = new[] { machine.Warning, user.Warning }.Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
