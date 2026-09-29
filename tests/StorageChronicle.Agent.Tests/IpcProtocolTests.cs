@@ -44,6 +44,43 @@ public sealed class IpcProtocolTests
     }
 
     [Fact]
+    public void DiffActivityFramesRoundTripWithMetadataOnlyTimeline()
+    {
+        var eventId = EventId.New();
+        var now = DateTimeOffset.UtcNow;
+        var frame = new DiffActivityFrameSnapshot(
+            "activity-1",
+            ProcessInstanceId.Create("42:638000000000000000"),
+            "editor.exe",
+            ProcessAttributionQuality.Correlated,
+            EventOrigin.LiveUsn,
+            null,
+            null,
+            "C:/work",
+            now.AddSeconds(-1),
+            now,
+            now.AddSeconds(5),
+            false,
+            1,
+            1,
+            0,
+            new Dictionary<string, int> { [CanonicalOperation.Create.ToString()] = 1 },
+            [eventId],
+            [new DiffActivityFrameEventSnapshot(eventId, now, "C:/work/file.txt", CanonicalOperation.Create, EventQuality.Exact)]);
+        var response = new DiffProjectionResponse(Array.Empty<DiffEntry>(), ActivityFrames: [frame]);
+        var envelope = IpcProtocol.Create("DiffProjectionResponse", response);
+        var decoded = IpcProtocol.Read<DiffProjectionResponse>(envelope);
+
+        var actual = Assert.Single(decoded.ActivityFrames!);
+        Assert.Equal(frame.FrameId, actual.FrameId);
+        Assert.Equal(frame.ProcessId, actual.ProcessId);
+        Assert.Equal(frame.CloseBoundaryUtc, actual.CloseBoundaryUtc);
+        Assert.Equal(eventId, Assert.Single(actual.EventIds));
+        Assert.Equal("C:/work/file.txt", Assert.Single(actual.Events).DisplayPath);
+        Assert.Equal(1, actual.OperationBreakdown[CanonicalOperation.Create.ToString()]);
+    }
+
+    [Fact]
     public void ClientHelloRoundTripsItsRoleAndSession()
     {
         var codec = new LengthPrefixedJsonCodec();

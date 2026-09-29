@@ -80,7 +80,37 @@ public sealed record DiffProjectionResponse(
     int Page = 1,
     int PageSize = 500,
     int TotalCount = 0,
-    bool HasMore = false);
+    bool HasMore = false,
+    IReadOnlyList<DiffActivityFrameSnapshot>? ActivityFrames = null);
+
+/// <summary>Metadata-only Activity Group projection used to render one Diff View frame.</summary>
+public sealed record DiffActivityFrameSnapshot(
+    string FrameId,
+    ProcessInstanceId? ProcessId,
+    string ProcessDisplayName,
+    ProcessAttributionQuality ProcessQuality,
+    EventOrigin Source,
+    VolumeId? VolumeId,
+    MountSessionId? MountSessionId,
+    string DisplayRoute,
+    DateTimeOffset StartedUtc,
+    DateTimeOffset LastEventUtc,
+    DateTimeOffset CloseBoundaryUtc,
+    bool IsClosedByCompetingActivity,
+    int OperationCount,
+    int FileCount,
+    long SizeDelta,
+    IReadOnlyDictionary<string, int> OperationBreakdown,
+    IReadOnlyList<EventId> EventIds,
+    IReadOnlyList<DiffActivityFrameEventSnapshot> Events);
+
+/// <summary>One metadata-only event used to replay a Diff View frame.</summary>
+public sealed record DiffActivityFrameEventSnapshot(
+    EventId EventId,
+    DateTimeOffset TimeUtc,
+    string DisplayPath,
+    CanonicalOperation Operation,
+    EventQuality Quality);
 
 /// <summary>Serializable Tree/Explorer diff row returned by the Agent.</summary>
 public sealed record DiffProjectionItemSnapshot(
