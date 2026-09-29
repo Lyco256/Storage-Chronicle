@@ -58,6 +58,10 @@ public sealed class DiffViewModel : IFeatureView
     public DiffReplayState Replay { get; } = new();
     /// <summary>Currently selected row.</summary>
     public DiffTreeNode? SelectedNode { get; private set; }
+    /// <summary>Gets the current lexical path or virtual location shown by Explorer.</summary>
+    public string? CurrentPath => SplitPanes.Left.CurrentPath;
+    /// <summary>Gets the path components used by the breadcrumb navigation.</summary>
+    public IReadOnlyList<DiffPathBreadcrumb> Breadcrumbs => DiffPathNavigation.BuildBreadcrumbs(CurrentPath);
     /// <summary>Gets whether backward navigation is available.</summary>
     public bool CanNavigateBack => navigationIndex > 0;
     /// <summary>Gets whether forward navigation is available.</summary>
@@ -116,7 +120,16 @@ public sealed class DiffViewModel : IFeatureView
         SplitPanes.Left.CurrentPath = path;
         if (SplitPanes.IsSplit && !SplitPanes.Right.IsPinned) SplitPanes.Right.CurrentPath = path;
         if (addToHistory && path is not null) AddNavigation(path);
-        if (node?.Projection.ReplayTimeline is { Count: > 0 } timeline) Replay.CursorUtc = timeline[0].TimeUtc;
+        if (node?.Projection.ReplayTimeline is { Count: > 0 } timeline)
+        {
+            Replay.CursorUtc = timeline[0].TimeUtc;
+            Replay.IsAtPresent = false;
+        }
+        else
+        {
+            Replay.CursorUtc = null;
+            Replay.IsAtPresent = false;
+        }
     }
 
     /// <summary>Finds and selects a row by path, recording browser-like navigation history.</summary>
@@ -127,6 +140,35 @@ public sealed class DiffViewModel : IFeatureView
         if (row is null) return false;
         Select(NodeFor(row.Projection), addToHistory: true);
         return true;
+    }
+
+    /// <summary>Navigates to a rooted path or projected virtual/deleted location without file-system I/O.</summary>
+    public bool NavigateToLocation(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        var exact = ExplorerRows.FirstOrDefault(candidate => string.Equals(candidate.Projection.DisplayPath, path, StringComparison.OrdinalIgnoreCase));
+        if (exact is null && !DiffPathNavigation.TryNormalizeDirectPath(path, out path)) return false;
+        var normalized = exact?.Projection.DisplayPath ?? path;
+        SplitPanes.Left.CurrentPath = normalized;
+        if (SplitPanes.IsSplit && !SplitPanes.Right.IsPinned) SplitPanes.Right.CurrentPath = normalized;
+        SelectedNode = exact is null ? null : NodeFor(exact.Projection);
+        AddNavigation(normalized);
+        return true;
+    }
+
+    /// <summary>Navigates to the parent path lexically without querying the operating system.</summary>
+    public bool NavigateUp()
+    {
+        var parent = DiffPathNavigation.GetParent(CurrentPath);
+        return parent is not null && NavigateToLocation(parent);
+    }
+
+    /// <summary>Navigates to a breadcrumb by its zero-based index.</summary>
+    public bool NavigateToBreadcrumb(int index)
+    {
+        var breadcrumbs = Breadcrumbs;
+        if (index < 0 || index >= breadcrumbs.Count) return false;
+        return NavigateToLocation(breadcrumbs[index].Path);
     }
 
     /// <summary>Moves selection backward through the path history.</summary>
@@ -172,11 +214,28 @@ public sealed class DiffViewModel : IFeatureView
         var points = SelectedNode?.Projection.ReplayTimeline ?? Array.Empty<ReplayTimelinePoint>();
         if (index < 0 || index >= points.Count) return false;
         Replay.CursorUtc = points[index].TimeUtc;
+        Replay.IsAtPresent = false;
         return true;
     }
 
+    /// <summary>Moves one event at a time through the selected row timeline; returns false at either boundary.</summary>
+    public bool StepReplay(int delta)
+    {
+        if (delta is not (-1 or 1)) throw new ArgumentOutOfRangeException(nameof(delta), "Replay steps move exactly one event backward or forward.");
+        var points = SelectedNode?.Projection.ReplayTimeline ?? Array.Empty<ReplayTimelinePoint>();
+        if (points.Count == 0) return false;
+        var current = Replay.CursorUtc is { } cursor ? FindReplayPoint(points, cursor) : -1;
+        var next = current < 0 ? (delta > 0 ? 0 : points.Count - 1) : current + delta;
+        return SetReplayPoint(next);
+    }
+
     /// <summary>Returns the Replay view to the current projection endpoint.</summary>
-    public void ReturnReplayToPresent() => Replay.CursorUtc = lastQuery?.ToUtc;
+    public void ReturnReplayToPresent()
+    {
+        Replay.CursorUtc = lastQuery?.ToUtc;
+        Replay.IsAtPresent = true;
+        Replay.Play();
+    }
 
     private void ApplyProjection(DiffProjectionQuery query, DiffProjection result)
     {
@@ -196,6 +255,7 @@ public sealed class DiffViewModel : IFeatureView
             SelectedNode = ExplorerRows.Select(row => NodeFor(row.Projection)).FirstOrDefault(node => node.NodeId == selectedId);
         }
         if (Mode != DiffMode.Replay) Replay.CursorUtc = null;
+        Replay.IsAtPresent = false;
     }
 
     private DiffTreeNode NodeFor(FileDiffProjection projection)
@@ -212,8 +272,10 @@ public sealed class DiffViewModel : IFeatureView
         navigationIndex = next;
         var path = navigationHistory[navigationIndex];
         var row = ExplorerRows.FirstOrDefault(candidate => string.Equals(candidate.Projection.DisplayPath, path, StringComparison.OrdinalIgnoreCase));
-        if (row is not null) Select(NodeFor(row.Projection), addToHistory: false);
-        return row is not null;
+        SplitPanes.Left.CurrentPath = path;
+        if (SplitPanes.IsSplit && !SplitPanes.Right.IsPinned) SplitPanes.Right.CurrentPath = path;
+        SelectedNode = row is null ? null : NodeFor(row.Projection);
+        return true;
     }
 
     private void AddNavigation(string path)
@@ -231,6 +293,13 @@ public sealed class DiffViewModel : IFeatureView
     }
 
     private static string RowId(FileDiffProjection item) => item.FileId is { } id ? "file:" + id.Value : "path:" + item.DisplayPath;
+
+    private static int FindReplayPoint(IReadOnlyList<ReplayTimelinePoint> points, DateTimeOffset cursor)
+    {
+        for (var index = 0; index < points.Count; index++)
+            if (points[index].TimeUtc == cursor) return index;
+        return -1;
+    }
 }
 
 /// <summary>All Explorer presentation modes required by the product.</summary>
