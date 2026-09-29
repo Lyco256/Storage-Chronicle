@@ -1,6 +1,6 @@
 # ProjectionModels.cs
 
-Projection層の公開DTOと設定契約を定義する。ProjectionDocumentはCanonical Eventと任意のSource Eventをコピーして保持し、Projection再生成時に入力を変更しない。EventStackNodeはActivity、ファイル要約、Normalized、Source、Gapの展開階層を表し、Groupedページの子を同じルートに閉じ込める。
+Projection層の公開DTOと設定契約を定義する。ProjectionDocumentはCanonical Eventと任意のSource Eventをコピーして保持し、Projection再生成時に入力を変更しない。EventStackNodeはActivity、ファイル要約、Normalized、Source、Gapの展開階層を表し、Groupedページの子を同じルートに閉じ込める。ActivityGroupProjectionは最終イベント時刻と異なる終了境界を区別し、timeout/競合終了のpane lifecycle再生を支える。
 
 ProjectionSettingsはActivity timeout（0.5–60秒、既定2秒）とEvent Stack page size（50–5000、既定250）を検証する。FileDiffProjectionとDiffProjectionはTree/Explorer共通のDiff結果を表し、主操作、サブ操作、品質、仮想項目、Replay timelineをUI値ではなく意味的な値で返す。ProjectionFilterは保存可能なAND/OR/除外DTOと将来のRegex matcher差し込み契約を提供する。
 
