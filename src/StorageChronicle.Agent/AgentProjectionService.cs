@@ -2,6 +2,8 @@ using StorageChronicle.Contracts;
 using StorageChronicle.Contracts.Runtime;
 using StorageChronicle.Domain.Contracts;
 using StorageChronicle.Projection;
+using StorageChronicle.Platform.Abstractions;
+using StorageChronicle.Settings;
 using StorageChronicle.Storage;
 
 namespace StorageChronicle.Agent;
@@ -11,12 +13,16 @@ public sealed class AgentProjectionService : IProjectionService
 {
     private readonly AppendOnlyStorageEngine store;
     private readonly ProjectionSettings settings;
+    private readonly ISettingsStore<UserSettings>? userSettingsStore;
+    private readonly IProcessLifecycleSink? processLifecycle;
 
     /// <summary>Initializes a projection adapter over one durable store.</summary>
-    public AgentProjectionService(AppendOnlyStorageEngine store, ProjectionSettings? settings = null)
+    public AgentProjectionService(AppendOnlyStorageEngine store, ProjectionSettings? settings = null, ISettingsStore<UserSettings>? userSettingsStore = null, IProcessLifecycleSink? processLifecycle = null)
     {
         this.store = store ?? throw new ArgumentNullException(nameof(store));
         this.settings = settings ?? new ProjectionSettings();
+        this.userSettingsStore = userSettingsStore;
+        this.processLifecycle = processLifecycle;
     }
 
     /// <inheritdoc />
@@ -105,6 +111,9 @@ public sealed class AgentProjectionService : IProjectionService
         ArgumentOutOfRangeException.ThrowIfLessThan(request.Page, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(request.PageSize, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(request.PageSize, 5000);
+        ArgumentOutOfRangeException.ThrowIfLessThan(request.ActivityFramesPage, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(request.ActivityFramesPageSize, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(request.ActivityFramesPageSize, 1000);
         if (request.ToUtc == default) throw new ArgumentException("A diff end time is required.", nameof(request));
         if (request.FromUtc is { } from && from > request.ToUtc) throw new ArgumentException("Diff start must not be after its end.", nameof(request));
         var canonical = new List<CanonicalEvent>();
@@ -138,6 +147,28 @@ public sealed class AgentProjectionService : IProjectionService
         var skip = checked((request.Page - 1) * request.PageSize);
         var page = all.Skip(skip).Take(request.PageSize).ToArray();
         var domainPage = projection.DomainEntries.Skip(skip).Take(request.PageSize).ToArray();
+        var activityFrames = Array.Empty<DiffActivityFrameSnapshot>();
+        var activityFramesTotalCount = 0;
+        if (request.Mode is DiffMode.Live or DiffMode.Replay)
+        {
+            var timeout = GetPaneTimeout();
+            var lookbackFrom = SubtractTimeout(request.FromUtc, timeout);
+            var frameEvents = await ReadCanonicalRangeAsync(lookbackFrom, request.ToUtc, cancellationToken).ConfigureAwait(false);
+            var groups = new ActivityGrouper().Group(frameEvents, timeout);
+            var matching = groups.Select(group => (Group: group, Snapshot: ToSnapshot(group, timeout, processLifecycle)))
+                .Where(value => request.Mode == DiffMode.Replay
+                    ? value.Group.StartedUtc <= request.ToUtc && value.Group.EndedUtc >= (request.FromUtc ?? DateTimeOffset.MinValue)
+                    : value.Snapshot.CloseBoundaryUtc > request.ToUtc)
+                .OrderBy(value => value.Snapshot.StartedUtc, request.ActivityFramesAscending
+                    ? Comparer<DateTimeOffset>.Default
+                    : Comparer<DateTimeOffset>.Create((left, right) => right.CompareTo(left)))
+                .ThenBy(value => value.Snapshot.FrameId, StringComparer.Ordinal)
+                .ToArray();
+            activityFramesTotalCount = matching.Length;
+            var frameSkip = checked((request.ActivityFramesPage - 1) * request.ActivityFramesPageSize);
+            activityFrames = matching.Skip(frameSkip).Take(request.ActivityFramesPageSize).Select(value => value.Snapshot).ToArray();
+        }
+
         return new DiffProjectionResponse(
             domainPage,
             page.Where(value => !value.IsUnknown).Select(value => value.Snapshot).ToArray(),
@@ -145,7 +176,97 @@ public sealed class AgentProjectionService : IProjectionService
             request.Page,
             request.PageSize,
             all.Length,
-            skip + page.Length < all.Length);
+            skip + page.Length < all.Length,
+            activityFrames,
+            request.ActivityFramesPage,
+            request.ActivityFramesPageSize,
+            activityFramesTotalCount,
+            request.ActivityFramesPage * request.ActivityFramesPageSize < activityFramesTotalCount);
+    }
+
+    /// <summary>Loads one bounded canonical-event timeline page for a grouped Activity Frame.</summary>
+    public async ValueTask<DiffActivityFrameTimelineResponse> GetActivityFrameTimelineAsync(DiffActivityFrameTimelineRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.FrameId);
+        ArgumentOutOfRangeException.ThrowIfLessThan(request.Page, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(request.PageSize, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(request.PageSize, 1000);
+        if (request.ToUtc == default) throw new ArgumentException("A timeline end time is required.", nameof(request));
+        if (request.FromUtc is { } from && from > request.ToUtc) throw new ArgumentException("Timeline start must not be after its end.", nameof(request));
+
+        var timeout = GetPaneTimeout();
+        var canonical = await ReadCanonicalRangeAsync(SubtractTimeout(request.FromUtc, timeout), request.ToUtc, cancellationToken).ConfigureAwait(false);
+        var group = new ActivityGrouper().Group(canonical, timeout).FirstOrDefault(value => string.Equals(value.GroupId, request.FrameId, StringComparison.Ordinal));
+        var events = group?.Events.Where(value => value.Time.RecordedUtc >= (request.FromUtc ?? DateTimeOffset.MinValue) && value.Time.RecordedUtc <= request.ToUtc)
+            .Select(value => new DiffActivityFrameEventSnapshot(
+                value.EventId,
+                value.Time.RecordedUtc,
+                GetProperty(value.Properties, ProjectionPropertyNames.Path) is { Length: > 0 } path ? path : value.Name ?? "場所を特定できない項目",
+                value.Operation,
+                value.Quality))
+            .ToArray() ?? Array.Empty<DiffActivityFrameEventSnapshot>();
+        var skip = checked((request.Page - 1) * request.PageSize);
+        var page = events.Skip(skip).Take(request.PageSize).ToArray();
+        return new DiffActivityFrameTimelineResponse(request.FrameId, page, request.Page, request.PageSize, events.Length, skip + page.Length < events.Length);
+    }
+
+    private TimeSpan GetPaneTimeout()
+    {
+        var seconds = userSettingsStore?.Load().Settings.PaneTimeoutSeconds ?? 5;
+        return TimeSpan.FromSeconds(seconds);
+    }
+
+    private static DateTimeOffset? SubtractTimeout(DateTimeOffset? value, TimeSpan timeout)
+    {
+        if (value is not { } fromUtc) return null;
+        var utc = fromUtc.ToUniversalTime();
+        return utc.UtcDateTime.Ticks < timeout.Ticks ? DateTimeOffset.MinValue : utc - timeout;
+    }
+
+    private async ValueTask<List<CanonicalEvent>> ReadCanonicalRangeAsync(DateTimeOffset? fromUtc, DateTimeOffset toUtc, CancellationToken cancellationToken)
+    {
+        var values = new List<CanonicalEvent>();
+        var offset = 0;
+        const int batchSize = 2048;
+        while (true)
+        {
+            var batch = await store.ReadCanonicalPageAsync(offset, batchSize, fromUtc, toUtc, cancellationToken).ConfigureAwait(false);
+            values.AddRange(batch);
+            if (batch.Count < batchSize) return values;
+            offset = checked(offset + batch.Count);
+        }
+    }
+
+    private static DiffActivityFrameSnapshot ToSnapshot(ActivityGroupProjection value, TimeSpan timeout, IProcessLifecycleSink? lifecycle)
+    {
+        var closeBoundary = value.CloseBoundaryUtc ?? value.EndedUtc + timeout;
+        var closedByProcessExit = false;
+        if (value.Process?.Id is { } processId && lifecycle?.TryGetProcessExit(processId, out var exitedUtc) == true &&
+            exitedUtc >= value.EndedUtc && exitedUtc < closeBoundary)
+        {
+            closeBoundary = exitedUtc;
+            closedByProcessExit = true;
+        }
+        return new DiffActivityFrameSnapshot(
+        value.GroupId,
+        value.Process?.Id,
+        value.ProcessDisplayName,
+        value.ProcessQuality,
+        value.Source,
+        value.Volume,
+        value.MountSession,
+        value.DisplayRoute,
+        value.StartedUtc,
+        value.EndedUtc,
+        closeBoundary,
+        value.IsClosedByCompetingActivity,
+        value.Metrics.OperationCount,
+        value.Metrics.FileCount,
+        value.Metrics.SizeDelta,
+        value.Metrics.OperationBreakdown.ToDictionary(pair => pair.Key.ToString(), pair => pair.Value, StringComparer.Ordinal),
+        value.Events.Count,
+        closedByProcessExit);
     }
 
     /// <summary>Loads one selected row's recorded times, quality, and process links.</summary>

@@ -57,6 +57,8 @@ public static class IpcProtocol
 [JsonSerializable(typeof(DiffProjectionResponse))]
 [JsonSerializable(typeof(DiffProjectionItemSnapshot))]
 [JsonSerializable(typeof(DiffActivityFrameSnapshot))]
+[JsonSerializable(typeof(DiffActivityFrameTimelineRequest))]
+[JsonSerializable(typeof(DiffActivityFrameTimelineResponse))]
 [JsonSerializable(typeof(DiffActivityFrameEventSnapshot))]
 [JsonSerializable(typeof(ReplayTimelinePointSnapshot))]
 [JsonSerializable(typeof(AgentHealth))]

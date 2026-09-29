@@ -7,6 +7,7 @@ using Microsoft.Diagnostics.Tracing.Parsers.Kernel;
 using Microsoft.Diagnostics.Tracing.Session;
 using StorageChronicle.Contracts;
 using StorageChronicle.Domain.Contracts;
+using StorageChronicle.Platform.Abstractions;
 
 namespace StorageChronicle.Platform.Windows.Ntfs;
 
@@ -15,15 +16,17 @@ public sealed class WindowsEtwFileIoCollector : ISourceEventCollector, IAsyncDis
 {
     private readonly string sessionName;
     private readonly int capacity;
+    private readonly IProcessLifecycleSink? processLifecycle;
     private TraceEventSession? session;
     private int disposed;
 
     /// <summary>Initializes the ETW collector with a bounded callback queue.</summary>
-    public WindowsEtwFileIoCollector(string? sessionName = null, int capacity = 2048)
+    public WindowsEtwFileIoCollector(string? sessionName = null, int capacity = 2048, IProcessLifecycleSink? processLifecycle = null)
     {
         this.sessionName = string.IsNullOrWhiteSpace(sessionName) ? $"StorageChronicle-{Environment.ProcessId}" : sessionName;
         ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 64);
         this.capacity = capacity;
+        this.processLifecycle = processLifecycle;
     }
 
     /// <inheritdoc />
@@ -51,6 +54,11 @@ public sealed class WindowsEtwFileIoCollector : ISourceEventCollector, IAsyncDis
 
             source.Kernel.ProcessStart += value => processes[value.ProcessID] = DescribeProcess(value);
             source.Kernel.ProcessDCStart += value => processes.TryAdd(value.ProcessID, DescribeProcess(value));
+            source.Kernel.ProcessStop += value =>
+            {
+                if (processes.TryRemove(value.ProcessID, out var process))
+                    processLifecycle?.RecordProcessExit(process.Id, new DateTimeOffset(value.TimeStamp.ToUniversalTime()));
+            };
             source.Kernel.FileIOFileCreate += value => Enqueue(Create(value, CanonicalOperation.Create, null, processes, ref sequence), session, queue.Writer, ref overflowed);
             source.Kernel.FileIOFileDelete += value => Enqueue(Create(value, CanonicalOperation.Delete, null, processes, ref sequence), session, queue.Writer, ref overflowed);
             source.Kernel.FileIORename += value => Enqueue(Create(value, CanonicalOperation.Rename, null, processes, ref sequence), session, queue.Writer, ref overflowed);

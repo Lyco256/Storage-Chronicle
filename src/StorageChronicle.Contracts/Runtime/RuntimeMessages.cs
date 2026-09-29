@@ -53,7 +53,10 @@ public sealed record DiffProjectionRequest(
     int PageSize = 500,
     IReadOnlyList<string>? AllFilters = null,
     IReadOnlyList<string>? AnyFilters = null,
-    IReadOnlyList<string>? ExcludeFilters = null);
+    IReadOnlyList<string>? ExcludeFilters = null,
+    int ActivityFramesPage = 1,
+    int ActivityFramesPageSize = 100,
+    bool ActivityFramesAscending = false);
 
 /// <summary>Returns one bounded Event Stack page.</summary>
 public sealed record ProjectionPageResponse(
@@ -81,9 +84,13 @@ public sealed record DiffProjectionResponse(
     int PageSize = 500,
     int TotalCount = 0,
     bool HasMore = false,
-    IReadOnlyList<DiffActivityFrameSnapshot>? ActivityFrames = null);
+    IReadOnlyList<DiffActivityFrameSnapshot>? ActivityFrames = null,
+    int ActivityFramesPage = 1,
+    int ActivityFramesPageSize = 100,
+    int ActivityFramesTotalCount = 0,
+    bool HasMoreActivityFrames = false);
 
-/// <summary>Metadata-only Activity Group projection used to render one Diff View frame.</summary>
+/// <summary>Metadata-only Activity Group projection used to render one Diff View frame, including an optional observed process-exit boundary.</summary>
 public sealed record DiffActivityFrameSnapshot(
     string FrameId,
     ProcessInstanceId? ProcessId,
@@ -101,8 +108,25 @@ public sealed record DiffActivityFrameSnapshot(
     int FileCount,
     long SizeDelta,
     IReadOnlyDictionary<string, int> OperationBreakdown,
-    IReadOnlyList<EventId> EventIds,
-    IReadOnlyList<DiffActivityFrameEventSnapshot> Events);
+    int EventCount,
+    bool IsClosedByProcessExit = false);
+
+/// <summary>Requests one bounded metadata-only timeline page for an Activity Frame.</summary>
+public sealed record DiffActivityFrameTimelineRequest(
+    string FrameId,
+    DateTimeOffset? FromUtc,
+    DateTimeOffset ToUtc,
+    int Page = 1,
+    int PageSize = 250);
+
+/// <summary>Returns a bounded metadata-only event timeline page for one Activity Frame.</summary>
+public sealed record DiffActivityFrameTimelineResponse(
+    string FrameId,
+    IReadOnlyList<DiffActivityFrameEventSnapshot> Events,
+    int Page,
+    int PageSize,
+    int TotalCount,
+    bool HasMore);
 
 /// <summary>One metadata-only event used to replay a Diff View frame.</summary>
 public sealed record DiffActivityFrameEventSnapshot(

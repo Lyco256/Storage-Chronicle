@@ -2,7 +2,7 @@
 
 ## Role
 
-Hosts the shared Diff View model in the Avalonia desktop shell. The panel exposes Tree and Explorer presentations, the four time modes, the eight bounded Explorer layouts, explicit selected-row Tree expansion/collapse through the lazy model, address and breadcrumb navigation, continuous 50–300% zoom, replay timeline/speed/event stepping, Live pause/resume, split-pane state, and guarded current-item opening. User zoom is debounced and persisted through the Agent settings IPC, not by writing settings files from the UI.
+Hosts the shared Diff View model in the Avalonia desktop shell. The panel exposes Tree and Explorer presentations, the four time modes, the eight bounded Explorer layouts, explicit selected-row Tree expansion/collapse through the lazy model, address and breadcrumb navigation, continuous 50–300% zoom, replay timeline/speed/event stepping, Live pause/resume, independent process/location Activity Frame panes with separate frame and event paging, sort and pin controls, split-pane state, and guarded current-item opening. User zoom is debounced and persisted through the Agent settings IPC, not by writing settings files from the UI.
 
 ## Public types
 
@@ -16,6 +16,8 @@ Hosts the shared Diff View model in the Avalonia desktop shell. The panel expose
 - Replay controls act on the selected projection's recorded timeline; playback advances its cursor by elapsed wall time multiplied by the selected 1×, 2×, or 10× rate, and explicit event-step controls move exactly one event.
 - Explorer folder navigation renders only immediate projected children. Missing intermediate folders are synthesized from recorded paths as virtual grouping rows, never by enumerating the host file system.
 - Live polling runs only while the panel is attached and Live is unpaused. Pausing affects display refresh only; Agent recording is independent.
+- Activity Frame labels/details are reconstructed from Agent metadata snapshots and show process quality, route, timing, duration, operation/file counts, size delta, operation breakdown, and close/timeout state. Newest-first is the default; changing order requests a newly sorted first page from Agent before paging. Event timeline details remain metadata-only and are requested only for the selected frame.
+- When an Activity Frame is selected, the existing Replay timeline/speed/event-step controls consume that Frame's paged metadata timeline. Cursor movement updates visible frame lifecycles; this never implies a process-stop fact not present in history.
 - Zoom updates use the validated `IUserSettingsClient`/Agent route and retain unrelated user settings from the latest settings snapshot.
 - Deleted, virtual, and unknown-location rows cannot be opened through the operating-system Explorer adapter.
 

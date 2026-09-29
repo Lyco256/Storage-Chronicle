@@ -10,7 +10,7 @@
 | V-02 | source/normalization/state/storage | normalization, state, storage, and integration test projects | verified |
 | V-03 | Windows filesystem/NTFS/session | platform test projects, confirmed runner tests, and `build/Test-WindowsPrivileged.ps1` | Notification/session boundaries and confirmed-runner implementation are tested; real NTFS/non-NTFS reconciliation and the full privileged capability matrix remain pending |
 | V-04 | external media and mount history | `StorageChronicle.ExternalMedia.Tests` and filesystem tests | verified |
-| V-05 | Event Stack and Diff View | projection, Event Stack, Diff View, and headless tests | verified |
+| V-05 | Event Stack and Diff View | projection, Event Stack, Diff View, and headless tests | Event Stack and core Diff View verified; Activity Frame integration has in-session Live/Replay grouping, metadata timeline, paging, pin/sort controls, and transient Live process-exit closure; Replay after Agent restart cannot reconstruct process-exit boundaries, so requirement 16.3 is partial |
 | V-06 | IPC and bounded Agent pipeline | Agent tests, production named-pipe client/server test, and end-to-end smoke test | verified |
 | V-07 | recovery, corruption, cancellation, capacity | Storage, State, Agent, and Normalization failure-path tests | verified |
 | V-08 | documentation synchronization | `build/quality/Test-DocMirror.ps1` and DocMirrorValidator | verified |
@@ -60,7 +60,7 @@
 | V-137 | Move endpoints and OS Explorer opening | Diff View model tests | verified |
 | V-138 | Fixed left Tree icon gutter | Diff View headless/contract tests | verified |
 | V-139 | Eight Explorer modes, zoom, and no side tree | Diff View model and headless tests | verified |
-| V-140 | Multiple split panes, ordering, and timeout | Diff View model tests | verified |
+| V-140 | Multiple split panes, ordering, and timeout | Diff View model/Agent tests and named-pipe round-trip | Live/Replay frames, independent metadata paging, sort/pin, pane timeout and in-session ETW ProcessStop closure implemented; historical process-exit closure after Agent restart and full acceptance remain pending |
 | V-141 | Colors, primary operation, and secondary icons | Diff projection and UI tests | verified |
 | V-142 | Complete primary-operation priority | projection unit tests | verified |
 | V-143 | Literal search, AND/OR/exclude, saved filters | projection, IPC, and settings tests | verified |

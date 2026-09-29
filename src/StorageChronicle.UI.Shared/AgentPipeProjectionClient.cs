@@ -56,6 +56,14 @@ public sealed class AgentPipeProjectionClient : IVirtualizedPageSource<EventStac
         return IpcProtocol.Read<DiffProjectionResponse>(response);
     }
 
+    /// <summary>Loads one bounded canonical event timeline page for an Activity Frame.</summary>
+    public async ValueTask<DiffActivityFrameTimelineResponse> GetActivityFrameTimelineAsync(DiffActivityFrameTimelineRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var response = await SendAsync("DiffActivityFrameTimelineRequest", request, cancellationToken).ConfigureAwait(false);
+        return IpcProtocol.Read<DiffActivityFrameTimelineResponse>(response);
+    }
+
     /// <summary>Loads detail data for one Event Stack selection.</summary>
     public async ValueTask<EventDetailsSnapshot?> GetDetailsAsync(EventId eventId, CancellationToken cancellationToken = default)
     {

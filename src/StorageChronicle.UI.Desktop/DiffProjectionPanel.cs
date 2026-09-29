@@ -23,7 +23,15 @@ public sealed class DiffProjectionPanel : UserControl
     private readonly DiffViewModel viewModel;
     private readonly AgentPipeProjectionClient? projectionClient;
     private readonly ObservableCollection<string> treeRows = [];
+    private readonly ObservableCollection<string> activityFrameRows = [];
+    private readonly ObservableCollection<string> activityTimelineRows = [];
     private readonly ListBox treeList;
+    private readonly ListBox activityFrameList;
+    private readonly ListBox activityTimelineList;
+    private readonly TextBlock activityFrameDetails;
+    private readonly Button pinActivityFrameButton;
+    private readonly Button moreActivityTimelineButton;
+    private readonly Button moreActivityFramesButton;
     private readonly ContentControl explorerHost;
     private readonly TextBlock status;
     private readonly TextBox filter;
@@ -47,6 +55,10 @@ public sealed class DiffProjectionPanel : UserControl
     private bool isLoadingPresentationSettings;
     private Stopwatch replayClock = new();
     private DateTimeOffset replayTimelineStart;
+    private DateTimeOffset? currentQueryFromUtc;
+    private DateTimeOffset currentQueryToUtc;
+    private int activityTimelinePage;
+    private int activityTimelineTotal;
 
     /// <summary>Creates a Diff View backed by the Agent projection pipe.</summary>
     public DiffProjectionPanel(IProjectionService projection)
@@ -60,6 +72,9 @@ public sealed class DiffProjectionPanel : UserControl
         zoomPersistTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
 
         treeList = new ListBox { ItemsSource = treeRows, [AutomationProperties.NameProperty] = "Diff View tree" };
+        activityFrameList = new ListBox { ItemsSource = activityFrameRows, [AutomationProperties.NameProperty] = "Diff Activity Frames", MinHeight = 120 };
+        activityTimelineList = new ListBox { ItemsSource = activityTimelineRows, [AutomationProperties.NameProperty] = "Selected Activity Frame event timeline", MaxHeight = 180 };
+        activityFrameList.SelectionChanged += async (_, _) => await SelectActivityFrameAsync().ConfigureAwait(true);
         explorerHost = new ContentControl { IsVisible = false, [AutomationProperties.NameProperty] = "Diff View Explorer content" };
         treeList.SelectionChanged += (_, _) => SelectTreeRow();
         status = new TextBlock { Text = "Diff View: Agent connection is idle." };
@@ -71,6 +86,19 @@ public sealed class DiffProjectionPanel : UserControl
         };
         breadcrumbs = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
         selectionDetails = new TextBlock { Text = "Select an item to inspect its recorded metadata.", TextWrapping = TextWrapping.Wrap, [AutomationProperties.NameProperty] = "Diff selection details" };
+        activityFrameDetails = new TextBlock { Text = "Select an Activity Frame to inspect its process, timing, metrics, and operations.", TextWrapping = TextWrapping.Wrap, [AutomationProperties.NameProperty] = "Activity Frame details" };
+        pinActivityFrameButton = new Button { Content = "Pin frame", IsEnabled = false, [AutomationProperties.NameProperty] = "Pin selected Activity Frame" };
+        pinActivityFrameButton.Click += (_, _) => ToggleSelectedActivityFramePin();
+        var ascendingFrames = new ToggleButton { Content = "Oldest first", [AutomationProperties.NameProperty] = "Sort Activity Frames oldest first" };
+        ascendingFrames.IsCheckedChanged += async (_, _) =>
+        {
+            await viewModel.SetActivityFrameSortAsync(ascendingFrames.IsChecked == true).ConfigureAwait(true);
+            RenderActivityFrames();
+        };
+        moreActivityTimelineButton = new Button { Content = "More events", IsEnabled = false, [AutomationProperties.NameProperty] = "Load more Activity Frame events" };
+        moreActivityTimelineButton.Click += async (_, _) => await LoadMoreActivityTimelineAsync().ConfigureAwait(true);
+        moreActivityFramesButton = new Button { Content = "More frames", IsEnabled = false, [AutomationProperties.NameProperty] = "Load more Activity Frames" };
+        moreActivityFramesButton.Click += async (_, _) => await LoadMoreActivityFramesAsync().ConfigureAwait(true);
 
         var expandTree = new Button { Content = "Expand/collapse tree", [AutomationProperties.NameProperty] = "Expand or collapse selected diff tree row" };
         expandTree.Click += async (_, _) => await ToggleSelectedTreeNodeAsync().ConfigureAwait(true);
@@ -117,6 +145,7 @@ public sealed class DiffProjectionPanel : UserControl
         present.Click += (_, _) =>
         {
             viewModel.ReturnReplayToPresent();
+            RenderActivityFrames();
             replayTimer.Stop();
             replayPlayButton.Content = "Play replay";
             UpdateReplayControls();
@@ -144,7 +173,7 @@ public sealed class DiffProjectionPanel : UserControl
         leftPanePath = new TextBlock { Text = "Left pane: no selection", [AutomationProperties.NameProperty] = "Diff left pane" };
         rightPanePath = new TextBlock { Text = "Right pane: no selection", [AutomationProperties.NameProperty] = "Diff right pane" };
         var leftPane = new StackPanel { Spacing = 4, Children = { breadcrumbs, leftPanePath, treeList, explorerHost } };
-        var rightPane = new StackPanel { Spacing = 4, Children = { rightPanePath, selectionDetails } };
+        var rightPane = new StackPanel { Spacing = 4, Children = { rightPanePath, selectionDetails, new TextBlock { Text = "Activity Frames (separate pane per process and location)" }, ascendingFrames, activityFrameList, moreActivityFramesButton, activityFrameDetails, pinActivityFrameButton, activityTimelineList, moreActivityTimelineButton } };
         resultGrid = new Grid
         {
             ColumnDefinitions = new ColumnDefinitions("1* 1*"),
@@ -197,7 +226,9 @@ public sealed class DiffProjectionPanel : UserControl
             var projectionFilter = string.IsNullOrWhiteSpace(filter.Text)
                 ? ProjectionFilter.Empty
                 : new ProjectionFilter(Any: new[] { new FilterTerm(FilterField.Name, filter.Text.Trim()) });
-            await viewModel.RefreshAsync(new DiffProjectionQuery(mode == DiffMode.PointInTime ? null : now.AddHours(-1), now, mode, projectionFilter)).ConfigureAwait(true);
+            currentQueryFromUtc = mode == DiffMode.PointInTime ? null : now.AddHours(-1);
+            currentQueryToUtc = now;
+            await viewModel.RefreshAsync(new DiffProjectionQuery(currentQueryFromUtc, currentQueryToUtc, mode, projectionFilter)).ConfigureAwait(true);
             RenderRows();
             status.Text = $"{mode}: {viewModel.Items.Count} rows; Explorer layout: {viewModel.ViewMode}";
         }
@@ -221,6 +252,7 @@ public sealed class DiffProjectionPanel : UserControl
             : viewModel.Explorer.GetChildrenPage(viewModel.CurrentPath, 1, 250);
         explorerHost.Content = BuildExplorerLayout(rows);
         UpdateAddressControls();
+        RenderActivityFrames();
         UpdateReplayControls();
         UpdatePaneState();
     }
@@ -283,9 +315,9 @@ public sealed class DiffProjectionPanel : UserControl
         }
         else
         {
-            if (viewModel.SelectedNode?.Projection.ReplayTimeline is not { Count: > 0 })
+            if (viewModel.GetSelectedReplayTimeline() is not { Count: > 0 })
             {
-                status.Text = "Select a row with recorded replay events first.";
+                status.Text = "Select an item or Activity Frame with recorded replay events first.";
                 return;
             }
             if (viewModel.Replay.IsAtPresent) viewModel.SetReplayPoint(0);
@@ -311,6 +343,100 @@ public sealed class DiffProjectionPanel : UserControl
     private void UpdateSplitLayout()
     {
         if (resultGrid.Children.Count > 1) resultGrid.Children[1].IsVisible = viewModel.SplitPanes.IsSplit;
+    }
+
+    private void RenderActivityFrames()
+    {
+        activityFrameRows.Clear();
+        foreach (var frame in viewModel.ActivityFrames)
+        {
+            var duration = frame.LastEventUtc - frame.StartedUtc;
+            var operations = string.Join(", ", frame.OperationBreakdown.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => $"{pair.Key}:{pair.Value}"));
+            var lifecycle = frame.IsClosedByProcessExit ? "closed on process exit" : frame.IsClosedByCompetingActivity ? "closed by competing activity" : $"until {frame.CloseBoundaryUtc:HH:mm:ss}";
+            var pinned = viewModel.IsActivityFramePinned(frame.FrameId) ? "[pinned] " : string.Empty;
+            activityFrameRows.Add($"{pinned}{frame.ProcessDisplayName} · {frame.StartedUtc:HH:mm:ss} · {duration.TotalSeconds:0.0}s · {frame.OperationCount} changes / {frame.FileCount} items / Δ{frame.SizeDelta} B · {operations} · {lifecycle}");
+        }
+
+        var selectedId = viewModel.SelectedActivityFrame?.FrameId;
+        activityFrameList.SelectedIndex = selectedId is null ? -1 : viewModel.ActivityFrames.ToList().FindIndex(frame => frame.FrameId == selectedId);
+        UpdateActivityFrameDetails();
+        moreActivityFramesButton.IsEnabled = viewModel.HasMoreActivityFrames;
+    }
+
+    private async Task LoadMoreActivityFramesAsync()
+    {
+        try
+        {
+            if (await viewModel.LoadMoreActivityFramesAsync().ConfigureAwait(true)) RenderActivityFrames();
+            moreActivityFramesButton.IsEnabled = viewModel.HasMoreActivityFrames;
+        }
+        catch (Exception exception) when (exception is IOException or TimeoutException or UnauthorizedAccessException or ArgumentException)
+        {
+            status.Text = $"More Activity Frames unavailable: {exception.Message}";
+        }
+    }
+
+    private async Task SelectActivityFrameAsync()
+    {
+        var index = activityFrameList.SelectedIndex;
+        var frame = index >= 0 && index < viewModel.ActivityFrames.Count ? viewModel.ActivityFrames[index] : null;
+        viewModel.SelectActivityFrame(frame);
+        activityTimelinePage = 0;
+        activityTimelineTotal = 0;
+        activityTimelineRows.Clear();
+        UpdateActivityFrameDetails();
+        if (frame is not null) await LoadMoreActivityTimelineAsync().ConfigureAwait(true);
+        UpdateReplayControls();
+    }
+
+    private async Task LoadMoreActivityTimelineAsync()
+    {
+        if (projectionClient is null || viewModel.SelectedActivityFrame is not { } frame) return;
+        try
+        {
+            var nextPage = activityTimelinePage + 1;
+            var response = await projectionClient.GetActivityFrameTimelineAsync(new DiffActivityFrameTimelineRequest(
+                frame.FrameId, currentQueryFromUtc, currentQueryToUtc, nextPage, 250)).ConfigureAwait(true);
+            activityTimelinePage = response.Page;
+            activityTimelineTotal = response.TotalCount;
+            foreach (var item in response.Events)
+                activityTimelineRows.Add($"{item.TimeUtc:HH:mm:ss.fff} · {item.Operation} · {item.Quality} · {item.DisplayPath}");
+            viewModel.SetActivityFrameEvents(viewModel.ActivityFrameEvents.Concat(response.Events));
+            moreActivityTimelineButton.IsEnabled = response.HasMore;
+            UpdateReplayControls();
+        }
+        catch (Exception exception) when (exception is IOException or TimeoutException or UnauthorizedAccessException)
+        {
+            status.Text = $"Activity Frame timeline unavailable: {exception.Message}";
+        }
+    }
+
+    private void ToggleSelectedActivityFramePin()
+    {
+        if (viewModel.SelectedActivityFrame is not { } frame) return;
+        var pinned = viewModel.ToggleSelectedActivityFramePin();
+        pinActivityFrameButton.Content = pinned ? "Unpin frame" : "Pin frame";
+        RenderActivityFrames();
+    }
+
+    private void UpdateActivityFrameDetails()
+    {
+        if (viewModel.SelectedActivityFrame is not { } frame)
+        {
+            activityFrameDetails.Text = "Select an Activity Frame to inspect its process, timing, metrics, and operations.";
+            pinActivityFrameButton.IsEnabled = false;
+            pinActivityFrameButton.Content = "Pin frame";
+            moreActivityTimelineButton.IsEnabled = false;
+            return;
+        }
+
+        var duration = frame.LastEventUtc - frame.StartedUtc;
+        var operations = string.Join(", ", frame.OperationBreakdown.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => $"{pair.Key}: {pair.Value}"));
+        var closeReason = frame.IsClosedByProcessExit ? "Process exit at " : frame.IsClosedByCompetingActivity ? "Competing activity at " : "Timeout boundary ";
+        activityFrameDetails.Text = $"{frame.ProcessDisplayName} ({frame.ProcessQuality})\n{frame.DisplayRoute}\nStarted {frame.StartedUtc:O}; last event {frame.LastEventUtc:O}; duration {duration.TotalSeconds:0.0}s\n{frame.OperationCount} changes across {frame.FileCount} items; size Δ {frame.SizeDelta} B\n{operations}\n{closeReason}{frame.CloseBoundaryUtc:O}";
+        pinActivityFrameButton.IsEnabled = true;
+        pinActivityFrameButton.Content = viewModel.IsActivityFramePinned(frame.FrameId) ? "Unpin frame" : "Pin frame";
+        moreActivityTimelineButton.IsEnabled = activityTimelinePage * 250 < activityTimelineTotal;
     }
 
     private Control BuildExplorerLayout(IReadOnlyList<DiffExplorerRow> rows)
@@ -458,13 +584,14 @@ public sealed class DiffProjectionPanel : UserControl
         viewModel.Replay.Pause();
         replayPlayButton.Content = "Play replay";
         if (!viewModel.StepReplay(direction)) return;
+        RenderActivityFrames();
         UpdateReplayControls();
         UpdatePaneState();
     }
 
     private void AdvanceReplay()
     {
-        var timeline = viewModel.SelectedNode?.Projection.ReplayTimeline;
+        var timeline = viewModel.GetSelectedReplayTimeline();
         if (timeline is not { Count: > 0 })
         {
             viewModel.Replay.Pause();
@@ -484,6 +611,7 @@ public sealed class DiffProjectionPanel : UserControl
             replayPlayButton.Content = "Play replay";
         }
         viewModel.SetReplayPoint(next);
+        RenderActivityFrames();
         UpdateReplayControls();
         UpdatePaneState();
     }
@@ -517,15 +645,16 @@ public sealed class DiffProjectionPanel : UserControl
 
     private void SelectReplayPoint()
     {
-        if (isUpdatingReplaySlider || viewModel.SelectedNode?.Projection.ReplayTimeline is not { Count: > 0 }) return;
+        if (isUpdatingReplaySlider || viewModel.GetSelectedReplayTimeline() is not { Count: > 0 }) return;
         viewModel.SetReplayPoint((int)replayTimeline.Value);
+        RenderActivityFrames();
         if (viewModel.Replay.IsPlaying) ResetReplayClock();
         UpdatePaneState();
     }
 
     private void UpdateReplayControls()
     {
-        var timeline = viewModel.SelectedNode?.Projection.ReplayTimeline;
+        var timeline = viewModel.GetSelectedReplayTimeline();
         var count = timeline?.Count ?? 0;
         isUpdatingReplaySlider = true;
         replayTimeline.Maximum = Math.Max(0, count - 1);
@@ -629,7 +758,7 @@ internal sealed class AgentDiffProjectionSource : IDiffProjectionSource
     public AgentDiffProjectionSource(AgentPipeProjectionClient client) => this.client = client ?? throw new ArgumentNullException(nameof(client));
 
     /// <inheritdoc />
-    public async ValueTask<DiffProjection> GetDiffProjectionAsync(DiffProjectionQuery query, CancellationToken cancellationToken = default)
+    public async ValueTask<DiffProjectionBundle> GetDiffProjectionAsync(DiffProjectionQuery query, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
         var filter = query.Filter.AnyTerms.Count == 0 ? null : query.Filter.AnyTerms[0].Value;
@@ -640,10 +769,13 @@ internal sealed class AgentDiffProjectionSource : IDiffProjectionSource
             filter,
             AllFilters: query.Filter.AllTerms.Select(term => term.Value).ToArray(),
             AnyFilters: query.Filter.AnyTerms.Select(term => term.Value).ToArray(),
-            ExcludeFilters: query.Filter.ExcludedTerms.Select(term => term.Value).ToArray()), cancellationToken).ConfigureAwait(false);
+            ExcludeFilters: query.Filter.ExcludedTerms.Select(term => term.Value).ToArray(),
+            ActivityFramesPage: query.ActivityFramesPage,
+            ActivityFramesPageSize: query.ActivityFramesPageSize,
+            ActivityFramesAscending: query.ActivityFramesAscending), cancellationToken).ConfigureAwait(false);
         var items = (response.RichItems ?? Array.Empty<DiffProjectionItemSnapshot>()).Select(ToProjection).ToArray();
         var unknown = (response.RichUnknownLocationItems ?? Array.Empty<DiffProjectionItemSnapshot>()).Select(ToProjection).ToArray();
-        return new DiffProjection(query.Mode, query.ToUtc, items, unknown, response.Items);
+        return new DiffProjectionBundle(new DiffProjection(query.Mode, query.ToUtc, items, unknown, response.Items), response.ActivityFrames ?? Array.Empty<DiffActivityFrameSnapshot>(), response.ActivityFramesPage, response.ActivityFramesPageSize, response.ActivityFramesTotalCount, response.HasMoreActivityFrames);
     }
 
     private static FileDiffProjection ToProjection(DiffProjectionItemSnapshot value) => new(

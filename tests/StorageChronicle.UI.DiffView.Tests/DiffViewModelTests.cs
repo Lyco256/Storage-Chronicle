@@ -1,4 +1,5 @@
 using StorageChronicle.Domain.Contracts;
+using StorageChronicle.Contracts.Runtime;
 using StorageChronicle.Projection;
 using StorageChronicle.UI.DiffView;
 using Xunit;
@@ -206,6 +207,57 @@ public sealed class DiffViewModelTests
     }
 
     [Fact]
+    public async Task ActivityFramesSortNewestFirstAndPinnedFramesSurviveLiveExpiry()
+    {
+        var source = new FakeProjectionSource();
+        var older = Frame("older", Fixture.FromUtc.AddMinutes(1));
+        var newer = Frame("newer", Fixture.FromUtc.AddMinutes(2));
+        source.Frames = [newer, older];
+        var view = new DiffViewModel(source);
+        await view.RefreshAsync(new DiffProjectionQuery(Fixture.FromUtc, Fixture.ToUtc, DiffMode.Live, ProjectionFilter.Empty, ActivityFramesPageSize: 1), TestContext.Current.CancellationToken);
+
+        Assert.Equal("newer", Assert.Single(view.ActivityFrames).FrameId);
+        Assert.True(view.HasMoreActivityFrames);
+        Assert.True(await view.LoadMoreActivityFramesAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("newer", view.ActivityFrames[0].FrameId);
+        Assert.Equal("older", view.ActivityFrames[1].FrameId);
+        view.SelectActivityFrame(older);
+        Assert.True(view.ToggleSelectedActivityFramePin());
+        source.Frames = [newer];
+        await view.RefreshAsync(new DiffProjectionQuery(Fixture.FromUtc, Fixture.ToUtc, DiffMode.Live, ProjectionFilter.Empty, ActivityFramesPageSize: 1), TestContext.Current.CancellationToken);
+        Assert.Equal("newer", view.ActivityFrames[0].FrameId);
+        Assert.Equal("older", view.ActivityFrames[1].FrameId);
+
+        await view.SetActivityFrameSortAsync(ascending: true, TestContext.Current.CancellationToken);
+        Assert.Equal("older", view.ActivityFrames[0].FrameId);
+        Assert.Equal("newer", view.ActivityFrames[1].FrameId);
+        Assert.False(view.ToggleSelectedActivityFramePin());
+        Assert.Single(view.ActivityFrames);
+        Assert.Equal("newer", Assert.Single(view.ActivityFrames).FrameId);
+    }
+
+    [Fact]
+    public async Task ReplayFrameAppearsAndDisappearsAtItsLifecycleBoundariesUnlessPinned()
+    {
+        var source = new FakeProjectionSource();
+        var frame = Frame("replay-frame", Fixture.FromUtc);
+        source.Frames = [frame];
+        var view = new DiffViewModel(source);
+        await view.RefreshAsync(new DiffProjectionQuery(Fixture.FromUtc, Fixture.ToUtc, DiffMode.Replay, ProjectionFilter.Empty), TestContext.Current.CancellationToken);
+        Assert.Single(view.ActivityFrames);
+        view.SelectActivityFrame(frame);
+        view.SetActivityFrameEvents([
+            new DiffActivityFrameEventSnapshot(EventId.New(), Fixture.FromUtc.AddSeconds(1), "C:/data/a.txt", CanonicalOperation.DataWrite, EventQuality.Exact),
+            new DiffActivityFrameEventSnapshot(EventId.New(), Fixture.FromUtc.AddSeconds(7), "C:/data/a.txt", CanonicalOperation.DataWrite, EventQuality.Exact)
+        ]);
+        Assert.True(view.ToggleSelectedActivityFramePin());
+        Assert.True(view.SetReplayPoint(1));
+        Assert.Single(view.ActivityFrames);
+        Assert.False(view.ToggleSelectedActivityFramePin());
+        Assert.Empty(view.ActivityFrames);
+    }
+
+    [Fact]
     public async Task ProjectionCancellationPropagatesAndMissingReplayTimelineIsAbsent()
     {
         using var cancellation = new CancellationTokenSource();
@@ -248,22 +300,44 @@ public sealed class DiffViewModelTests
     private sealed class FakeProjectionSource : IDiffProjectionSource
     {
         public int Calls { get; private set; }
-        public ValueTask<DiffProjection> GetDiffProjectionAsync(DiffProjectionQuery query, CancellationToken cancellationToken = default)
+        public IReadOnlyList<DiffActivityFrameSnapshot> Frames { get; set; } = Array.Empty<DiffActivityFrameSnapshot>();
+        public ValueTask<DiffProjectionBundle> GetDiffProjectionAsync(DiffProjectionQuery query, CancellationToken cancellationToken = default)
         {
             Calls++;
-            return ValueTask.FromResult(Fixture.Projection(query.Mode));
+            var sortedFrames = query.ActivityFramesAscending ? Frames.OrderBy(frame => frame.StartedUtc).ToArray() : Frames.OrderByDescending(frame => frame.StartedUtc).ToArray();
+            var page = sortedFrames.Skip((query.ActivityFramesPage - 1) * query.ActivityFramesPageSize).Take(query.ActivityFramesPageSize).ToArray();
+            return ValueTask.FromResult(new DiffProjectionBundle(Fixture.Projection(query.Mode), page, query.ActivityFramesPage, query.ActivityFramesPageSize, sortedFrames.Length, query.ActivityFramesPage * query.ActivityFramesPageSize < sortedFrames.Length));
         }
     }
 
+    private static DiffActivityFrameSnapshot Frame(string frameId, DateTimeOffset startedUtc) => new(
+        frameId,
+        ProcessInstanceId.Create("process-" + frameId),
+        "Editor.exe",
+        ProcessAttributionQuality.Exact,
+        EventOrigin.LiveUsn,
+        null,
+        null,
+        "C:/data",
+        startedUtc,
+        startedUtc.AddSeconds(1),
+        startedUtc.AddSeconds(6),
+        false,
+        2,
+        1,
+        100,
+        new Dictionary<string, int> { ["DataWrite"] = 2 },
+        2);
+
     private sealed class CancelingProjectionSource : IDiffProjectionSource
     {
-        public ValueTask<DiffProjection> GetDiffProjectionAsync(DiffProjectionQuery query, CancellationToken cancellationToken = default) =>
-            ValueTask.FromCanceled<DiffProjection>(cancellationToken);
+        public ValueTask<DiffProjectionBundle> GetDiffProjectionAsync(DiffProjectionQuery query, CancellationToken cancellationToken = default) =>
+            ValueTask.FromCanceled<DiffProjectionBundle>(cancellationToken);
     }
 
     private sealed class FixedProjectionSource(DiffProjection projection) : IDiffProjectionSource
     {
-        public ValueTask<DiffProjection> GetDiffProjectionAsync(DiffProjectionQuery query, CancellationToken cancellationToken = default) => ValueTask.FromResult(projection);
+        public ValueTask<DiffProjectionBundle> GetDiffProjectionAsync(DiffProjectionQuery query, CancellationToken cancellationToken = default) => ValueTask.FromResult(new DiffProjectionBundle(projection, Array.Empty<DiffActivityFrameSnapshot>()));
     }
 
     private sealed class RecordingLauncher : IExplorerLauncher

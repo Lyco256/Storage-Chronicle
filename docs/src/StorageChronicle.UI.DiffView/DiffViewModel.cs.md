@@ -7,6 +7,7 @@
 ## 公開型と不変条件
 
 - `DiffViewModel` は Live、Period、PointInTime、Replay を保持し、Live pause 中は UI refresh だけを止め Agent の記録を止めない。
+- Activity Frame要約を独立paged sourceから保持し、新しい順を標準にサーバー側でページ選択前に昇順/降順を適用する。順序切替は先頭ページを再取得し、次ページ取得はDiff rowページと独立する。pinしたFrameはLive timeoutで取得対象から外れた後も保持する。Replayでは選択中Frameのmetadata-onlyイベントtimelineを再生cursorへ接続し、cursorがStartedUtcからCloseBoundaryUtcに入る間だけ未pin Frameを表示する。pin状態はReplay消滅判定を越えて維持する。
 - Explorerの8表示と50～300%連続ズーム、分割枠、back/forward/up/breadcrumb/direct-path履歴、Move相互移動、Replay cursor/イベント送り/1x・2x・10x speed/pause-resume/present、Explorer可否を一元管理する。`NavigateToLocation` は実パスの存在確認をせず、`preserveSelection` 指定時以外は対象行がない場所へ移動する時に選択を解除する。
 - `Rows` は既存 shared contract の `DiffEntry`、`Items`/`ExplorerRows` は rich projection とその表示情報であり、UI が OS filesystem を直接読むことはない。
 
@@ -16,7 +17,7 @@
 
 ## 関連テスト
 
-`tests/StorageChronicle.UI.DiffView.Tests/DiffViewModelTests.cs` が8表示、Tree、Explorer、zoom範囲、path breadcrumb/up/direct/back/forward、仮想削除場所、履歴分岐、即時子項目と合成folder、split、Move、Live pause、Replay速度・step境界・停止中のpresent復帰、pause/resume、キャンセル/タイムライン不在を検証する。
+`tests/StorageChronicle.UI.DiffView.Tests/DiffViewModelTests.cs` が8表示、Tree、Explorer、zoom範囲、path breadcrumb/up/direct/back/forward、仮想削除場所、履歴分岐、即時子項目と合成folder、split、Move、Live pause、Replay速度・step境界・停止中のpresent復帰、pause/resume、Frameの独立ページング/新しい順/並べ替え/pin保持と解除/Replay lifecycle、キャンセル/タイムライン不在を検証する。
 
 ## Role
 Coordinates projection queries and exposes their results as UI-neutral Diff View state.

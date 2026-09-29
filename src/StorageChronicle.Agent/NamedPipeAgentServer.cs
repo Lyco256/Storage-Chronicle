@@ -165,6 +165,13 @@ public sealed class NamedPipeAgentServer : BackgroundService
             return IpcProtocol.Create("DiffProjectionResponse", new DiffProjectionResponse(rows));
         }
 
+        if (request.MessageType == "DiffActivityFrameTimelineRequest")
+        {
+            var value = IpcProtocol.Read<DiffActivityFrameTimelineRequest>(request);
+            if (projection is not AgentProjectionService agent) return Rejected("Activity Frame timelines are unavailable.");
+            return IpcProtocol.Create("DiffActivityFrameTimelineResponse", await agent.GetActivityFrameTimelineAsync(value, cancellationToken).ConfigureAwait(false));
+        }
+
         if (request.MessageType == "AgentHealthRequest")
         {
             return IpcProtocol.Create("AgentHealth", health.Snapshot(store.Status, markPendingPresented: true));

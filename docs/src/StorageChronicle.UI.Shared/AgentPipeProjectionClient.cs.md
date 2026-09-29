@@ -1,6 +1,6 @@
 # AgentPipeProjectionClient.cs
 
-This client is the UI's only Agent boundary. It authenticates each connection as the Desktop UI role, then sends bounded length-prefixed requests for Event Stack, rich Diff View, details, health, settings, and explicit reconciliation decisions, rejects oversized/error frames, and never performs direct history or filesystem I/O. `SendRequestAsync` lets typed gateways share this transport without defining substitute IPC contracts. The client also implements `IUserSettingsClient` for Event Stack preferences using the same versioned settings snapshot/update messages. Health responses carry per-volume continuity and one-time-presented pending gap decisions; the Execute decision delegates selected-volume reconciliation to the Agent runner.
+This client is the UI's only Agent boundary. It authenticates each connection as the Desktop UI role, then sends bounded length-prefixed requests for Event Stack, rich Diff View, Activity Frame timeline pages, details, health, settings, and explicit reconciliation decisions, rejects oversized/error frames, and never performs direct history or filesystem I/O. `SendRequestAsync` lets typed gateways share this transport without defining substitute IPC contracts. The client also implements `IUserSettingsClient` for Event Stack preferences using the same versioned settings snapshot/update messages. Health responses carry per-volume continuity and one-time-presented pending gap decisions; the Execute decision delegates selected-volume reconciliation to the Agent runner.
 
 ## Role
 
