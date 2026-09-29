@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 
 namespace StorageChronicle.Platform.Windows.Integration.Tests;
 
@@ -16,6 +17,8 @@ internal static class WindowsAcceptanceEnvironment
     private const string SessionAgentExecutableVariable = "STORAGE_CHRONICLE_SESSION_AGENT_EXE";
     private const string AgentPipeVariable = "STORAGE_CHRONICLE_AGENT_PIPE";
     private const string WaitForMediaVariable = "STORAGE_CHRONICLE_ACCEPTANCE_WAIT_FOR_MEDIA";
+    private const string ScenarioMarkerName = ".storage-chronicle-test-owner.json";
+    private const string ScenarioMarkerSchema = "StorageChronicle.AcceptanceScenarioOwner.v1";
 
     public static string RootPath => Required(RootVariable);
 
@@ -69,18 +72,33 @@ internal static class WindowsAcceptanceEnvironment
             throw new DirectoryNotFoundException($"Acceptance root does not exist: {root}");
         }
 
-        var scenario = Path.Combine(root, $"StorageChronicle.Acceptance.{name}.{Guid.NewGuid():N}");
+        var runId = Guid.NewGuid().ToString("N");
+        var scenario = Path.Combine(root, $"StorageChronicle.Acceptance.{name}.{runId}");
         Directory.CreateDirectory(scenario);
+        using (var marker = new FileStream(Path.Combine(scenario, ScenarioMarkerName), FileMode.CreateNew, FileAccess.Write, FileShare.Read))
+        {
+            JsonSerializer.Serialize(marker, new { Schema = ScenarioMarkerSchema, RunId = runId, Name = name });
+            marker.Flush(flushToDisk: true);
+        }
         return scenario;
     }
 
     public static void DeleteScenario(string scenario)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(scenario);
-        if (Directory.Exists(scenario))
-        {
-            Directory.Delete(scenario, recursive: true);
-        }
+        if (!Directory.Exists(scenario)) return;
+        var fullScenario = Path.GetFullPath(scenario);
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(RootPath));
+        if (!fullScenario.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("The acceptance scenario escaped the configured test root.");
+        var runId = Path.GetFileName(fullScenario).Split('.').LastOrDefault();
+        if (runId is null || !Guid.TryParseExact(runId, "N", out _))
+            throw new IOException("The acceptance scenario name does not end in a run GUID.");
+        using var marker = JsonDocument.Parse(File.ReadAllText(Path.Combine(fullScenario, ScenarioMarkerName)));
+        if (marker.RootElement.GetProperty("Schema").GetString() != ScenarioMarkerSchema ||
+            marker.RootElement.GetProperty("RunId").GetString() != runId)
+            throw new IOException("The acceptance scenario owner marker does not match this run.");
+        Directory.Delete(fullScenario, recursive: true);
     }
 
     public static async Task<IReadOnlyList<T>> CollectAsync<T>(IAsyncEnumerable<T> values, CancellationToken cancellationToken)

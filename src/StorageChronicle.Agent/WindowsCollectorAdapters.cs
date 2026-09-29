@@ -13,6 +13,8 @@ namespace StorageChronicle.Agent;
 /// <summary>Enumerates NTFS volumes and delegates each one to the real FSCTL USN reader.</summary>
 public sealed class WindowsNtfsVolumeCollector : ISourceEventCollector
 {
+    private const string CursorOwnerMarkerName = ".usn-cursor-owner.json";
+    private const string CursorOwnerSchema = "StorageChronicle.UsnCursorOwnership.v1";
     private readonly IVolumeEnumerator volumes;
     private readonly INtfsApi api;
     private readonly string cursorRoot;
@@ -24,7 +26,7 @@ public sealed class WindowsNtfsVolumeCollector : ISourceEventCollector
     {
         this.volumes = volumes ?? throw new ArgumentNullException(nameof(volumes));
         this.api = api ?? throw new ArgumentNullException(nameof(api));
-        this.cursorRoot = cursorRoot ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Storage Chronicle", "ntfs-cursors");
+        this.cursorRoot = Path.GetFullPath(cursorRoot ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Storage Chronicle", "ntfs-cursors"));
         this.exclusionPolicy = exclusionPolicy;
         this.initialSnapshotReader = initialSnapshotReader;
     }
@@ -106,21 +108,32 @@ public sealed class WindowsNtfsVolumeCollector : ISourceEventCollector
 
     private UsnJournalState? LoadCursor(VolumeId volume)
     {
-        var path = CursorPath(volume);
-        if (!File.Exists(path)) return null;
-        try { return JsonSerializer.Deserialize<UsnJournalState>(File.ReadAllText(path)); }
+        try
+        {
+            EnsureOwnedCursorDirectory();
+            var path = CursorPath(volume);
+            if (!File.Exists(path)) return null;
+            EnsureNoReparsePoints(path);
+            return JsonSerializer.Deserialize<UsnJournalState>(File.ReadAllText(path));
+        }
         catch (JsonException) { return null; }
         catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
     }
 
     private void SaveCursor(VolumeId volume, UsnJournalState state)
     {
         try
         {
-            Directory.CreateDirectory(cursorRoot);
+            EnsureOwnedCursorDirectory();
             var path = CursorPath(volume);
-            var temporary = path + ".tmp";
-            File.WriteAllText(temporary, JsonSerializer.Serialize(state), new System.Text.UTF8Encoding(false));
+            if (File.Exists(path)) EnsureNoReparsePoints(path);
+            var temporary = Path.Combine(cursorRoot, "cursor-" + Guid.NewGuid().ToString("N") + ".tmp");
+            using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough))
+            {
+                JsonSerializer.Serialize(output, state);
+                output.Flush(flushToDisk: true);
+            }
             File.Move(temporary, path, overwrite: true);
         }
         catch (IOException) { }
@@ -128,6 +141,55 @@ public sealed class WindowsNtfsVolumeCollector : ISourceEventCollector
     }
 
     private string CursorPath(VolumeId volume) => Path.Combine(cursorRoot, Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(volume.Value)) + ".json");
+
+    private void EnsureOwnedCursorDirectory()
+    {
+        var existed = Directory.Exists(cursorRoot);
+        if (!existed) Directory.CreateDirectory(cursorRoot);
+        EnsureNoReparsePoints(cursorRoot);
+        var markerPath = Path.Combine(cursorRoot, CursorOwnerMarkerName);
+        if (File.Exists(markerPath))
+        {
+            EnsureNoReparsePoints(markerPath);
+            using var input = new FileStream(markerPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var marker = JsonSerializer.Deserialize<CursorOwnershipMarker>(input);
+            if (marker is null || marker.Schema != CursorOwnerSchema) throw new IOException("The USN cursor ownership marker is invalid.");
+        }
+        else
+        {
+            if (existed || Directory.EnumerateFileSystemEntries(cursorRoot).Any())
+                throw new IOException("The USN cursor directory is unmarked; refusing to adopt or modify existing contents.");
+            using var output = new FileStream(markerPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough);
+            JsonSerializer.Serialize(output, new CursorOwnershipMarker(CursorOwnerSchema));
+            output.Flush(flushToDisk: true);
+        }
+
+        foreach (var entry in Directory.EnumerateFileSystemEntries(cursorRoot))
+        {
+            if ((File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0 || Directory.Exists(entry))
+                throw new IOException($"The USN cursor directory contains a reparse point or unexpected directory: {entry}");
+            var name = Path.GetFileName(entry);
+            var isCursor = name.EndsWith(".json", StringComparison.OrdinalIgnoreCase) && name[..^5].Length > 0 && name[..^5].All(Uri.IsHexDigit);
+            var isTemporary = name.StartsWith("cursor-", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase) && name.Length == "cursor-".Length + 32 + ".tmp".Length && Guid.TryParseExact(name.AsSpan("cursor-".Length, 32), "N", out _);
+            if (!name.Equals(CursorOwnerMarkerName, StringComparison.OrdinalIgnoreCase) && !isCursor && !isTemporary)
+                throw new IOException($"The USN cursor directory contains an unknown entry: {entry}");
+        }
+    }
+
+    private static void EnsureNoReparsePoints(string path)
+    {
+        var current = Path.GetFullPath(path);
+        while (!string.IsNullOrEmpty(current))
+        {
+            if ((Directory.Exists(current) || File.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException($"USN cursor paths may not traverse a reparse point: {current}");
+            var parent = Directory.GetParent(current)?.FullName;
+            if (string.IsNullOrEmpty(parent) || string.Equals(parent, current, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) break;
+            current = parent;
+        }
+    }
+
+    private sealed record CursorOwnershipMarker(string Schema);
 }
 
 /// <summary>Adapts the hidden-window clipboard source to the Agent collector contract.</summary>

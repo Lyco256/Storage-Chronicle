@@ -6,8 +6,12 @@ Set-StrictMode -Version Latest
 $repositoryRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 . (Join-Path $repositoryRoot 'tools/TestEnvironment/VirtualBox.Common.ps1')
 
-$testRoot = Join-Path ([IO.Path]::GetTempPath()) ('StorageChronicle.VirtualBoxContract.' + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
+$testRunId = [guid]::NewGuid().ToString('N')
+$testRoot = Join-Path ([IO.Path]::GetTempPath()) ('StorageChronicle.VirtualBoxContract.' + $testRunId)
+New-Item -ItemType Directory -Path $testRoot | Out-Null
+$testOwnerMarker = Join-Path $testRoot '.test-owner.json'
+if (Test-Path -LiteralPath $testOwnerMarker) { throw 'The new VirtualBox contract fixture unexpectedly already has an owner marker.' }
+@{ schema = 'StorageChronicle.VirtualBoxContractFixture.v1'; runId = $testRunId } | ConvertTo-Json -Compress | Set-Content -LiteralPath $testOwnerMarker -Encoding UTF8
 $fakeOsDisk = Join-Path $testRoot 'SC-Test-W11-VBox\os.vdi'
 $fakeW10Disk = Join-Path $testRoot 'SC-Test-W10-VBox\os.vdi'
 $vmStates = @{ 'SC-Test-W11-VBox' = 'poweroff'; 'SC-Test-W10-VBox' = 'poweroff' }
@@ -120,5 +124,15 @@ try {
     exit 0
 }
 finally {
-    if (Test-Path -LiteralPath $testRoot) { Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $testRoot -PathType Container) {
+        $resolvedRoot = [IO.Path]::GetFullPath($testRoot)
+        $expectedParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+        $owner = Get-Content -Raw -LiteralPath $testOwnerMarker | ConvertFrom-Json
+        if ([IO.Path]::GetDirectoryName($resolvedRoot) -ne $expectedParent -or
+            [IO.Path]::GetFileName($resolvedRoot) -ne ('StorageChronicle.VirtualBoxContract.' + $testRunId) -or
+            $owner.schema -ne 'StorageChronicle.VirtualBoxContractFixture.v1' -or $owner.runId -ne $testRunId) {
+            throw 'Refusing to delete the VirtualBox contract fixture because its run ownership could not be verified.'
+        }
+        Remove-Item -LiteralPath $resolvedRoot -Recurse -Force
+    }
 }

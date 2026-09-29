@@ -1,6 +1,6 @@
 # AppendOnlyStorageEngine.cs
 
-The Agent also uses its bounded indexed canonical/source page and count methods for IPC projections; this avoids reading the entire immutable log into memory for every UI page. Segments remain authoritative and SQLite remains rebuildable. A validated log-storage setting can relocate history to a new empty directory by flushing, copying only immutable segments, rebuilding SQLite, and swapping writers under the writer gate; failures leave the original writer active.
+The Agent also uses its bounded indexed canonical/source page and count methods for IPC projections; this avoids reading the entire immutable log into memory for every UI page. Segments remain authoritative and SQLite remains rebuildable. A validated log-storage setting can relocate history only to a path that does not yet exist: it flushes, copies only immutable segments, rebuilds SQLite, and swaps writers under the writer gate. It refuses even an existing empty directory so relocation never removes or adopts a user-created destination; failures leave the original writer active. Before creating or recovering history, the engine requires a valid product ownership marker or an empty directory with no reparse-point ancestors; unmarked directories containing any entries are left untouched and rejected before SQLite recovery can delete files. A marked store is also rejected if any child is a reparse point or an unrecognized entry.
 
 `AppendCanonicalBatchAsync` accepts at most 512 events per call. It preserves event order in immutable segments, performs one coupled SQLite transaction after the segment appends, and retains the existing rebuild-from-segments recovery boundary; it does not read file contents or content hashes.
 
@@ -8,7 +8,7 @@ SQLite recovery and relocation rebuild in finite 512-record batches, keeping the
 
 ## 役割
 
-`IEventStore`と`IStateStore`を実装し、SegmentLogとSqliteIndexを単一writer境界で統合する。source eventはSQLiteなしでもセグメントから読み出せ、canonical eventの状態適用だけがSQLite state cacheを更新する。
+`IEventStore`と`IStateStore`を実装し、SegmentLogとSqliteIndexを単一writer境界で統合する。source eventはSQLiteなしでもセグメントから読み出せ、canonical eventの状態適用だけがSQLite state cacheを更新する。履歴移設先が既存なら空ディレクトリであっても触らず拒否する。起動時は所有markerと再解析ポイントを確認し、未知ファイルを含む未所有の履歴ディレクトリを復旧・削除しない。
 
 ## 書込み順序
 

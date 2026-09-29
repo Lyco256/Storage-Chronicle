@@ -1,8 +1,8 @@
 # MediaImport.cs
 
-Implements confirmed-history import from every writer directory on a media root and persists the PC-side deduplication ledger with an atomic temporary-file replacement. Imports validate manifests and segments through `ExternalMediaStore`, skip already-known segment hashes, detect multiple writer PCs, report unavailable parents/corrupt segments, and apply the media-only filter before returning events.
+Implements confirmed-history import from every writer directory on a media root and persists the PC-side deduplication ledger with unique create-new temporary files. Imports validate manifests and segments through `ExternalMediaStore`, skip already-known segment hashes, detect multiple writer PCs, report unavailable parents/corrupt segments, and apply the media-only filter before returning events.
 
-The importer does not rewrite media history or infer missing events. A corrupt or missing segment produces an honest warning and `UnverifiedGap`; cancellation propagates from directory enumeration and file reads. Tests cover PC-A to PC-B handoff, same-event/segment deduplication, branch inputs, and ledger reload.
+The importer does not rewrite media history or infer missing events. Ledger reads and writes require a marked app-owned non-reparse-point directory, reject unexpected entries, preserve corrupt bytes instead of treating them as empty, and prevent a save from dropping prior hashes. A corrupt or missing segment produces an honest warning and `UnverifiedGap`; a corrupt ledger fails closed so the collector can report a gap without replacing it. Cancellation propagates from directory enumeration and file reads. Tests cover PC-A to PC-B handoff, same-event/segment deduplication, branch inputs, ledger reload, ownership rejection, corruption preservation, and monotonic hashes.
 
 ## Role
 

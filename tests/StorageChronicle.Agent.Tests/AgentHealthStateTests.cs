@@ -61,8 +61,8 @@ public sealed class AgentHealthStateTests
     [Fact]
     public async Task RestartRehydratesAnUnresolvedGapFromCanonicalHistory()
     {
-        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.AgentHealth", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(root);
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.AgentHealth", out var runId);
+        var root = Path.Combine(fixtureRoot, "history");
         try
         {
             var volume = VolumeId.Create("\\\\?\\Volume{health-history}\\");
@@ -88,15 +88,15 @@ public sealed class AgentHealthStateTests
         }
         finally
         {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.AgentHealth", runId);
         }
     }
 
     [Fact]
     public async Task RestartDoesNotRecreateAUserDeclinedGap()
     {
-        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.AgentHealth", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(root);
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.AgentHealth", out var runId);
+        var root = Path.Combine(fixtureRoot, "history");
         try
         {
             var volume = VolumeId.Create("\\\\?\\Volume{health-declined}\\");
@@ -120,7 +120,7 @@ public sealed class AgentHealthStateTests
         }
         finally
         {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.AgentHealth", runId);
         }
     }
 }

@@ -41,13 +41,15 @@ public sealed class NamedPipeSettingsAuthorizer : IAgentSettingsAuthorizer
 /// <summary>Persists settings change facts as append-only UTF-8 JSON without storing values or secrets.</summary>
 public sealed class SettingsHistoryStore : ISettingsChangeHistory, IDisposable
 {
+    private const string OwnershipMarkerName = ".settings-history-owner.json";
+    private const string OwnershipSchema = "StorageChronicle.SettingsHistoryOwnership.v1";
     private readonly string path;
     private readonly SemaphoreSlim gate = new(1, 1);
 
     /// <summary>Initializes the history file below the product's machine data directory.</summary>
     public SettingsHistoryStore(string? path = null)
     {
-        this.path = path ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Storage Chronicle", "history", "settings-history.ndjson");
+        this.path = Path.GetFullPath(path ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Storage Chronicle", "settings", "settings-history.ndjson"));
     }
 
     /// <inheritdoc />
@@ -55,7 +57,7 @@ public sealed class SettingsHistoryStore : ISettingsChangeHistory, IDisposable
     {
         ArgumentNullException.ThrowIfNull(value);
         var directory = Path.GetDirectoryName(path) ?? throw new IOException("Settings history path has no directory.");
-        Directory.CreateDirectory(directory);
+        EnsureOwnedDirectory(directory);
         var line = JsonSerializer.Serialize(value) + Environment.NewLine;
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -72,6 +74,67 @@ public sealed class SettingsHistoryStore : ISettingsChangeHistory, IDisposable
             gate.Release();
         }
     }
+
+    private void EnsureOwnedDirectory(string directory)
+    {
+        var existed = Directory.Exists(directory);
+        if (!existed) Directory.CreateDirectory(directory);
+        EnsureNoReparseAncestors(directory);
+        var markerPath = Path.Combine(directory, OwnershipMarkerName);
+        if (!File.Exists(markerPath))
+        {
+            if (existed || Directory.EnumerateFileSystemEntries(directory).Any())
+                throw new IOException("The settings-history directory is not marked as Storage Chronicle-owned; refusing to adopt existing contents.");
+            try
+            {
+                using var marker = new FileStream(markerPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough);
+                JsonSerializer.Serialize(marker, new SettingsHistoryOwnershipMarker(OwnershipSchema));
+                marker.Flush(flushToDisk: true);
+            }
+            catch (IOException) when (File.Exists(markerPath))
+            {
+                ValidateMarker(markerPath);
+            }
+        }
+        else
+        {
+            ValidateMarker(markerPath);
+        }
+
+        foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+        {
+            if ((File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException($"A settings-history entry is a reparse point: {entry}");
+            var name = Path.GetFileName(entry);
+            if (!name.Equals(OwnershipMarkerName, StringComparison.OrdinalIgnoreCase) && !name.Equals(Path.GetFileName(path), StringComparison.OrdinalIgnoreCase))
+                throw new IOException($"An unrecognized entry exists in the settings-history directory: {entry}");
+            if (Directory.Exists(entry)) throw new IOException($"Unexpected directory exists in the settings-history directory: {entry}");
+        }
+    }
+
+    private static void ValidateMarker(string markerPath)
+    {
+        EnsureNoReparseAncestors(markerPath);
+        using var input = new FileStream(markerPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var marker = JsonSerializer.Deserialize<SettingsHistoryOwnershipMarker>(input);
+        if (marker is null || marker.Schema != OwnershipSchema)
+            throw new IOException("The settings-history ownership marker is invalid; refusing to write.");
+    }
+
+    private static void EnsureNoReparseAncestors(string path)
+    {
+        var current = Path.GetFullPath(path);
+        while (!string.IsNullOrEmpty(current))
+        {
+            if ((Directory.Exists(current) || File.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException($"Settings-history paths may not traverse a reparse point: {current}");
+            var parent = Directory.GetParent(current)?.FullName;
+            if (string.IsNullOrEmpty(parent) || string.Equals(parent, current, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) break;
+            current = parent;
+        }
+    }
+
+    private sealed record SettingsHistoryOwnershipMarker(string Schema);
 
     /// <summary>Releases the serialized history writer gate.</summary>
     public void Dispose() => gate.Dispose();

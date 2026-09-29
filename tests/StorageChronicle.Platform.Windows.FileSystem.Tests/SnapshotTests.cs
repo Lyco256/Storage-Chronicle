@@ -25,7 +25,7 @@ public sealed class SnapshotTests
                 if (name == "junction-loop") return new NativeFileMetadataRecord(FileId.Create("junction"), FileId.Create("root"), name, FileKind.Junction, null, null, null, null, null, null, FileAttributes.Directory | FileAttributes.ReparsePoint, "Junction", true, false);
                 return new NativeFileMetadataRecord(FileId.Create(name == root.Name ? "root" : name), FileId.Create("root"), name, name == root.Name ? FileKind.Directory : FileKind.File, 1, null, null, null, null, null, name == root.Name ? FileAttributes.Directory : FileAttributes.Normal, null, true, false);
             });
-            var volume = new VolumeDescriptor(VolumeId.Create("V"), "FAT32", [root.FullName], false, true, false, false, true);
+            var volume = new VolumeDescriptor(VolumeId.Create("V"), "FAT32", [root.FullName], false, true, ProtectedVolumeRoles.None, false, true);
             var reader = new WindowsVolumeSnapshotReader(native, new WindowsExclusionPolicy(), new WindowsFileSystemOptions { SnapshotBatchSize = 1 });
 
             var events = await ReadAllAsync(reader.ReadInitialSnapshotAsync(volume, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
@@ -49,7 +49,7 @@ public sealed class SnapshotTests
             var denied = Path.Combine(root.FullName, "denied.txt");
             File.WriteAllText(denied, "placeholder");
             var native = new FakeFileNative(path => new NativeFileMetadataRecord(FileId.Create("id:" + path), null, Path.GetFileName(path), FileKind.File, null, null, null, null, null, null, FileAttributes.Normal, null, true, !string.Equals(path, root.FullName, StringComparison.OrdinalIgnoreCase)));
-            var volume = new VolumeDescriptor(VolumeId.Create("V"), "exFAT", [root.FullName], false, true, false, false, true);
+            var volume = new VolumeDescriptor(VolumeId.Create("V"), "exFAT", [root.FullName], false, true, ProtectedVolumeRoles.None, false, true);
             var reader = new WindowsVolumeSnapshotReader(native);
 
             var events = await ReadAllAsync(reader.ReadInitialSnapshotAsync(volume, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
@@ -71,7 +71,7 @@ public sealed class SnapshotTests
             for (var index = 0; index < 5; index++) using (File.Create(Path.Combine(root.FullName, $"entry-{index}.txt"))) { }
             using var cancellation = new CancellationTokenSource();
             var calls = 0;
-            var volume = new VolumeDescriptor(VolumeId.Create("V"), "exFAT", [root.FullName], false, true, false, false, true);
+            var volume = new VolumeDescriptor(VolumeId.Create("V"), "exFAT", [root.FullName], false, true, ProtectedVolumeRoles.None, false, true);
             var native = new FakeFileNative(path =>
             {
                 var value = new NativeFileMetadataRecord(
@@ -117,7 +117,7 @@ public sealed class SnapshotTests
         {
             using var cancellation = new CancellationTokenSource();
             cancellation.Cancel();
-            var volume = new VolumeDescriptor(VolumeId.Create("V"), "FAT32", [root.FullName], false, false, false, false, true);
+            var volume = new VolumeDescriptor(VolumeId.Create("V"), "FAT32", [root.FullName], false, false, ProtectedVolumeRoles.None, false, true);
             var reader = new WindowsVolumeSnapshotReader(new FakeFileNative());
 
             #pragma warning disable xUnit1051

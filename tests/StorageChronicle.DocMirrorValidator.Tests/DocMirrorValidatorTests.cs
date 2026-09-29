@@ -1,4 +1,5 @@
 using StorageChronicle.DocMirrorValidator;
+using System.Text.Json;
 using Xunit;
 
 namespace StorageChronicle.DocMirrorValidator.Tests;
@@ -6,12 +7,16 @@ namespace StorageChronicle.DocMirrorValidator.Tests;
 /// <summary>Behavioral tests for the source/document contract and its failure reporting.</summary>
 public sealed class DocMirrorValidatorTests : IDisposable
 {
-    private readonly string repositoryRoot = Path.Combine(Path.GetTempPath(), "storage-chronicle-doc-mirror-tests", Guid.NewGuid().ToString("N"));
+    private readonly string runId = Guid.NewGuid().ToString("N");
+    private readonly string repositoryRoot;
 
     /// <summary>Creates an isolated temporary repository for each test instance.</summary>
     public DocMirrorValidatorTests()
     {
+        repositoryRoot = Path.Combine(Path.GetTempPath(), "storage-chronicle-doc-mirror-tests", runId);
         Directory.CreateDirectory(repositoryRoot);
+        using var marker = new FileStream(Path.Combine(repositoryRoot, ".test-owner.json"), FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+        JsonSerializer.Serialize(marker, new { Schema = "StorageChronicle.TestFixtureOwner.v1", RunId = runId });
     }
 
     /// <summary>Removes the isolated temporary repository after the test completes.</summary>
@@ -19,7 +24,14 @@ public sealed class DocMirrorValidatorTests : IDisposable
     {
         if (Directory.Exists(repositoryRoot))
         {
-            Directory.Delete(repositoryRoot, recursive: true);
+            var fullRoot = Path.GetFullPath(repositoryRoot);
+            var expectedParent = Path.Combine(Path.GetTempPath(), "storage-chronicle-doc-mirror-tests");
+            if (!string.Equals(Path.GetDirectoryName(fullRoot), expectedParent, StringComparison.OrdinalIgnoreCase) || Path.GetFileName(fullRoot) != runId)
+                throw new IOException("The document-mirror fixture escaped its dedicated temp parent.");
+            using var marker = JsonDocument.Parse(File.ReadAllText(Path.Combine(fullRoot, ".test-owner.json")));
+            if (marker.RootElement.GetProperty("Schema").GetString() != "StorageChronicle.TestFixtureOwner.v1" || marker.RootElement.GetProperty("RunId").GetString() != runId)
+                throw new IOException("The document-mirror fixture owner marker does not match this run.");
+            Directory.Delete(fullRoot, recursive: true);
         }
     }
 

@@ -29,7 +29,8 @@ public sealed class WindowsReconciliationAcceptanceTests
         var volumes = await volumeEnumerator.EnumerateAsync(TestContext.Current.CancellationToken);
         var volume = Assert.Single(volumes, value => value.MountPoints.Any(mount => IsSameOrUnder(root, mount)));
         var scenario = CreateScenario(root, "reconciliation");
-        var historyRoot = Path.Combine(Path.GetTempPath(), "StorageChronicle.AcceptanceHistory", Guid.NewGuid().ToString("N"));
+        var historyFixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.AcceptanceHistory", out var historyRunId);
+        var historyRoot = Path.Combine(historyFixtureRoot, "history");
         var options = new WindowsFileSystemOptions
         {
             StorageChronicleDataRoot = historyRoot,
@@ -160,8 +161,8 @@ public sealed class WindowsReconciliationAcceptanceTests
         }
         finally
         {
-            DeleteScenario(scenario);
-            if (Directory.Exists(historyRoot)) Directory.Delete(historyRoot, recursive: true);
+            DeleteScenario(scenario, root);
+            AgentTestFixtureOwnership.DeleteTempRoot(historyFixtureRoot, "StorageChronicle.AcceptanceHistory", historyRunId);
         }
     }
 
@@ -187,15 +188,10 @@ public sealed class WindowsReconciliationAcceptanceTests
     {
         var volumeRoot = Path.GetPathRoot(root);
         if (string.IsNullOrWhiteSpace(volumeRoot) || string.Equals(volumeRoot, "C:\\", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The acceptance test refuses the guest system volume.");
-        var scenario = Path.Combine(root, $"StorageChronicle.Acceptance.{name}.{Guid.NewGuid():N}");
-        Directory.CreateDirectory(scenario);
-        return scenario;
+        return AgentTestFixtureOwnership.CreateMarkedScenario(root, name, out _);
     }
 
-    private static void DeleteScenario(string path)
-    {
-        if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
-    }
+    private static void DeleteScenario(string path, string root) => AgentTestFixtureOwnership.DeleteMarkedScenario(path, root);
 
     private static bool IsSameOrUnder(string candidate, string root)
     {

@@ -261,8 +261,9 @@ Compress-Archive -Path (Join-Path `$historyRoot '*') -DestinationPath `$historyZ
             if ($null -ne $agentSource) {
                 & (Join-Path $PSScriptRoot 'Copy-TestResultsFromVm.ps1') -VmName $definition.Name -SourcePath $historyGuestZip -DestinationPath $historyHostZip -Credential $Credential -ConfigPath $ConfigPath | Out-File -LiteralPath (Join-Path $guestArtifactDirectory 'copy-agent-history.log') -Encoding UTF8
                 if ($LASTEXITCODE -ne 0) { throw "Agent history retrieval failed for $($definition.Name)." }
-                if (Test-Path -LiteralPath $historyHostRoot) { Remove-Item -LiteralPath $historyHostRoot -Recurse -Force }
-                Expand-Archive -LiteralPath $historyHostZip -DestinationPath $historyHostRoot -Force
+                if (Test-Path -LiteralPath $historyHostRoot) { throw "Refusing to overwrite existing extracted history: $historyHostRoot" }
+                New-Item -ItemType Directory -Path $historyHostRoot | Out-Null
+                Expand-Archive -LiteralPath $historyHostZip -DestinationPath $historyHostRoot
                 & dotnet run --project $validatorProject --no-restore -- --oracle $oracleHostPath --history $historyHostRoot --output $realIoEvidencePath 2>&1 | Tee-Object -FilePath (Join-Path $guestArtifactDirectory 'real-io-validator.log')
                 if ($LASTEXITCODE -ne 0) { throw "Real-I/O oracle comparison failed for $($definition.Name) with exit code ${LASTEXITCODE}." }
                 $realIo = Get-Content -Raw -Encoding UTF8 -LiteralPath $realIoEvidencePath | ConvertFrom-Json

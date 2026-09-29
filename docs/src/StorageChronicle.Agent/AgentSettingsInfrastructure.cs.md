@@ -1,6 +1,6 @@
 # AgentSettingsInfrastructure
 
-Implements the Agent-side settings authorization context, append-only property-name-only settings history, and storage flush lifecycle. Machine updates require the impersonated named-pipe client to be an administrator; settings values are validated and atomically persisted by `StorageChronicle.Settings`.
+Implements the Agent-side settings authorization context, append-only property-name-only settings history, and storage flush lifecycle. Machine updates require the impersonated named-pipe client to be an administrator; settings values are validated and atomically persisted by `StorageChronicle.Settings`. Settings history uses a separate marked `settings` directory rather than the append-only event-history engine root; it rejects unmarked, reparse, or unknown entries before appending.
 
 ## Role
 
@@ -32,7 +32,7 @@ Failure, corruption, cancellation, and recovery remain observable and are not co
 
 ## Tests
 
-Validated by tests/StorageChronicle.Integration.Tests and the affected integration tests.
+Validated by tests/StorageChronicle.Integration.Tests and `tests/StorageChronicle.Agent.Tests/SettingsHistoryStoreTests.cs` for the settings-history ownership boundary.
 
 ## OS constraints
 

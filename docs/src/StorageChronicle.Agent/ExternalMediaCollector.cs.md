@@ -2,9 +2,9 @@
 
 `WindowsExternalMediaCollector` adapts Windows device arrival/removal notifications into source facts. It creates mount sessions, records media quality and removal gaps, and imports only validated external-media mirror history through the immutable media store and import ledger.
 
-The collector owns no file-content reads. It preserves source quality, media identity, mount sequence, and recovery information as properties for the normalizer and downstream projections. Read-only, system, boot, recovery, and EFI media are rejected by the media-store policy. Mirror import failures are isolated and do not terminate the Agent collector loop.
+The collector owns no file-content reads. It preserves source quality, media identity, mount sequence, and recovery information as properties for the normalizer and downstream projections. It forwards the shared protected-role flags, classification completeness, mount points, and a separate write-time identity-binding signal into `MediaVolumeDescriptor`; unknown roles or an unbound target block mirror import, registration, and missing-history recovery. The Windows enumerator currently leaves write-time identity unbound, so production mirror writes remain disabled even when the read-only role query completes. Read-only, system, boot, recovery, and EFI media are rejected. Mirror import failures are isolated and do not terminate the Agent collector loop.
 
-Public types are `IExternalMediaChangeSource`, `WindowsExternalMediaChangeSource`, and `WindowsExternalMediaCollector`. Dependencies are the Windows volume/notification adapters, machine settings, external-media contracts, and the platform-neutral source-event contract. Tests cover connection, removal, enumeration failure, mirror policy, and import behavior in `StorageChronicle.ExternalMedia.Tests` and Agent integration tests.
+Public types are `IExternalMediaChangeSource`, `WindowsExternalMediaChangeSource`, and `WindowsExternalMediaCollector`. Dependencies are the Windows volume/notification adapters, machine settings, external-media contracts, and the platform-neutral source-event contract. Tests cover connection, removal, enumeration failure, mirror policy, volume binding, missing-history recovery, and import behavior in `StorageChronicle.ExternalMedia.Tests` and Agent integration tests.
 
 ## Role
 

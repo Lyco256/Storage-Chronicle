@@ -1,4 +1,5 @@
 using StorageChronicle.Application;
+using StorageChronicle.Contracts;
 using StorageChronicle.Domain.Contracts;
 using StorageChronicle.ExternalMedia;
 using StorageChronicle.Platform.Windows.FileSystem.Policy;
@@ -35,15 +36,17 @@ public sealed class ExternalMediaMirrorCoordinator : IMediaMirrorSessionCoordina
     private readonly ISettingsStore<MachineSettings> settings;
     private readonly string pcId;
     private readonly IMediaMonitoringExclusionRegistrar exclusionRegistrar;
+    private readonly IVolumeBoundMediaFileSystemFactory fileSystemFactory;
     private readonly Dictionary<VolumeId, MirrorSession> sessions = new();
     private readonly SemaphoreSlim gate = new(1, 1);
 
     /// <summary>Initializes a coordinator with machine settings and the shared exclusion policy.</summary>
-    public ExternalMediaMirrorCoordinator(ISettingsStore<MachineSettings> settings, string pcId, IMediaMonitoringExclusionRegistrar exclusionRegistrar)
+    public ExternalMediaMirrorCoordinator(ISettingsStore<MachineSettings> settings, string pcId, IMediaMonitoringExclusionRegistrar exclusionRegistrar, IVolumeBoundMediaFileSystemFactory fileSystemFactory)
     {
         this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
         this.pcId = ValidateIdentity(pcId);
         this.exclusionRegistrar = exclusionRegistrar ?? throw new ArgumentNullException(nameof(exclusionRegistrar));
+        this.fileSystemFactory = fileSystemFactory ?? throw new ArgumentNullException(nameof(fileSystemFactory));
     }
 
     /// <inheritdoc />
@@ -57,14 +60,24 @@ public sealed class ExternalMediaMirrorCoordinator : IMediaMirrorSessionCoordina
             if (sessions.ContainsKey(media.VolumeId)) return;
             var configured = settings.Load().Settings.MediaMirrors.TryGetValue(media.LogicalMediaId, out var root) ? root : null;
             if (string.IsNullOrWhiteSpace(configured) || media.IsReadOnly) return;
-            var configuration = ExternalMediaStore.ValidateMirrorConfiguration(new MediaMirrorConfiguration(true, configured!, media.IsSystemVolume, media.IsBootVolume, media.IsRecoveryVolume, media.IsEfiVolume));
+            var configuration = ExternalMediaStore.ValidateMirrorConfiguration(new MediaMirrorConfiguration(true, configured!, media.ProtectedRoles, media.IsProtectedRoleClassificationComplete));
             if (!configuration.IsAllowed) return;
 
-            var store = new ExternalMediaStore(configuration.MediaRoot, pcId);
-            store.RegisterMonitoringExclusion(exclusionRegistrar);
-            await store.RecoverInterruptedWriteAsync(cancellationToken).ConfigureAwait(false);
-            var parent = await store.ReadManifestSlotAsync(cancellationToken).ConfigureAwait(false);
-            sessions.Add(media.VolumeId, new MirrorSession(media, session, store, parent?.Sha256));
+            var mediaRoot = ExternalMediaStore.ValidateMediaRoot(configuration.MediaRoot, media.MountPoints);
+            var fileSystem = fileSystemFactory.Open(media.VolumeId);
+            var store = new ExternalMediaStore(mediaRoot, pcId, media.VolumeId, fileSystem);
+            try
+            {
+                store.RegisterMonitoringExclusion(exclusionRegistrar);
+                await store.RecoverInterruptedWriteAsync(cancellationToken).ConfigureAwait(false);
+                var parent = await store.ReadManifestSlotAsync(cancellationToken).ConfigureAwait(false);
+                sessions.Add(media.VolumeId, new MirrorSession(media, session, store, parent?.Sha256));
+            }
+            catch
+            {
+                store.Dispose();
+                throw;
+            }
         }
         finally
         {
@@ -79,7 +92,8 @@ public sealed class ExternalMediaMirrorCoordinator : IMediaMirrorSessionCoordina
         try
         {
             if (!sessions.Remove(volumeId, out var session)) return;
-            await FlushSessionAsync(session, cancellationToken).ConfigureAwait(false);
+            try { await FlushSessionAsync(session, cancellationToken).ConfigureAwait(false); }
+            finally { session.Store.Dispose(); }
         }
         finally
         {
@@ -124,6 +138,8 @@ public sealed class ExternalMediaMirrorCoordinator : IMediaMirrorSessionCoordina
     public async ValueTask DisposeAsync()
     {
         try { await FlushAsync(CancellationToken.None).ConfigureAwait(false); } catch (Exception) { }
+        foreach (var session in sessions.Values) session.Store.Dispose();
+        sessions.Clear();
         gate.Dispose();
     }
 

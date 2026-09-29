@@ -121,7 +121,7 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
         var started = DateTimeOffset.UtcNow;
         var runId = Guid.NewGuid().ToString("N");
         var descriptor = (VolumeDescriptor?)null;
-        var failureDescriptor = new VolumeDescriptor(requestedVolume, request.FileSystem, [], false, true, false, false, false);
+        var failureDescriptor = new VolumeDescriptor(requestedVolume, request.FileSystem, [], false, true, ProtectedVolumeRoles.Unknown, false, false);
 
         var metrics = new ReconciliationScopeMetrics();
         var sourceSequence = Math.Max(storage.Status.LastSourceSequence + 1, request.SourceSequence.GetValueOrDefault() + 1);

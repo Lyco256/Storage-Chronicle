@@ -18,8 +18,8 @@ public sealed class NamedPipeServerTests
     [Fact]
     public async Task ProductionPipeClientReadsHealthAndServerRemainsAvailableAfterDisconnect()
     {
-        var directory = Path.Combine(Path.GetTempPath(), "StorageChronicle.AgentPipe", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(directory);
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.AgentPipe", out var runId);
+        var directory = Path.Combine(fixtureRoot, "history");
         try
         {
             await using var store = new AppendOnlyStorageEngine(new StorageEngineOptions(directory) { FlushInterval = TimeSpan.FromMinutes(1) });
@@ -38,15 +38,15 @@ public sealed class NamedPipeServerTests
         }
         finally
         {
-            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.AgentPipe", runId);
         }
     }
 
     [Fact]
     public async Task UnpublishedSessionAgentRoleIsRejected()
     {
-        var directory = Path.Combine(Path.GetTempPath(), "StorageChronicle.AgentPipe", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(directory);
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.AgentPipe", out var runId);
+        var directory = Path.Combine(fixtureRoot, "history");
         try
         {
             await using var store = new AppendOnlyStorageEngine(new StorageEngineOptions(directory) { FlushInterval = TimeSpan.FromMinutes(1) });
@@ -70,22 +70,22 @@ public sealed class NamedPipeServerTests
         }
         finally
         {
-            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.AgentPipe", runId);
         }
     }
 
     [Fact]
     public async Task ExecuteDecisionDelegatesTheSelectedGapToTheConfirmedRunner()
     {
-        var directory = Path.Combine(Path.GetTempPath(), "StorageChronicle.AgentPipe", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(directory);
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.AgentPipe", out var runId);
+        var directory = Path.Combine(fixtureRoot, "history");
         try
         {
             await using var store = new AppendOnlyStorageEngine(new StorageEngineOptions(directory) { FlushInterval = TimeSpan.FromMinutes(1) });
             var health = new AgentHealthState();
             var runner = new RecordingReconciliationRunner();
             using var server = new NamedPipeAgentServer(new AgentProjectionService(store), store, health, new EventNormalizer(), reconciliationRunner: runner);
-            var volume = new VolumeDescriptor(VolumeId.Create("execute-volume"), "FAT32", [directory], false, true, false, false, true);
+            var volume = new VolumeDescriptor(VolumeId.Create("execute-volume"), "FAT32", [directory], false, true, ProtectedVolumeRoles.None, false, true);
             var gap = new SourceEvent(EventId.New(), EventSchemaVersion.Current, EventOrigin.LiveUsn, volume.Id, null, null, null, null, CanonicalOperation.UnverifiedGap, null,
                 new EventTime(DateTimeOffset.UtcNow, TimeSpan.Zero, null, DateTimeOffset.UtcNow, new SourceSequence(1), new MountSequence(1)), EventQuality.UnverifiedGap, null, ProcessAttributionQuality.Unknown, null, "gap",
                 ImmutableDictionary<string, string>.Empty.Add("reason", "test"));
@@ -111,7 +111,7 @@ public sealed class NamedPipeServerTests
         }
         finally
         {
-            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.AgentPipe", runId);
         }
     }
 

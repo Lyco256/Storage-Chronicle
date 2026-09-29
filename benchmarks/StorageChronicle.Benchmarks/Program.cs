@@ -276,7 +276,7 @@ public class SqliteRebuildBenchmarks : IAsyncDisposable
 [InvocationCount(1)]
 [IterationCount(1)]
 [WarmupCount(0)]
-public class MediaManifestBenchmarks
+public class MediaManifestBenchmarks : IDisposable
 {
     private CanonicalEvent[] events = [];
     private ExternalMediaStore? store;
@@ -289,7 +289,8 @@ public class MediaManifestBenchmarks
     {
         root = BenchmarkFixtures.CreateTemporaryDirectory("media-manifest");
         events = BenchmarkFixtures.CreateCanonicalEvents(BenchmarkFixtures.EventCount100K, mediaTagged: true);
-        store = new ExternalMediaStore(root, "benchmark-writer", new FixedMediaClock());
+        var (volumeId, fileSystem) = BenchmarkMediaFileSystem.Open(root);
+        store = new ExternalMediaStore(root, "benchmark-writer", volumeId, fileSystem, new FixedMediaClock());
         segment = await store.AppendSegmentAsync(events).ConfigureAwait(false);
         await store.PublishManifestAsync("media-benchmark", null, "mount-benchmark", new[] { segment }).ConfigureAwait(false);
         var manifest = await store.ReadManifestSlotAsync().ConfigureAwait(false);
@@ -322,10 +323,18 @@ public class MediaManifestBenchmarks
     [GlobalCleanup]
     public void Cleanup()
     {
+        store?.Dispose();
         store = null;
         segment = null;
         BenchmarkFixtures.DeleteTemporaryDirectory(root);
         root = null;
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        Cleanup();
+        GC.SuppressFinalize(this);
     }
 }
 
@@ -335,7 +344,7 @@ public class MediaManifestBenchmarks
 [InvocationCount(1)]
 [IterationCount(1)]
 [WarmupCount(0)]
-public class MediaSegmentAppendBenchmarks
+public class MediaSegmentAppendBenchmarks : IDisposable
 {
     private CanonicalEvent[] events = [];
     private ExternalMediaStore? store;
@@ -350,7 +359,8 @@ public class MediaSegmentAppendBenchmarks
     public void IterationSetup()
     {
         root = BenchmarkFixtures.CreateTemporaryDirectory("media-segment");
-        store = new ExternalMediaStore(root, "benchmark-writer", new FixedMediaClock());
+        var (volumeId, fileSystem) = BenchmarkMediaFileSystem.Open(root);
+        store = new ExternalMediaStore(root, "benchmark-writer", volumeId, fileSystem, new FixedMediaClock());
     }
 
     /// <summary>Appends and hashes one hundred thousand canonical events in a real media segment.</summary>
@@ -367,9 +377,17 @@ public class MediaSegmentAppendBenchmarks
     [IterationCleanup]
     public void IterationCleanup()
     {
+        store?.Dispose();
         store = null;
         BenchmarkFixtures.DeleteTemporaryDirectory(root);
         root = null;
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        IterationCleanup();
+        GC.SuppressFinalize(this);
     }
 }
 

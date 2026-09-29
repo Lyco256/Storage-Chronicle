@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text.Json;
 using StorageChronicle.Application;
 using StorageChronicle.Contracts;
 using StorageChronicle.Domain.Contracts;
@@ -13,7 +14,12 @@ public sealed class CrossModulePipelineTests
     [Fact]
     public async Task CollectorToAppendLogAndStateIsRecoverable()
     {
-        var directory = Path.Combine(Path.GetTempPath(), "StorageChronicle.Integration", Guid.NewGuid().ToString("N"));
+        var runId = Guid.NewGuid().ToString("N");
+        var fixtureRoot = Path.Combine(Path.GetTempPath(), "StorageChronicle.Integration", runId);
+        Directory.CreateDirectory(fixtureRoot);
+        using (var marker = new FileStream(Path.Combine(fixtureRoot, ".test-owner.json"), FileMode.CreateNew, FileAccess.Write, FileShare.Read))
+            JsonSerializer.Serialize(marker, new { Schema = "StorageChronicle.TestFixtureOwner.v1", RunId = runId });
+        var directory = Path.Combine(fixtureRoot, "history");
         Directory.CreateDirectory(directory);
         try
         {
@@ -26,7 +32,15 @@ public sealed class CrossModulePipelineTests
         }
         finally
         {
-            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+            if (Directory.Exists(fixtureRoot))
+            {
+                using var marker = JsonDocument.Parse(File.ReadAllText(Path.Combine(fixtureRoot, ".test-owner.json")));
+                Assert.Equal("StorageChronicle.TestFixtureOwner.v1", marker.RootElement.GetProperty("Schema").GetString());
+                Assert.Equal(runId, marker.RootElement.GetProperty("RunId").GetString());
+                Assert.Equal(runId, Path.GetFileName(fixtureRoot));
+                Assert.Equal(Path.Combine(Path.GetTempPath(), "StorageChronicle.Integration"), Path.GetDirectoryName(fixtureRoot));
+                Directory.Delete(fixtureRoot, recursive: true);
+            }
         }
     }
 

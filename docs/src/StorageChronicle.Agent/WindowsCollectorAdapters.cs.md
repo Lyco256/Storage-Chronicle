@@ -1,6 +1,6 @@
 # WindowsCollectorAdapters
 
-Connects platform collectors to the bounded Agent contract. NTFS volumes capture a pre-scan USN boundary, use FSCTL USN plus first-run public MFT enumeration, feed initial standard metadata through the production directory snapshot reader, and persist a per-volume journal cursor; records produced during the initial scan are recovered from the captured boundary. The directory collector skips those volumes to prevent duplicate facts. Clipboard uses the hidden `AddClipboardFormatListener` source, and shares use registry notification with the documented fallback. No file contents or hashes are read.
+Connects platform collectors to the bounded Agent contract. NTFS volumes capture a pre-scan USN boundary, use FSCTL USN plus first-run public MFT enumeration, feed initial standard metadata through the production directory snapshot reader, and persist per-volume journal cursors inside a marked product-owned directory. Cursor storage rejects unmarked roots, reparse points, and unknown entries and writes unique create-new temporary files; an unsafe cursor directory is preserved and ignored. Records produced during the initial scan are recovered from the captured boundary. The directory collector skips those volumes to prevent duplicate facts. Clipboard uses the hidden `AddClipboardFormatListener` source, and shares use registry notification with the documented fallback. No file contents or hashes are read.
 
 ## Role
 

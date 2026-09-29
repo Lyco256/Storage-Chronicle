@@ -25,8 +25,9 @@ public sealed class WindowsAclDeniedAcceptanceTests
         var root = Required("STORAGE_CHRONICLE_ACCEPTANCE_ROOT");
         var volumes = await new WindowsVolumeEnumerator().EnumerateAsync(TestContext.Current.CancellationToken);
         var volume = Assert.Single(volumes, value => value.FileSystem.Equals("NTFS", StringComparison.OrdinalIgnoreCase) && value.MountPoints.Any(mount => IsSameOrUnder(root, mount)));
-        var scenario = CreateScenario(root);
-        var historyRoot = Path.Combine(Path.GetTempPath(), "StorageChronicle.AclDeniedHistory", Guid.NewGuid().ToString("N"));
+        var scenario = AgentTestFixtureOwnership.CreateMarkedScenario(root, "acl-denied", out _);
+        var historyFixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.AclDeniedHistory", out var historyRunId);
+        var historyRoot = Path.Combine(historyFixtureRoot, "history");
         var options = new WindowsFileSystemOptions
         {
             StorageChronicleDataRoot = historyRoot,
@@ -79,28 +80,14 @@ public sealed class WindowsAclDeniedAcceptanceTests
                 try { new FileInfo(candidatePath).SetAccessControl(originalSecurity); } catch (UnauthorizedAccessException) { }
             }
 
-            DeleteScenario(scenario);
-            if (Directory.Exists(historyRoot)) Directory.Delete(historyRoot, recursive: true);
+            AgentTestFixtureOwnership.DeleteMarkedScenario(scenario, root);
+            AgentTestFixtureOwnership.DeleteTempRoot(historyFixtureRoot, "StorageChronicle.AclDeniedHistory", historyRunId);
         }
     }
 
     public static bool IsAcceptanceEnvironmentReady => OperatingSystem.IsWindows() && !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("STORAGE_CHRONICLE_ACCEPTANCE_ROOT"));
 
     private static string Required(string name) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? Path.GetFullPath(value) : throw new InvalidOperationException($"{name} is required for a privileged acceptance run.");
-
-    private static string CreateScenario(string root)
-    {
-        var volumeRoot = Path.GetPathRoot(root);
-        if (string.IsNullOrWhiteSpace(volumeRoot) || string.Equals(volumeRoot, "C:\\", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The acceptance test refuses the guest system volume.");
-        var scenario = Path.Combine(root, $"StorageChronicle.Acceptance.acl-denied.{Guid.NewGuid():N}");
-        Directory.CreateDirectory(scenario);
-        return scenario;
-    }
-
-    private static void DeleteScenario(string path)
-    {
-        if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
-    }
 
     private static bool IsSameOrUnder(string candidate, string root)
     {

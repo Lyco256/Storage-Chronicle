@@ -24,8 +24,9 @@ public sealed class WindowsNonNtfsAcceptanceTests
         var volumeEnumerator = new WindowsVolumeEnumerator();
         var volume = Assert.Single(await volumeEnumerator.EnumerateAsync(TestContext.Current.CancellationToken), value => value.MountPoints.Any(mount => IsSameOrUnder(root, mount)));
         Assert.False(string.Equals("NTFS", volume.FileSystem, StringComparison.OrdinalIgnoreCase));
-        var scenario = CreateScenario(root);
-        var historyRoot = Path.Combine(Path.GetTempPath(), "StorageChronicle.NonNtfsAcceptanceHistory", Guid.NewGuid().ToString("N"));
+        var scenario = AgentTestFixtureOwnership.CreateMarkedScenario(root, "non-ntfs", out _);
+        var historyFixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.NonNtfsAcceptanceHistory", out var historyRunId);
+        var historyRoot = Path.Combine(historyFixtureRoot, "history");
         var options = new WindowsFileSystemOptions
         {
             StorageChronicleDataRoot = historyRoot,
@@ -67,28 +68,14 @@ public sealed class WindowsNonNtfsAcceptanceTests
         }
         finally
         {
-            DeleteScenario(scenario);
-            if (Directory.Exists(historyRoot)) Directory.Delete(historyRoot, recursive: true);
+            AgentTestFixtureOwnership.DeleteMarkedScenario(scenario, root);
+            AgentTestFixtureOwnership.DeleteTempRoot(historyFixtureRoot, "StorageChronicle.NonNtfsAcceptanceHistory", historyRunId);
         }
     }
 
     public static bool IsAcceptanceEnvironmentReady => OperatingSystem.IsWindows() && !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("STORAGE_CHRONICLE_ACCEPTANCE_ROOT"));
 
     private static string Required(string name) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? Path.GetFullPath(value) : throw new InvalidOperationException($"{name} is required for a privileged acceptance run.");
-
-    private static string CreateScenario(string root)
-    {
-        var volumeRoot = Path.GetPathRoot(root);
-        if (string.IsNullOrWhiteSpace(volumeRoot) || string.Equals(volumeRoot, "C:\\", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The acceptance test refuses the guest system volume.");
-        var scenario = Path.Combine(root, $"StorageChronicle.Acceptance.non-ntfs.{Guid.NewGuid():N}");
-        Directory.CreateDirectory(scenario);
-        return scenario;
-    }
-
-    private static void DeleteScenario(string path)
-    {
-        if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
-    }
 
     private static bool IsSameOrUnder(string candidate, string root)
     {

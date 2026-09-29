@@ -18,13 +18,14 @@ namespace StorageChronicle.Agent;
 /// <summary>Builds the LocalSystem-compatible Windows Service host.</summary>
 public static class Program
 {
-    /// <summary>Starts the LocalSystem service, diagnostic console, or isolated TestLab collector host.</summary>
-    public static Task Main(string[] args)
+    /// <summary>Starts the service/collector host or handles the MSI-only recovery configuration verb.</summary>
+    public static async Task<int> Main(string[] args)
     {
+        if (args.Length > 0 && string.Equals(args[0], "--configure-service-recovery", StringComparison.OrdinalIgnoreCase))
+            return args.Length == 1 && WindowsServiceRecoveryConfigurator.TryConfigureInstalledService() ? 0 : 1;
         var diagnosticMode = args.Any(value => string.Equals(value, "--diagnostic", StringComparison.OrdinalIgnoreCase));
         var testLabMode = args.Any(value => string.Equals(value, "--testlab", StringComparison.OrdinalIgnoreCase));
         if (diagnosticMode && testLabMode) throw new ArgumentException("--diagnostic and --testlab are mutually exclusive.");
-        if (!diagnosticMode && !testLabMode) _ = WindowsServiceRecoveryConfigurator.TryConfigure();
         var builder = Host.CreateApplicationBuilder(args);
         if (!diagnosticMode && !testLabMode) builder.Services.AddWindowsService(options => options.ServiceName = "Storage Chronicle Agent");
         var productRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Storage Chronicle");
@@ -49,6 +50,7 @@ public static class Program
         builder.Services.AddSingleton<AgentSettingsService>();
         builder.Services.AddSingleton<IAgentSettingsGateway>(services => services.GetRequiredService<AgentSettingsService>());
         builder.Services.AddSingleton<IVolumeEnumerator, WindowsVolumeEnumerator>();
+        builder.Services.AddSingleton<IVolumeBoundMediaFileSystemFactory, WindowsVolumeDirectorySessionFactory>();
         builder.Services.AddSingleton<INtfsApi, WindowsNtfsApi>();
         builder.Services.AddSingleton(new WindowsExclusionPolicy(new WindowsFileSystemOptions
         {
@@ -59,7 +61,8 @@ public static class Program
         builder.Services.AddSingleton<IMediaMonitoringExclusionRegistrar, WindowsMediaExclusionRegistrar>();
         builder.Services.AddSingleton<ExternalMediaMirrorCoordinator>(services => new ExternalMediaMirrorCoordinator(
             services.GetRequiredService<ISettingsStore<MachineSettings>>(), Environment.MachineName,
-            services.GetRequiredService<IMediaMonitoringExclusionRegistrar>()));
+            services.GetRequiredService<IMediaMonitoringExclusionRegistrar>(),
+            services.GetRequiredService<IVolumeBoundMediaFileSystemFactory>()));
         builder.Services.AddSingleton<IMediaMirrorSessionCoordinator>(services => services.GetRequiredService<ExternalMediaMirrorCoordinator>());
         builder.Services.AddSingleton<ICanonicalEventSink>(services => services.GetRequiredService<ExternalMediaMirrorCoordinator>());
         builder.Services.AddSingleton<IExternalMediaChangeSource, WindowsExternalMediaChangeSource>();
@@ -95,10 +98,12 @@ public static class Program
             services.GetRequiredService<IVolumeEnumerator>(),
             services.GetRequiredService<ISettingsStore<MachineSettings>>(),
             Environment.MachineName,
-            mirrorCoordinator: services.GetRequiredService<IMediaMirrorSessionCoordinator>()));
+            mirrorCoordinator: services.GetRequiredService<IMediaMirrorSessionCoordinator>(),
+            fileSystemFactory: services.GetRequiredService<IVolumeBoundMediaFileSystemFactory>()));
         builder.Services.AddSingleton<IProjectionService, AgentProjectionService>();
         builder.Services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService>(services => services.GetRequiredService<AgentWorker>());
         builder.Services.AddHostedService<NamedPipeAgentServer>();
-        return builder.Build().RunAsync();
+        await builder.Build().RunAsync();
+        return 0;
     }
 }

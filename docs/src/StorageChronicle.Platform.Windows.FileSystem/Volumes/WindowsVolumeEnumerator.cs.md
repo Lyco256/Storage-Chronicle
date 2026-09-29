@@ -1,6 +1,6 @@
 # WindowsVolumeEnumerator
 
-Maps native volume records to the shared `VolumeDescriptor` contract. Volume GUID identity is retained even with no drive letter, mount points are deduplicated, external media is identified from drive type, and directory-unreadable volumes are reported with `IsDirectoryReadable=false` instead of silently discarded. `WindowsPlatformCapabilities` limits capabilities to Windows 10 19041 APIs and conservatively disables ReFS journal continuity.
+Maps native volume records to the shared `VolumeDescriptor` contract. Volume GUID identity is retained even with no drive letter, mount points are deduplicated, external media is identified from drive type, and directory-unreadable volumes are reported with `IsDirectoryReadable=false` instead of silently discarded. The native adapter queries read-only `MSFT_Partition` role facts and the pure `WindowsVolumeRoleClassifier` binds exactly one partition by volume GUID/mount point, recognizing only known GPT/MBR layouts. Missing, ambiguous, unsupported, or failed queries carry `ProtectedVolumeRoles.Unknown` and an incomplete flag. Even a complete role classification does not set the separate write-time volume identity binding; physical media mirroring remains disabled until that check is implemented. `WindowsPlatformCapabilities` limits capabilities to Windows 10 19041 APIs and conservatively disables ReFS journal continuity.
 
 ## Role
 

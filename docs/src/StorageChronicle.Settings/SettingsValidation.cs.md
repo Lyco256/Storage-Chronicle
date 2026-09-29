@@ -1,20 +1,35 @@
 # SettingsValidation.cs
 
-## ??
+## Role
 
-Machine/User Settings ??????????IPC ?????????
+Validates machine and user settings before persistence or runtime application. It owns value ranges, absolute-path syntax, and the non-overlap rule between monitored roots and local history storage.
 
-## ????????
+## Public types
 
-`SettingsValidator` ? absolute path?Machine ? flush 1?60 ??User timeout 0.5?60 ??Event Stack ??? 50?5000?Diff zoom 50?300%????????????????????`SettingsValidationException` ???????????
+- `SettingsValidator` validates machine/user settings and exposes throwing `EnsureValid` helpers.
+- `SettingsValidationException` carries the structured `SettingsValidationResult` when validation fails.
 
-## ?????????
+## Invariants
 
-?? `System.IO` ???????????????????? `SettingsValidationResult` ??? `SettingsValidationException` ?????????????????????
+- History storage must be a local rooted path and cannot equal, contain, or be contained by a monitored path. This prevents durable product writes and recovery deletes from entering a monitored data tree.
+- Path overlap uses canonical full paths and the platform's path case semantics. This check does not resolve reparse points or establish filesystem ownership; runtime path resolution remains a separate safety gate.
+- Invalid paths and out-of-range values remain explicit validation errors; they are not silently normalized into accepted settings.
 
-## ?????
+## Dependencies
 
-`tests/StorageChronicle.Settings.Tests/SettingsTests.cs` ? `ValidationCoversRangesPathsAndMirrors` ?????????????????????????????
+Uses `System.IO` for rooted-path normalization and the settings models/results in this project. It contains no Windows-only API so settings contracts remain platform-neutral.
+
+## Failure behavior
+
+`Validate` returns every detected error. Path-normalization failures do not escape as success; malformed syntax is reported by the ordinary path validator. `EnsureValid` throws `SettingsValidationException` with the structured result.
+
+## Tests
+
+`tests/StorageChronicle.Settings.Tests/SettingsTests.cs` covers path syntax, UNC rejection for history, overlapping roots in both directions, case-insensitive Windows duplicates, and valid disjoint machine settings in addition to existing settings validation.
+
+## Scope limitations
+
+The lexical path check does not prove that junctions, symlinks, mount points, UNC redirections, or volume identities resolve to the intended target. Physical acceptance remains blocked until those checks and independent runtime write monitoring are implemented.
 
 ## Role
 

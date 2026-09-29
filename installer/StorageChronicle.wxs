@@ -22,7 +22,6 @@
         <File Id="AgentExe" Source="$(var.AgentSource)" KeyPath="yes" />
         <ServiceInstall Id="AgentServiceInstall" Name="StorageChronicleAgent" DisplayName="Storage Chronicle Agent" Type="ownProcess" Start="auto" Account="LocalSystem" ErrorControl="normal" Vital="yes" />
         <ServiceControl Id="AgentServiceControl" Name="StorageChronicleAgent" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
-        <!-- The installer enables restart recovery actions. The Agent host applies the distinct 5/15/60-second delays after the service exists. -->
         <util:ServiceConfig ServiceName="StorageChronicleAgent" FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart" RestartServiceDelayInSeconds="5" ResetPeriodInDays="1" />
       </Component>
       <Component Id="SessionAgentComponent" Guid="4F5B0D43-3CB7-4D99-8E20-9FC5B4FA5A02" Bitness="always64">
@@ -39,5 +38,11 @@
         <CreateFolder />
       </Component>
     </ComponentGroup>
+  </Fragment>
+  <Fragment>
+    <CustomAction Id="ConfigureAgentServiceRecovery" FileRef="AgentExe" ExeCommand="--configure-service-recovery" Execute="deferred" Impersonate="no" Return="check" />
+    <InstallExecuteSequence>
+      <Custom Action="ConfigureAgentServiceRecovery" After="StartServices" Condition="NOT REMOVE" />
+    </InstallExecuteSequence>
   </Fragment>
 </Wix>

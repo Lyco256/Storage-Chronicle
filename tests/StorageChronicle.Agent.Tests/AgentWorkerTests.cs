@@ -13,7 +13,8 @@ public sealed class AgentWorkerTests
     [Fact]
     public async Task PipelineStorageFailureIsSupervisedAndDoesNotFaultHostedWorker()
     {
-        var root = Path.Combine(Path.GetTempPath(), "storage-chronicle-agent-worker-" + Guid.NewGuid().ToString("N"));
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("storage-chronicle-agent-worker", out var runId);
+        var root = Path.Combine(fixtureRoot, "history");
         var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(root)
         {
             FlushInterval = TimeSpan.FromHours(1),
@@ -28,6 +29,7 @@ public sealed class AgentWorkerTests
             storage,
             health);
 
+        Exception? cleanupFailure = null;
         try
         {
             await worker.StartAsync(CancellationToken.None);
@@ -42,8 +44,10 @@ public sealed class AgentWorkerTests
         finally
         {
             await storage.DisposeAsync();
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            try { AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "storage-chronicle-agent-worker", runId); }
+            catch (Exception exception) { cleanupFailure = exception; }
         }
+        Assert.Null(cleanupFailure);
     }
 
     private static async Task<bool> WaitForAsync(Func<bool> predicate, TimeSpan timeout)

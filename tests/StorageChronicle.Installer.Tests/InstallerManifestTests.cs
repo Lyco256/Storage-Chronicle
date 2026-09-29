@@ -13,12 +13,15 @@ public sealed class InstallerManifestTests
         Assert.Contains("Account=\"LocalSystem\"", wix, StringComparison.Ordinal);
         Assert.Contains("ServiceConfig", wix, StringComparison.Ordinal);
         Assert.Contains("RestartServiceDelayInSeconds=\"5\"", wix, StringComparison.Ordinal);
-        Assert.Contains("distinct 5/15/60-second delays", wix, StringComparison.Ordinal);
+        Assert.Contains("ConfigureAgentServiceRecovery", wix, StringComparison.Ordinal);
+        Assert.Contains("After=\"StartServices\"", wix, StringComparison.Ordinal);
         var recovery = File.ReadAllText(Path.Combine(root, "src", "StorageChronicle.Agent", "WindowsServiceRecoveryConfigurator.cs"));
         Assert.Contains("5_000", recovery, StringComparison.Ordinal);
         Assert.Contains("15_000", recovery, StringComparison.Ordinal);
         Assert.Contains("60_000", recovery, StringComparison.Ordinal);
-        Assert.Contains("ChangeServiceConfig2", recovery, StringComparison.Ordinal);
+        Assert.Contains("GetExecutablePath", recovery, StringComparison.Ordinal);
+        var program = File.ReadAllText(Path.Combine(root, "src", "StorageChronicle.Agent", "Program.cs"));
+        Assert.Contains("--configure-service-recovery", program, StringComparison.Ordinal);
         Assert.Contains("CurrentVersion\\Run", wix, StringComparison.Ordinal);
         Assert.Contains("CommonAppDataFolder", wix, StringComparison.Ordinal);
         Assert.Contains("Permanent=\"yes\"", wix, StringComparison.Ordinal);
@@ -26,7 +29,7 @@ public sealed class InstallerManifestTests
     }
 
     [Fact]
-    public void VirtualBoxInstallerDriverIsExplicitAndFailClosed()
+    public void VirtualBoxInstallerDriverExistsButPhysicalPolicyDisablesHarnessVmExecution()
     {
         var root = FindRoot();
         var genericHarness = File.ReadAllText(Path.Combine(root, "build", "package", "Test-Installer.ps1"));
@@ -34,7 +37,9 @@ public sealed class InstallerManifestTests
         var orchestrator = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Run-VirtualBoxInstallerAcceptance.ps1"));
 
         Assert.Contains("GuestCredentialReference", genericHarness, StringComparison.Ordinal);
-        Assert.Contains("'PhysicalMachine', 'VirtualBoxVm'", genericHarness, StringComparison.Ordinal);
+        Assert.Contains("$validTargetKind = $TargetKind -eq 'PhysicalMachine'", genericHarness, StringComparison.Ordinal);
+        Assert.Contains("$validMode = $ExecutionMode -eq 'Local'", genericHarness, StringComparison.Ordinal);
+        Assert.Contains("VM and non-physical installer execution are disabled", genericHarness, StringComparison.Ordinal);
         Assert.Contains("Invoke-VBoxGuestControl", driver, StringComparison.Ordinal);
         Assert.Contains("Copy-TestArtifactToVm", driver, StringComparison.Ordinal);
         Assert.Contains("Copy-TestArtifactFromVm", driver, StringComparison.Ordinal);
@@ -103,6 +108,58 @@ public sealed class InstallerManifestTests
         Assert.Contains("IsAdministrator", finalGate, StringComparison.Ordinal);
         Assert.Contains("AcceptanceEligible=true", finalGate, StringComparison.Ordinal);
         Assert.Contains("placeholder, failed, or ineligible result", finalGate, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PhysicalVhdxRunnerRevalidatesDiskRolesAndNeverDeletesItsFixture()
+    {
+        var root = FindRoot();
+        var producer = File.ReadAllText(Path.Combine(root, "build", "Test-Privileged.ps1"));
+        var beforeInitialize = producer.Split("Initialize-Disk -UniqueId $diskUniqueId", StringSplitOptions.None)[0];
+
+        Assert.Contains("Get-Disk -UniqueId $uniqueId", producer, StringComparison.Ordinal);
+        Assert.Contains("$resolvedImageDisks[0].Number -ne [uint32]$disk.Number", producer, StringComparison.Ordinal);
+        Assert.Contains("Assert-VhdxDiskHasNoPagingOrCrashDumpRole $diskUniqueId", beforeInitialize, StringComparison.Ordinal);
+        Assert.Contains("Dismount-DiskImage -ImagePath $VhdxPath -ErrorAction Stop", producer, StringComparison.Ordinal);
+        Assert.Contains("DETACHED_VERIFIED", producer, StringComparison.Ordinal);
+        Assert.Contains("VhdxDetachStatus = 'FAILED'", producer, StringComparison.Ordinal);
+        Assert.DoesNotContain("Remove-Item -LiteralPath $VhdxPath", producer, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PhysicalInstallerMutationRequiresFreshRunOwnershipAndCannotFallBackToVmOrOverwriteEvidence()
+    {
+        var root = FindRoot();
+        var launcher = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Run-RealMachineInstallerAcceptance.ps1"));
+        var harness = File.ReadAllText(Path.Combine(root, "build", "package", "Test-Installer.ps1"));
+        var driver = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Invoke-RealInstallerCase.ps1"));
+        var probe = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Probe-WriteAccess.ps1"));
+
+        Assert.DoesNotContain("SkipConfirmation", launcher, StringComparison.Ordinal);
+        Assert.Contains("ExpectedHashManifestSha256", launcher, StringComparison.Ordinal);
+        Assert.Contains("EvidenceRoot must be a new path", launcher, StringComparison.Ordinal);
+        Assert.Contains("I CONFIRM DEDICATED PC", harness, StringComparison.Ordinal);
+        Assert.Contains("StorageChronicle.PhysicalInstallerOwnerReceipt.v1", harness, StringComparison.Ordinal);
+        Assert.Contains("VM and non-physical installer execution are disabled", harness, StringComparison.Ordinal);
+        Assert.Contains("Bundle hash entry is unsafe or malformed", harness, StringComparison.Ordinal);
+        Assert.Contains("$relativePath -match '(^|[\\\\/])\\.\\.([\\\\/]|$)'", harness, StringComparison.Ordinal);
+        Assert.Contains("Physical installer input must be the exact fingerprinted bundle payload", harness, StringComparison.Ordinal);
+        Assert.Contains("Bundle hash manifest contains a duplicate payload path", harness, StringComparison.Ordinal);
+        Assert.Contains("The volume marker schema, role, label, filesystem, or TestId", launcher, StringComparison.Ordinal);
+        Assert.Contains("must be the canonical Storage Chronicle directory under Program Files", harness, StringComparison.Ordinal);
+        Assert.Contains("must be the canonical Storage Chronicle history directory under ProgramData", harness, StringComparison.Ordinal);
+        Assert.Contains("outside system/application roots, repository, bundle, OneDrive, and Documents", harness, StringComparison.Ordinal);
+        Assert.Contains("Installer driver paths must be the canonical product install/history paths", driver, StringComparison.Ordinal);
+        Assert.Contains("NTFS fixed-volume role", driver, StringComparison.Ordinal);
+        Assert.Contains("Write-NewUtf8File $manifestPath $json", harness, StringComparison.Ordinal);
+        Assert.DoesNotContain("Set-Content -LiteralPath $manifestPath", harness, StringComparison.Ordinal);
+        Assert.Contains("AuthorizationNonce", driver, StringComparison.Ordinal);
+        Assert.Contains("HumanConfirmation", driver, StringComparison.Ordinal);
+        Assert.Contains("FileMode]::CreateNew", driver, StringComparison.Ordinal);
+        Assert.DoesNotContain("New-Item -ItemType Directory -Force -Path $permissionRoot", driver, StringComparison.Ordinal);
+        Assert.DoesNotContain("Remove-Item -LiteralPath $permissionRoot -Recurse", driver, StringComparison.Ordinal);
+        Assert.DoesNotContain("catch { exit 0 }", probe, StringComparison.Ordinal);
+        Assert.Contains("$probeExitCode = 2", probe, StringComparison.Ordinal);
     }
 
     [Fact]

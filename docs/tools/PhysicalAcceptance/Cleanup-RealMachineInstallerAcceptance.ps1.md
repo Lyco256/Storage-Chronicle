@@ -1,5 +1,5 @@
 # Cleanup-RealMachineInstallerAcceptance.ps1
 
-Explicitly confirmed cleanup for the physical installer bundle. It can uninstall the product without removing `%ProgramData%\Storage Chronicle\history`, and can dismount/remove only VHDX files under a supplied test-data root whose sibling `.storage-chronicle-testlab-marker.json` and `StorageChronicleTestVolume.json` markers are present. Elevation, `-ConfirmCleanup`, exact-root checks, and `ShouldProcess` are required; no broad recursive user-data deletion is permitted.
+Fail-closed placeholder for physical acceptance cleanup. It performs no changes. Requests to uninstall the product or remove VHDX files are rejected; evidence and test data remain intact until a future cleanup workflow binds one exact run GUID and verified owned paths. This guard is not an installer or fixture cleanup test.
 
 Tests: parser validation; destructive cleanup requires a human-approved disposable target.

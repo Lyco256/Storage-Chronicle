@@ -30,8 +30,7 @@ public sealed class WindowsVolumeEnumerator : IVolumeEnumerator
             cancellationToken.ThrowIfCancellationRequested();
             var volumeId = VolumeId.Create(NormalizeVolumeId(volume.VolumeGuidPath));
             var mountPoints = volume.MountPoints.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            var isSystem = mountPoints.Any(IsSystemMountPoint);
-            descriptors.Add(new VolumeDescriptor(volumeId, volume.FileSystem, mountPoints, volume.IsReadOnly, volume.DriveType is Interop.DriveType.Removable or Interop.DriveType.CdRom, isSystem, volume.SupportsUsn, volume.IsDirectoryReadable));
+            descriptors.Add(new VolumeDescriptor(volumeId, volume.FileSystem, mountPoints, volume.IsReadOnly, volume.DriveType is Interop.DriveType.Removable or Interop.DriveType.CdRom, volume.ProtectedRoles, volume.SupportsUsn, volume.IsDirectoryReadable, volume.IsProtectedRoleClassificationComplete));
         }
 
         return ValueTask.FromResult<IReadOnlyList<VolumeDescriptor>>(descriptors);
@@ -39,13 +38,6 @@ public sealed class WindowsVolumeEnumerator : IVolumeEnumerator
 
     private static string NormalizeVolumeId(string value) => value.TrimEnd('\0').TrimEnd('\\').ToUpperInvariant();
 
-    private static bool IsSystemMountPoint(string mountPoint)
-    {
-        var systemDirectory = Path.GetFullPath(Environment.SystemDirectory).TrimEnd(Path.DirectorySeparatorChar);
-        var normalized = Path.GetFullPath(mountPoint).TrimEnd(Path.DirectorySeparatorChar);
-        return string.Equals(systemDirectory, normalized, StringComparison.OrdinalIgnoreCase) ||
-               systemDirectory.StartsWith(normalized + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
-    }
 }
 
 /// <summary>Detects Windows collector capabilities and deliberately reports ReFS journal continuity conservatively.</summary>

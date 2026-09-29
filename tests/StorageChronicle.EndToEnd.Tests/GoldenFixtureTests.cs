@@ -13,12 +13,14 @@ namespace StorageChronicle.EndToEnd.Tests;
 public sealed class GoldenFixtureTests
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private static readonly string[] SqliteIndexFileNames = ["index.sqlite", "index.sqlite-wal", "index.sqlite-shm"];
 
     [Fact]
     public async Task CreationDeleteGoldenFixtureSurvivesAgentRestartAndSqliteRebuild()
     {
         var fixture = await LoadFixtureAsync("creation-delete.json", TestContext.Current.CancellationToken);
-        var directory = Path.Combine(Path.GetTempPath(), "StorageChronicle.Golden", Guid.NewGuid().ToString("N"));
+        var fixtureRoot = CreateFixtureRoot(out var runId);
+        var directory = Path.Combine(fixtureRoot, "history");
         Directory.CreateDirectory(directory);
         try
         {
@@ -28,7 +30,11 @@ public sealed class GoldenFixtureTests
                 await first.StopAsync(TestContext.Current.CancellationToken);
             }
 
-            foreach (var sqliteFile in Directory.EnumerateFiles(directory, "*.db*")) File.Delete(sqliteFile);
+            foreach (var sqliteFile in SqliteIndexFileNames.Select(name => Path.Combine(directory, name)).Where(File.Exists))
+            {
+                Assert.True(IsOwnedFixture(fixtureRoot, runId), "Only the current marked test fixture may have its rebuildable SQLite index files removed.");
+                File.Delete(sqliteFile);
+            }
 
             await using var restarted = new AppendOnlyStorageEngine(new StorageEngineOptions(directory) { FlushInterval = TimeSpan.FromMinutes(1) });
             await restarted.RebuildSqliteAsync(TestContext.Current.CancellationToken);
@@ -41,14 +47,15 @@ public sealed class GoldenFixtureTests
         }
         finally
         {
-            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+            DeleteFixtureRoot(fixtureRoot, runId);
         }
     }
 
     [Fact]
     public async Task CapacityFailureIsExplicitAndDoesNotSilentlyDropSourceQuality()
     {
-        var directory = Path.Combine(Path.GetTempPath(), "StorageChronicle.Capacity", Guid.NewGuid().ToString("N"));
+        var fixtureRoot = CreateFixtureRoot(out var runId);
+        var directory = Path.Combine(fixtureRoot, "history");
         Directory.CreateDirectory(directory);
         try
         {
@@ -58,8 +65,34 @@ public sealed class GoldenFixtureTests
         }
         finally
         {
-            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+            DeleteFixtureRoot(fixtureRoot, runId);
         }
+    }
+
+    private static string CreateFixtureRoot(out string runId)
+    {
+        runId = Guid.NewGuid().ToString("N");
+        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.EndToEnd.Tests", runId);
+        Directory.CreateDirectory(root);
+        using var marker = new FileStream(Path.Combine(root, ".test-owner.json"), FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+        JsonSerializer.Serialize(marker, new { Schema = "StorageChronicle.TestFixtureOwner.v1", RunId = runId });
+        return root;
+    }
+
+    private static bool IsOwnedFixture(string root, string runId)
+    {
+        var fullRoot = Path.GetFullPath(root);
+        if (!string.Equals(Path.GetDirectoryName(fullRoot), Path.Combine(Path.GetTempPath(), "StorageChronicle.EndToEnd.Tests"), StringComparison.OrdinalIgnoreCase) || Path.GetFileName(fullRoot) != runId)
+            return false;
+        using var marker = JsonDocument.Parse(File.ReadAllText(Path.Combine(fullRoot, ".test-owner.json")));
+        return marker.RootElement.GetProperty("Schema").GetString() == "StorageChronicle.TestFixtureOwner.v1" && marker.RootElement.GetProperty("RunId").GetString() == runId;
+    }
+
+    private static void DeleteFixtureRoot(string root, string runId)
+    {
+        if (!Directory.Exists(root)) return;
+        if (!IsOwnedFixture(root, runId)) throw new IOException("The end-to-end fixture ownership marker does not match this run.");
+        Directory.Delete(Path.GetFullPath(root), recursive: true);
     }
 
     private static SourceEvent CreateSource(long sequence)

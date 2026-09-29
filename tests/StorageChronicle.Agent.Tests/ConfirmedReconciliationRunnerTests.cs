@@ -20,14 +20,15 @@ public sealed class ConfirmedReconciliationRunnerTests
     [Fact]
     public async Task ConfirmedNonNtfsScanAppendsOnlyCurrentDifferencesWithReconciliationQuality()
     {
-        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.Reconciliation", Guid.NewGuid().ToString("N"));
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.Reconciliation", out var runId);
+        var root = Path.Combine(fixtureRoot, "watched");
         Directory.CreateDirectory(root);
         var oldPath = Path.Combine(root, "old.txt");
         await File.WriteAllTextAsync(oldPath, "test");
         var newPath = Path.Combine(root, "new.txt");
         try
         {
-            var volume = new VolumeDescriptor(VolumeId.Create("test-volume"), "FAT32", [root], false, true, false, false, true);
+            var volume = new VolumeDescriptor(VolumeId.Create("test-volume"), "FAT32", [root], false, true, ProtectedVolumeRoles.None, false, true);
             var native = new FakeMetadataNative();
             await using var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(Path.Combine(root, "history")) { FlushInterval = TimeSpan.FromMinutes(1) });
             var normalizer = new EventNormalizer();
@@ -75,18 +76,19 @@ public sealed class ConfirmedReconciliationRunnerTests
         }
         finally
         {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.Reconciliation", runId);
         }
     }
 
     [Fact]
     public async Task DeclaredCancellationDoesNotPretendToComplete()
     {
-        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.Reconciliation", Guid.NewGuid().ToString("N"));
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.Reconciliation", out var runId);
+        var root = Path.Combine(fixtureRoot, "watched");
         Directory.CreateDirectory(root);
         try
         {
-            var volume = new VolumeDescriptor(VolumeId.Create("cancel-volume"), "FAT32", [root], false, true, false, false, true);
+            var volume = new VolumeDescriptor(VolumeId.Create("cancel-volume"), "FAT32", [root], false, true, ProtectedVolumeRoles.None, false, true);
             await using var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(Path.Combine(root, "history")) { FlushInterval = TimeSpan.FromMinutes(1) });
             var runner = new ConfirmedReconciliationRunner(new FakeVolumes(volume), new UnsupportedNtfsApi(), new WindowsVolumeSnapshotReader(new FakeMetadataNative()), new WindowsFileMetadataReader(new FakeMetadataNative()), storage, new EventNormalizer(), new AgentHealthState());
             using var cancellation = new CancellationTokenSource();
@@ -98,14 +100,15 @@ public sealed class ConfirmedReconciliationRunnerTests
         }
         finally
         {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.Reconciliation", runId);
         }
     }
 
     [Fact]
     public async Task MissingVolumeIsRecordedAsFailedGapInsteadOfEscapingBeforeFailureHandling()
     {
-        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.ReconciliationHistory", Guid.NewGuid().ToString("N"));
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.ReconciliationHistory", out var runId);
+        var root = Path.Combine(fixtureRoot, "history");
         Directory.CreateDirectory(root);
         try
         {
@@ -132,14 +135,15 @@ public sealed class ConfirmedReconciliationRunnerTests
         }
         finally
         {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.ReconciliationHistory", runId);
         }
     }
 
     [Fact]
     public async Task VolumeEnumerationFailureIsRecordedAsFailedGapInsteadOfEscaping()
     {
-        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.ReconciliationHistory", Guid.NewGuid().ToString("N"));
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.ReconciliationHistory", out var runId);
+        var root = Path.Combine(fixtureRoot, "history");
         Directory.CreateDirectory(root);
         try
         {
@@ -163,18 +167,19 @@ public sealed class ConfirmedReconciliationRunnerTests
         }
         finally
         {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.ReconciliationHistory", runId);
         }
     }
 
     [Fact]
     public async Task MissingNtfsCompletionBoundaryIsRecordedAsFailedGapInsteadOfCompleted()
     {
-        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.ReconciliationHistory", Guid.NewGuid().ToString("N"));
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.ReconciliationHistory", out var runId);
+        var root = Path.Combine(fixtureRoot, "history");
         Directory.CreateDirectory(root);
         try
         {
-            var volume = new VolumeDescriptor(VolumeId.Create("boundary-volume"), "NTFS", [root], false, false, false, true, true);
+            var volume = new VolumeDescriptor(VolumeId.Create("boundary-volume"), "NTFS", [root], false, false, ProtectedVolumeRoles.None, true, true);
             var fileId = FileId.Create("0001000000000001");
             var parentId = FileId.Create("0000000000000005");
             var metadata = new FileMetadata(volume.Id, fileId, parentId, "stable.txt", FileKind.File, null, null, null, null, null, null, FileAttributes.Normal, null, null, EventQuality.Exact, true, false);
@@ -209,18 +214,19 @@ public sealed class ConfirmedReconciliationRunnerTests
         }
         finally
         {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.ReconciliationHistory", runId);
         }
     }
 
     [Fact]
     public async Task AccessDeniedCandidateRecordsAclFallbackQualityAndCounter()
     {
-        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.ReconciliationHistory", Guid.NewGuid().ToString("N"));
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.ReconciliationHistory", out var runId);
+        var root = Path.Combine(fixtureRoot, "history");
         Directory.CreateDirectory(root);
         try
         {
-            var volume = new VolumeDescriptor(VolumeId.Create("acl-fallback-volume"), "NTFS", [root], false, false, false, true, true);
+            var volume = new VolumeDescriptor(VolumeId.Create("acl-fallback-volume"), "NTFS", [root], false, false, ProtectedVolumeRoles.None, true, true);
             var fileId = FileId.Create("0001000000000001");
             var parentId = FileId.Create("0000000000000005");
             await using var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(root) { FlushInterval = TimeSpan.FromMinutes(1) });
@@ -255,21 +261,22 @@ public sealed class ConfirmedReconciliationRunnerTests
         }
         finally
         {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.ReconciliationHistory", runId);
         }
     }
 
     [Fact]
     public async Task UnchangedNonNtfsSnapshotDoesNotQueryDetailedMetadata()
     {
-        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.Reconciliation", Guid.NewGuid().ToString("N"));
-        var historyRoot = Path.Combine(Path.GetTempPath(), "StorageChronicle.ReconciliationHistory", Guid.NewGuid().ToString("N"));
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.Reconciliation", out var runId);
+        var root = Path.Combine(fixtureRoot, "watched");
+        var historyRoot = Path.Combine(fixtureRoot, "history");
         Directory.CreateDirectory(root);
         var filePath = Path.Combine(root, "stable.txt");
         await File.WriteAllTextAsync(filePath, "stable");
         try
         {
-            var volume = new VolumeDescriptor(VolumeId.Create("stable-volume"), "FAT32", [root], false, true, false, false, true);
+            var volume = new VolumeDescriptor(VolumeId.Create("stable-volume"), "FAT32", [root], false, true, ProtectedVolumeRoles.None, false, true);
             var native = new FakeMetadataNative();
             await using var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(historyRoot) { FlushInterval = TimeSpan.FromMinutes(1) });
             var normalizer = new EventNormalizer();
@@ -293,18 +300,18 @@ public sealed class ConfirmedReconciliationRunnerTests
         }
         finally
         {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
-            if (Directory.Exists(historyRoot)) Directory.Delete(historyRoot, recursive: true);
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.Reconciliation", runId);
         }
     }
 
     [Fact]
     public async Task NonNtfsSnapshotGapIsFailedAndRecordedInsteadOfCompleted()
     {
-        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.Reconciliation", Guid.NewGuid().ToString("N"));
-        var historyRoot = Path.Combine(Path.GetTempPath(), "StorageChronicle.ReconciliationHistory", Guid.NewGuid().ToString("N"));
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.Reconciliation", out var runId);
+        var root = Path.Combine(fixtureRoot, "watched");
+        var historyRoot = Path.Combine(fixtureRoot, "history");
         Directory.CreateDirectory(root);
-        var volume = new VolumeDescriptor(VolumeId.Create("gap-volume"), "FAT32", [root], false, true, false, false, true);
+        var volume = new VolumeDescriptor(VolumeId.Create("gap-volume"), "FAT32", [root], false, true, ProtectedVolumeRoles.None, false, true);
         try
         {
             Directory.Delete(root);
@@ -329,19 +336,19 @@ public sealed class ConfirmedReconciliationRunnerTests
         }
         finally
         {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
-            if (Directory.Exists(historyRoot)) Directory.Delete(historyRoot, recursive: true);
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.Reconciliation", runId);
         }
     }
 
     [Fact]
     public async Task MissingNtfsStartBoundaryIsFailedBeforeMftEnumeration()
     {
-        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.ReconciliationHistory", Guid.NewGuid().ToString("N"));
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.ReconciliationHistory", out var runId);
+        var root = Path.Combine(fixtureRoot, "history");
         Directory.CreateDirectory(root);
         try
         {
-            var volume = new VolumeDescriptor(VolumeId.Create("pre-scan-boundary-volume"), "NTFS", [root], false, false, false, true, true);
+            var volume = new VolumeDescriptor(VolumeId.Create("pre-scan-boundary-volume"), "NTFS", [root], false, false, ProtectedVolumeRoles.None, true, true);
             var api = new PreScanBoundaryFailureNtfsApi();
             await using var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(root) { FlushInterval = TimeSpan.FromMinutes(1) });
             var runner = new ConfirmedReconciliationRunner(new FakeVolumes(volume), api, new WindowsVolumeSnapshotReader(new FakeMetadataNative()), new WindowsFileMetadataReader(new FakeMetadataNative()), storage, new EventNormalizer(), new AgentHealthState());
@@ -356,20 +363,22 @@ public sealed class ConfirmedReconciliationRunnerTests
         }
         finally
         {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.ReconciliationHistory", runId);
         }
     }
 
     [Fact]
     public async Task LiveEventCoveredByNtfsCompletionBoundaryIsClassifiedAsDeduplicated()
     {
-        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.ReconciliationHistory", Guid.NewGuid().ToString("N"));
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.ReconciliationHistory", out var runId);
+        var root = Path.Combine(fixtureRoot, "watched");
+        var historyRoot = Path.Combine(fixtureRoot, "history");
         Directory.CreateDirectory(root);
         var filePath = Path.Combine(root, "stable.txt");
         await File.WriteAllTextAsync(filePath, "stable");
         try
         {
-            var volume = new VolumeDescriptor(VolumeId.Create("live-boundary-volume"), "NTFS", [root], false, false, false, true, true);
+            var volume = new VolumeDescriptor(VolumeId.Create("live-boundary-volume"), "NTFS", [root], false, false, ProtectedVolumeRoles.None, true, true);
             var fileId = FileId.Create("0001000000000001");
             var parentId = FileId.Create("0000000000000005");
             var metadata = new FileMetadata(volume.Id, fileId, parentId, "stable.txt", FileKind.File, null, null, null, null, null, null, FileAttributes.Normal, null, null, EventQuality.Exact, true, false);
@@ -383,7 +392,7 @@ public sealed class ConfirmedReconciliationRunnerTests
                 Time = seed.Time with { SourceSequence = new SourceSequence(50), MountSequence = new MountSequence(50), RecordedUtc = DateTimeOffset.UtcNow }
             };
             var buffer = new ReconciliationLiveEventBuffer();
-            await using var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(root) { FlushInterval = TimeSpan.FromMinutes(1) });
+            await using var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(historyRoot) { FlushInterval = TimeSpan.FromMinutes(1) });
             var normalizer = new EventNormalizer();
             var canonical = normalizer.Normalize(seed)!;
             await storage.AppendSourceAsync(seed);
@@ -402,7 +411,7 @@ public sealed class ConfirmedReconciliationRunnerTests
         }
         finally
         {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.ReconciliationHistory", runId);
         }
     }
 

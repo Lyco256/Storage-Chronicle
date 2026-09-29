@@ -1,6 +1,6 @@
 # WindowsNativeContracts
 
-Contains injectable, thin native boundaries for volume enumeration, metadata-only file/directory handles, ReadDirectoryChangesW, and Configuration Manager device notifications. The records contain standard metadata and identity only; no file contents or hashes are represented. Fakes in the Windows filesystem tests exercise the higher layers without privileged Win32 state. The metadata boundary exposes a separate handle-opening operation so reconciliation can attempt a low file-I/O priority hint for every candidate kind.
+Contains injectable boundaries for volume enumeration, read-only partition-role facts, metadata-only file/directory handles, ReadDirectoryChangesW, and Configuration Manager notifications. `NativeVolumeRecord` carries one shared `ProtectedVolumeRoles` value plus a completeness bit; `NativePartitionRoleRecord` contains read-only access paths, system/boot flags, and GPT/MBR type facts. No file contents or hashes are represented. Fakes exercise the classifier and higher layers without privileged Win32 state. The metadata boundary exposes a separate handle-opening operation so reconciliation can attempt a low file-I/O priority hint for every candidate kind.
 
 ## Role
 

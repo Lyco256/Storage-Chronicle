@@ -3,6 +3,7 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
     [string]$AcceptanceRoot,
+    [string]$TestId,
     [string]$TestLabRoot,
     [string]$VhdxPath,
     [string]$VhdxRoot,
@@ -13,7 +14,9 @@ param(
     [string]$SessionAgentExecutable,
     [string]$WorkloadOraclePath,
     [string]$AgentHistoryPath,
+    [Parameter(Mandatory = $true)][string]$EvidenceRoot,
     [switch]$CreateVhdx,
+    [switch]$ConfirmCreateVhdx,
     [switch]$CreateUsnJournal,
     [switch]$WaitForMediaChange,
     [int]$MediaTimeoutSeconds = 300
@@ -23,6 +26,7 @@ $ErrorActionPreference = 'Stop'
 $arguments = @{
     Configuration = $Configuration
     AcceptanceRoot = $AcceptanceRoot
+    TestId = $TestId
     VhdxPath = $VhdxPath
     VhdxRoot = $VhdxRoot
     TestLabRoot = $TestLabRoot
@@ -33,7 +37,9 @@ $arguments = @{
     SessionAgentExecutable = $SessionAgentExecutable
     WorkloadOraclePath = $WorkloadOraclePath
     AgentHistoryPath = $AgentHistoryPath
+    EvidenceRoot = $EvidenceRoot
     CreateVhdx = $CreateVhdx
+    ConfirmCreateVhdx = $ConfirmCreateVhdx
     CreateUsnJournal = $CreateUsnJournal
     WaitForMediaChange = $WaitForMediaChange
     MediaTimeoutSeconds = $MediaTimeoutSeconds

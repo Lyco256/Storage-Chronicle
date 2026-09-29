@@ -20,15 +20,22 @@ param(
     [string]$InstallPath = 'C:\Program Files\Storage Chronicle',
     [string]$StoragePermissionPath = 'C:\ProgramData\Storage Chronicle\history',
     [string]$OutputDirectory,
+    [string]$RunId,
+    [string]$ExpectedComputerName,
+    [string]$ExpectedHashManifestSha256,
     [int]$CaseTimeoutSeconds = 1800,
     [switch]$Execute,
-    [switch]$AllowLocalIsolatedExecution
+    [switch]$AllowLocalIsolatedExecution,
+    [switch]$ConfirmDedicatedPhysicalMachine
 )
 
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$runId = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmssfff', [Globalization.CultureInfo]::InvariantCulture)
+$runId = if ([string]::IsNullOrWhiteSpace($RunId)) { [guid]::NewGuid().ToString('D') } else { $RunId }
+$parsedRunId = [guid]::Empty
+if (-not [guid]::TryParse($runId, [ref]$parsedRunId)) { throw 'Installer acceptance RunId must be a GUID.' }
+$runId = $parsedRunId.ToString('D')
 
 function Get-EnvironmentFallback {
     param(
@@ -62,11 +69,101 @@ $HistoryPath = Get-EnvironmentFallback $HistoryPath 'STORAGE_CHRONICLE_INSTALLER
 $InstallPath = Get-EnvironmentFallback $InstallPath 'STORAGE_CHRONICLE_INSTALLER_INSTALL_PATH'
 $StoragePermissionPath = Get-EnvironmentFallback $StoragePermissionPath 'STORAGE_CHRONICLE_INSTALLER_STORAGE_PERMISSION_PATH'
 $OutputDirectory = Get-EnvironmentFallback $OutputDirectory 'STORAGE_CHRONICLE_INSTALLER_OUTPUT'
+$hasExplicitOutputDirectory = -not [string]::IsNullOrWhiteSpace($OutputDirectory)
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $root 'artifacts/installer/acceptance'
 } elseif (-not [IO.Path]::IsPathRooted($OutputDirectory)) {
     $OutputDirectory = Join-Path $root $OutputDirectory
+}
+$OutputDirectory = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) "run-$runId"
+
+$isPhysicalExecution = [bool]$Execute -and $TargetKind -eq 'PhysicalMachine' -and $ExecutionMode -eq 'Local'
+if ($Execute -and -not $isPhysicalExecution) { throw 'VM and non-physical installer execution are disabled by the physical-read-only acceptance policy.' }
+if ($isPhysicalExecution) {
+    if (-not $ConfirmDedicatedPhysicalMachine) { throw 'Physical installer execution requires -ConfirmDedicatedPhysicalMachine.' }
+    if ([string]::IsNullOrWhiteSpace($ExpectedComputerName) -or -not $ExpectedComputerName.Equals($env:COMPUTERNAME, [StringComparison]::OrdinalIgnoreCase)) { throw 'ExpectedComputerName must exactly match the current physical test PC.' }
+    $physicalModel = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+    if ([string]$physicalModel.Model -match '(?i)virtual|vmware|virtualbox|kvm|hyper-v|qemu') { throw "Physical installer execution refuses a virtualized host model: $($physicalModel.Manufacturer) $($physicalModel.Model)" }
+    $physicalOs = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+    $physicalOsVersion = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction Stop
+    $physicalOsMatches = if ($TargetOs -eq 'Windows10-22H2') { [string]$physicalOs.Caption -match 'Windows 10' -and ([string]$physicalOsVersion.DisplayVersion -eq '22H2' -or [string]$physicalOsVersion.CurrentBuild -eq '19045') } else { [string]$physicalOs.Caption -match 'Windows 11' }
+    if (-not $physicalOsMatches) { throw "Current OS does not match the requested physical target '$TargetOs'." }
+    $physicalIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    if (-not [Security.Principal.WindowsPrincipal]::new($physicalIdentity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Physical installer acceptance must be explicitly launched in the approved elevated session.' }
+    if ($ExpectedHashManifestSha256 -notmatch '^[A-Fa-f0-9]{64}$') { throw 'An externally reviewed hash-manifest SHA-256 is required for physical execution.' }
+    $bundleRoot = [IO.Path]::GetFullPath((Split-Path -Parent $DriverScript)).TrimEnd('\')
+    $bundleHashPath = Join-Path $bundleRoot 'hash-manifest.json'
+    if (-not (Test-Path -LiteralPath $bundleHashPath -PathType Leaf) -or -not (Get-FileHash -Algorithm SHA256 -LiteralPath $bundleHashPath).Hash.Equals($ExpectedHashManifestSha256, [StringComparison]::OrdinalIgnoreCase)) { throw 'The trusted hash-manifest fingerprint does not match the bundle.' }
+    $bundleHashes = Get-Content -Raw -Encoding UTF8 -LiteralPath $bundleHashPath | ConvertFrom-Json
+    $verifiedBundleFiles = @{}
+    foreach ($entry in @($bundleHashes.Files)) {
+        $relativePath = [string]$entry.RelativePath
+        if ([string]::IsNullOrWhiteSpace($relativePath) -or [IO.Path]::IsPathRooted($relativePath) -or $relativePath -match '(^|[\\/])\.\.([\\/]|$)' -or $relativePath.Contains(':') -or $entry.SHA256 -notmatch '^[A-Fa-f0-9]{64}$') { throw "Bundle hash entry is unsafe or malformed: $relativePath" }
+        $candidatePath = [IO.Path]::GetFullPath((Join-Path $bundleRoot $relativePath))
+        if (-not $candidatePath.StartsWith($bundleRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $candidatePath -PathType Leaf)) { throw "Bundle hash entry is missing or escapes the bundle root: $($entry.RelativePath)" }
+        if (-not (Get-FileHash -Algorithm SHA256 -LiteralPath $candidatePath).Hash.Equals([string]$entry.SHA256, [StringComparison]::OrdinalIgnoreCase)) { throw "Bundle payload hash mismatch: $($entry.RelativePath)" }
+        $normalizedRelativePath = $relativePath.Replace('/', '\')
+        if ($verifiedBundleFiles.ContainsKey($normalizedRelativePath)) { throw "Bundle hash manifest contains a duplicate payload path: $relativePath" }
+        $verifiedBundleFiles[$normalizedRelativePath] = [string]$entry.SHA256
+    }
+    foreach ($expectedPayload in @(
+        @{ RelativePath = 'StorageChronicle.msi'; Path = $MsiPath },
+        @{ RelativePath = 'StorageChronicle.updated.msi'; Path = $UpdatedMsiPath },
+        @{ RelativePath = 'StorageChronicle.rollback.msi'; Path = $RollbackMsiPath },
+        @{ RelativePath = 'Invoke-RealInstallerCase.ps1'; Path = $DriverScript }
+    )) {
+        $expectedPath = [IO.Path]::GetFullPath((Join-Path $bundleRoot $expectedPayload.RelativePath))
+        $suppliedPath = [IO.Path]::GetFullPath($expectedPayload.Path)
+        if (-not $suppliedPath.Equals($expectedPath, [StringComparison]::OrdinalIgnoreCase) -or -not $verifiedBundleFiles.ContainsKey($expectedPayload.RelativePath)) { throw "Physical installer input must be the exact fingerprinted bundle payload: $($expectedPayload.RelativePath)" }
+        if (-not (Get-FileHash -Algorithm SHA256 -LiteralPath $suppliedPath).Hash.Equals($verifiedBundleFiles[$expectedPayload.RelativePath], [StringComparison]::OrdinalIgnoreCase)) { throw "Physical installer input hash does not match the approved bundle entry: $($expectedPayload.RelativePath)" }
+    }
+    if ([string]::IsNullOrWhiteSpace($OutputDirectory) -or (Test-Path -LiteralPath $OutputDirectory)) { throw 'Physical installer OutputDirectory must be a new, explicit path.' }
+    if (-not $hasExplicitOutputDirectory) { throw 'Physical installer OutputDirectory must be supplied explicitly.' }
+    if ([string]::IsNullOrWhiteSpace($env:STORAGE_CHRONICLE_ACCEPTANCE_TEST_ROOT)) { throw 'The approved TestDataRoot environment path is required.' }
+    $markerPath = Join-Path $env:STORAGE_CHRONICLE_ACCEPTANCE_TEST_ROOT '.storage-chronicle-testlab-marker.json'
+    if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) { throw 'Physical installer TestDataRoot has no ownership marker.' }
+    $runMarker = Get-Content -Raw -Encoding UTF8 -LiteralPath $markerPath | ConvertFrom-Json
+    $volumeMarkerPath = Join-Path $env:STORAGE_CHRONICLE_ACCEPTANCE_TEST_ROOT 'StorageChronicleTestVolume.json'
+    if (-not (Test-Path -LiteralPath $volumeMarkerPath -PathType Leaf)) { throw 'The TestDataRoot volume identity marker is missing.' }
+    $runVolumeMarker = Get-Content -Raw -Encoding UTF8 -LiteralPath $volumeMarkerPath | ConvertFrom-Json
+    if ([string]$runMarker.TestId -ne $runId -or [string]$runMarker.Schema -ne 'StorageChronicle.TestLabDataMarker.v1' -or [string]$runMarker.Role -ne 'Workload' -or [string]$runMarker.VolumeLabel -ne 'SC_TEST_VOLUME' -or [string]$runMarker.FileSystem -ne 'NTFS' -or [string]$runVolumeMarker.TestId -ne $runId -or [string]$runVolumeMarker.Schema -ne 'StorageChronicle.TestLabDataMarker.v1' -or [string]$runVolumeMarker.Role -ne 'Workload' -or [string]$runVolumeMarker.VolumeLabel -ne 'SC_TEST_VOLUME' -or [string]$runVolumeMarker.FileSystem -ne 'NTFS' -or [string]$runVolumeMarker.VolumeUniqueId -ne [string]$runMarker.VolumeUniqueId) { throw 'RunId, Workload role, filesystem, or volume identity does not match both TestDataRoot ownership markers.' }
+    if (-not (Test-Path -LiteralPath $env:STORAGE_CHRONICLE_ACCEPTANCE_TEST_ROOT -PathType Container)) { throw 'TestDataRoot does not exist.' }
+    Assert-NoReparsePath $env:STORAGE_CHRONICLE_ACCEPTANCE_TEST_ROOT
+    $runVolume = Get-Volume -FilePath $env:STORAGE_CHRONICLE_ACCEPTANCE_TEST_ROOT -ErrorAction Stop
+    if ([string]$runVolume.FileSystem -ne 'NTFS' -or [string]$runVolume.DriveType -ne 'Fixed' -or [string]$runVolume.UniqueId -ne [string]$runMarker.VolumeUniqueId) { throw 'TestDataRoot volume does not match the marker or is not fixed local NTFS.' }
+    $testDataRootFull = [IO.Path]::GetFullPath($env:STORAGE_CHRONICLE_ACCEPTANCE_TEST_ROOT).TrimEnd('\')
+    $repositoryRoot = [IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $PSScriptRoot))).TrimEnd('\')
+    $bundleRoot = [IO.Path]::GetFullPath((Split-Path -Parent $DriverScript)).TrimEnd('\')
+    $protectedTestRoots = @($env:WINDIR, $env:ProgramFiles, $env:ProgramData) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { [IO.Path]::GetFullPath($_).TrimEnd('\') }
+    $insideProtectedTestRoot = @($protectedTestRoots | Where-Object { $testDataRootFull.Equals($_, [StringComparison]::OrdinalIgnoreCase) -or $testDataRootFull.StartsWith($_ + '\', [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+    if ($testDataRootFull -match '^[A-Za-z]:$' -or $testDataRootFull -match '(?i)\\OneDrive\\|\\Documents\\' -or $testDataRootFull.Equals($repositoryRoot, [StringComparison]::OrdinalIgnoreCase) -or $testDataRootFull.StartsWith($repositoryRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or $testDataRootFull.Equals($bundleRoot, [StringComparison]::OrdinalIgnoreCase) -or $testDataRootFull.StartsWith($bundleRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or $insideProtectedTestRoot) { throw 'TestDataRoot must be a dedicated local fixture outside system/application roots, repository, bundle, OneDrive, and Documents.' }
+    if (-not [IO.Path]::GetFullPath($StoragePermissionPath).TrimEnd('\').Equals([IO.Path]::GetFullPath($HistoryPath).TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) { throw 'StoragePermissionPath must be exactly the run-owned HistoryPath.' }
+    $installed = @(Get-ItemProperty -Path @('HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKCU:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*') -ErrorAction SilentlyContinue | Where-Object { [string]$_.DisplayName -eq 'Storage Chronicle' })
+    $agentService = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
+    $productDataRoot = Join-Path $env:ProgramData 'Storage Chronicle'
+    $expectedInstallPath = Join-Path $env:ProgramFiles 'Storage Chronicle'
+    $expectedHistoryPath = Join-Path $productDataRoot 'history'
+    if (-not [IO.Path]::GetFullPath($InstallPath).TrimEnd('\').Equals([IO.Path]::GetFullPath($expectedInstallPath).TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) { throw 'Physical installer InstallPath must be the canonical Storage Chronicle directory under Program Files.' }
+    if (-not [IO.Path]::GetFullPath($HistoryPath).TrimEnd('\').Equals([IO.Path]::GetFullPath($expectedHistoryPath).TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) { throw 'Physical installer HistoryPath must be the canonical Storage Chronicle history directory under ProgramData.' }
+    $existingDataEntries = if (Test-Path -LiteralPath $productDataRoot -PathType Container) { @(Get-ChildItem -LiteralPath $productDataRoot -Force -ErrorAction Stop) } else { @() }
+    if ($installed.Count -ne 0 -or $null -ne $agentService -or (Test-Path -LiteralPath $InstallPath) -or (Test-Path -LiteralPath $productDataRoot) -or $existingDataEntries.Count -ne 0) { throw 'Physical installer acceptance refuses a PC with any existing product, service, install path, or ProgramData data.' }
+    if ($OutputDirectory -match '(?i)\\OneDrive\\|\\Documents\\' -or $OutputDirectory.StartsWith('\\', [StringComparison]::Ordinal)) { throw 'Physical installer output must be local and outside OneDrive/Documents.' }
+    $outputParent = Split-Path -Parent $OutputDirectory
+    if (-not (Test-Path -LiteralPath $outputParent -PathType Container)) { throw 'Physical installer output parent must already exist.' }
+    $outputVolume = Get-Volume -FilePath $outputParent -ErrorAction Stop
+    if ([string]$outputVolume.FileSystem -ne 'NTFS' -or [string]$outputVolume.DriveType -ne 'Fixed') { throw 'Physical installer output must be on a local fixed NTFS volume.' }
+    Assert-NoReparsePath $outputParent
+    $protectedRoots = @([IO.Path]::GetFullPath($root).TrimEnd('\'), [IO.Path]::GetFullPath((Split-Path -Parent $DriverScript)).TrimEnd('\'), [IO.Path]::GetFullPath($env:ProgramData).TrimEnd('\'), [IO.Path]::GetFullPath($env:ProgramFiles).TrimEnd('\'))
+    foreach ($protectedRoot in $protectedRoots) {
+        if ($OutputDirectory.Equals($protectedRoot, [StringComparison]::OrdinalIgnoreCase) -or $OutputDirectory.StartsWith($protectedRoot + '\', [StringComparison]::OrdinalIgnoreCase)) { throw "Physical installer output overlaps a protected repository, bundle, or application location: $OutputDirectory" }
+    }
+    if ($OutputDirectory -match '(?i)\\OneDrive\\|\\Documents\\') { throw 'Physical installer output must not be under OneDrive or Documents.' }
+    $testDataFullPath = [IO.Path]::GetFullPath($env:STORAGE_CHRONICLE_ACCEPTANCE_TEST_ROOT).TrimEnd('\')
+    if ($OutputDirectory.Equals($testDataFullPath, [StringComparison]::OrdinalIgnoreCase) -or $OutputDirectory.StartsWith($testDataFullPath + '\', [StringComparison]::OrdinalIgnoreCase) -or $testDataFullPath.StartsWith($OutputDirectory + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Evidence output and mutable TestDataRoot must be separate, non-overlapping paths.' }
+    $answer = Read-Host "This will install/repair/update/rollback/uninstall Storage Chronicle and temporarily change then restore ACLs on a new fixture. Verify this is a dedicated physical test PC with no existing product/history. PC=$env:COMPUTERNAME; RunId=$runId; TestData=$testDataFullPath; History=$HistoryPath; Install=$InstallPath; Evidence=$OutputDirectory; MSI SHA256: base=$((Get-FileHash -Algorithm SHA256 -LiteralPath $MsiPath).Hash); updated=$((Get-FileHash -Algorithm SHA256 -LiteralPath $UpdatedMsiPath).Hash); rollback=$((Get-FileHash -Algorithm SHA256 -LiteralPath $RollbackMsiPath).Hash). Type I CONFIRM DEDICATED PC $env:COMPUTERNAME RUN $runId to authorize"
+    if ($answer -cne "I CONFIRM DEDICATED PC $env:COMPUTERNAME RUN $runId") { throw 'Physical installer user confirmation did not exactly match the dedicated PC and run ID.' }
+    $script:PhysicalMachineConfirmation = $answer
 }
 
 $caseDefinitions = @(
@@ -226,6 +323,33 @@ function Test-MsiFile {
     return [string]::Equals([IO.Path]::GetExtension($Path), '.msi', [StringComparison]::OrdinalIgnoreCase)
 }
 
+function Write-NewJsonFile([string]$Path, $Value) {
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($Value | ConvertTo-Json -Depth 16))
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
+}
+
+function Write-NewUtf8File([string]$Path, [string]$Value) {
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes($Value)
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
+}
+
+function Assert-NoReparsePath([string]$Path) {
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    if ($fullPath.StartsWith('\\', [StringComparison]::Ordinal)) { throw "UNC paths are not accepted: $fullPath" }
+    $rootPath = [IO.Path]::GetPathRoot($fullPath)
+    if ($rootPath -notmatch '^[A-Za-z]:\\$') { throw "A local drive path is required: $fullPath" }
+    $cursor = $rootPath
+    foreach ($segment in $fullPath.Substring($rootPath.Length).Split([char[]]@('\\', '/'), [StringSplitOptions]::RemoveEmptyEntries)) {
+        $cursor = Join-Path $cursor $segment
+        if (Test-Path -LiteralPath $cursor) {
+            $item = Get-Item -LiteralPath $cursor -Force -ErrorAction Stop
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Reparse point in physical installer path: $cursor" }
+        }
+    }
+}
+
 function Test-IsoFile {
     param([AllowNull()][string]$Path)
     return (Test-ExistingFile $Path) -and [string]::Equals([IO.Path]::GetExtension($Path), '.iso', [StringComparison]::OrdinalIgnoreCase)
@@ -383,6 +507,11 @@ function Get-DriverInvocation {
         '-HistoryPath', $HistoryPath,
         '-InstallPath', $InstallPath,
         '-StoragePermissionPath', $StoragePermissionPath,
+        '-RunId', $runId,
+        '-ExpectedComputerName', $ExpectedComputerName,
+        '-ConfirmDedicatedPhysicalMachine',
+        '-OwnerReceiptPath', $script:OwnerReceiptPath,
+        '-AuthorizationNonce', $script:AuthorizationNonce,
         '-ResultPath', $ResultPath,
         '-LogPath', $LogPath
     )
@@ -457,10 +586,6 @@ function Read-DriverResult {
     if ($null -eq $payload.Target -or [string]$payload.Target.OS -ne $TargetOs -or [string]$payload.Target.Kind -ne $TargetKind -or [string]$payload.Target.Mode -ne $ExecutionMode -or $payload.Target.Isolated -ne $true -or $payload.Target.IsAdministrator -ne $true) {
         throw "Driver result '$CaseId' lacks a matching isolated, administrator target declaration."
     }
-    if ($ExecutionMode -eq 'VM' -and [string]::IsNullOrWhiteSpace([string]$payload.Target.VmName)) {
-        throw "Driver result '$CaseId' lacks the VM name in Target.VmName."
-    }
-
     $assertions = @($payload.Assertions)
     if ($assertions.Count -eq 0) {
         throw "Driver result '$CaseId' has no assertions."
@@ -502,13 +627,16 @@ function Invoke-InstallerCase {
         return
     }
 
+    $previousAuthorizationNonce = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_INSTALLER_AUTHORIZATION_NONCE', 'Process')
+    $script:AuthorizationNonce = [guid]::NewGuid().ToString('N')
+    [Environment]::SetEnvironmentVariable('STORAGE_CHRONICLE_INSTALLER_AUTHORIZATION_NONCE', $script:AuthorizationNonce, 'Process')
     $started = [DateTime]::UtcNow
     Write-Host "RUNNING [$caseId]" -ForegroundColor Cyan
     try {
         $invocation = Get-DriverInvocation -CaseId $caseId -ResultPath $caseResultPath -LogPath $caseLogPath
         $result = Invoke-CapturedProcess -FilePath $invocation.FilePath -Arguments $invocation.Arguments -TimeoutSeconds $CaseTimeoutSeconds
         $driverLog = "STDOUT`r`n$($result.Output)`r`nSTDERR`r`n$($result.Error)"
-        Set-Content -LiteralPath $caseLogPath -Value $driverLog -Encoding UTF8
+        Write-NewUtf8File -Path $caseLogPath -Value $driverLog
         if ($result.TimedOut) {
             Add-CaseResult -Id $caseId -Name ([string]$Definition.Name) -Status 'FAILED' -Reason "Driver timed out after $CaseTimeoutSeconds seconds." -ExitCode $result.ExitCode -DurationSeconds (([DateTime]::UtcNow - $started).TotalSeconds) -ResultPath $caseResultPath -LogPath $caseLogPath
             return
@@ -526,6 +654,8 @@ function Invoke-InstallerCase {
         Add-CaseResult -Id $caseId -Name ([string]$Definition.Name) -Status $driverResult.Status -Reason $driverResult.Reason -ExitCode $result.ExitCode -DurationSeconds (([DateTime]::UtcNow - $started).TotalSeconds) -ResultPath $caseResultPath -LogPath $caseLogPath -Assertions $driverResult.Assertions -Target $driverResult.Target
     } catch {
         Add-CaseResult -Id $caseId -Name ([string]$Definition.Name) -Status 'FAILED' -Reason $_.Exception.Message -ExitCode 1 -DurationSeconds (([DateTime]::UtcNow - $started).TotalSeconds) -ResultPath $caseResultPath -LogPath $caseLogPath
+    } finally {
+        [Environment]::SetEnvironmentVariable('STORAGE_CHRONICLE_INSTALLER_AUTHORIZATION_NONCE', $previousAuthorizationNonce, 'Process')
     }
 }
 
@@ -584,45 +714,30 @@ function Write-MarkdownArtifact {
     [void]$builder.AppendLine()
     [void]$builder.AppendLine('## Driver contract')
     [void]$builder.AppendLine()
-    [void]$builder.AppendLine('The driver supplied through `-DriverScript` or `STORAGE_CHRONICLE_INSTALLER_DRIVER` must perform the case on the declared Windows target and write the requested result JSON. A passing result must contain the matching `CaseId`, `Status: PASSED`, `Target.OS`, `Target.Kind`, `Target.Mode`, `Target.Isolated: true`, `Target.IsAdministrator: true`, and at least one passing assertion with an existing `EvidencePath`. For VM runs, `Target.VmName` is also required. The harness does not synthesize or infer a pass from an exit code alone.')
+    [void]$builder.AppendLine('The physical driver requires the run owner receipt, run GUID, current PC identity, marked fixture volume identity, and run-scoped authorization nonce. A passing result must contain the matching `CaseId`, `RunId`, `Status: PASSED`, `Target.OS`, `Target.Kind: PhysicalMachine`, `Target.Mode: Local`, `Target.Isolated: true`, `Target.IsAdministrator: true`, and at least one passing assertion with an existing `EvidencePath`. The harness does not synthesize or infer a pass from an exit code alone.')
     [void]$builder.AppendLine()
     [void]$builder.AppendLine('## Exit codes')
     [void]$builder.AppendLine()
     [void]$builder.AppendLine('- `0`: every case passed and every required precondition was ready.')
     [void]$builder.AppendLine('- `1`: a case or the harness failed.')
     [void]$builder.AppendLine('- `2`: one or more cases were `NOT_EXECUTED` because the target, ISO/VM, driver, artifact, or required privilege was unavailable.')
-    Set-Content -LiteralPath $markdownPath -Value $builder.ToString() -Encoding UTF8
+    Write-NewUtf8File $markdownPath $builder.ToString()
 }
 
 try {
-    New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
-    New-Item -ItemType Directory -Force -Path $caseDirectory | Out-Null
-
     $hostIsWindows = Test-IsWindows
     $isAdministrator = Test-IsAdministrator
     $currentTarget = Get-CurrentWindowsTarget
     $validTarget = $TargetOs -in @('Windows10-22H2', 'Windows11')
-    $validMode = $ExecutionMode -in @('Local', 'VM')
-    $validTargetKind = $TargetKind -in @('PhysicalMachine', 'VirtualBoxVm')
+    $validMode = $ExecutionMode -eq 'Local'
+    $validTargetKind = $TargetKind -eq 'PhysicalMachine'
     $driverReady = Test-DriverLauncher $DriverScript
-    $virtualBoxReady = $false
-    $vmReady = $false
-    if ($validMode -and $ExecutionMode -eq 'VM' -and $hostIsWindows) {
-        try { . (Join-Path $root 'tools/TestEnvironment/VirtualBox.Common.ps1'); $null = Get-VBoxManagePath; $virtualBoxReady = $true } catch { $virtualBoxReady = $false }
-        if ($virtualBoxReady -and -not [string]::IsNullOrWhiteSpace($VmName)) {
-            try {
-                $vmReady = (Get-VBoxVmState $VmName) -eq 'running'
-            } catch {
-                $vmReady = $false
-            }
-        }
-    }
 
     Add-Precondition 'WindowsHost' $hostIsWindows 'The installer acceptance harness requires a Windows host because MSI, service, session, and ACL checks are Windows-only.'
     Add-Precondition 'ExecutionArmed' ([bool]$Execute) 'The run is armed only when -Execute is supplied; planning or omitted execution never passes.'
     Add-Precondition 'TargetOs' ($validTarget) 'TargetOs must be Windows10-22H2 or Windows11 and must be supplied explicitly.'
-    Add-Precondition 'TargetKind' $validTargetKind 'TargetKind must be PhysicalMachine or VirtualBoxVm and must be supplied explicitly.'
-    Add-Precondition 'ExecutionMode' ($validMode) 'ExecutionMode must be Local or VM and must be supplied explicitly.'
+    Add-Precondition 'TargetKind' $validTargetKind 'TargetKind must be PhysicalMachine; virtual targets are not accepted.'
+    Add-Precondition 'ExecutionMode' ($validMode) 'ExecutionMode must be Local; VM execution is disabled by the physical acceptance policy.'
     Add-Precondition 'Driver' $driverReady 'A real installer driver script or executable is required; no fake/default driver is provided.'
     Add-Precondition 'CaseTimeout' ($CaseTimeoutSeconds -ge 1 -and $CaseTimeoutSeconds -le 7200) 'CaseTimeoutSeconds must be between 1 and 7200 seconds.'
     Add-Precondition 'ServiceName' (-not [string]::IsNullOrWhiteSpace($ServiceName)) 'The installed Agent service name is required.'
@@ -632,10 +747,10 @@ try {
     Add-Precondition 'NonAdminUser' (-not [string]::IsNullOrWhiteSpace($NonAdminUser)) 'An existing non-administrator account is required for the non-admin UI case.'
     Add-Precondition 'NonAdminCredentialReference' (-not [string]::IsNullOrWhiteSpace($NonAdminCredentialReference)) 'A non-admin credential reference is required; plaintext passwords are not accepted by this harness.'
     Add-Precondition 'SessionUser' (-not [string]::IsNullOrWhiteSpace($SessionUser)) 'An interactive session user is required for Session Agent startup verification.'
-    Add-Precondition 'ServiceCredentialReference' (-not [string]::IsNullOrWhiteSpace($ServiceCredentialReference) -or ($validMode -and $ExecutionMode -eq 'VM' -and -not [string]::IsNullOrWhiteSpace($GuestCredentialReference)) -or ($validMode -and $ExecutionMode -eq 'Local' -and $isAdministrator)) 'A service-capable credential reference is required for VM runs, or the guest credential/current administrator must be available for an explicitly isolated run.'
-    Add-Precondition 'GuestCredentialReference' (-not [string]::IsNullOrWhiteSpace($GuestCredentialReference) -or -not ($validMode -and $ExecutionMode -eq 'VM')) 'A local-only guest credential reference is required for VirtualBox guestcontrol VM runs.'
-    Add-Precondition 'GuestTestDataRoot' (-not [string]::IsNullOrWhiteSpace($GuestTestDataRoot)) 'A guest TestLab data root is required for VM runs.'
-    Add-Precondition 'HostAdministrator' ($isAdministrator -or ($validMode -and $ExecutionMode -eq 'VM' -and $TargetKind -eq 'VirtualBoxVm')) 'A host administrator is required for local/physical acceptance; VirtualBox VM acceptance uses guest credentials and does not elevate the host process.'
+    Add-Precondition 'ServiceCredentialReference' (-not [string]::IsNullOrWhiteSpace($ServiceCredentialReference) -or ($validMode -and $ExecutionMode -eq 'Local' -and $isAdministrator)) 'The explicitly approved physical installer acceptance process must run elevated.'
+    Add-Precondition 'GuestCredentialReference' $true 'Virtual-machine guest credentials are not used by physical acceptance.'
+    Add-Precondition 'GuestTestDataRoot' $true 'Virtual-machine guest data roots are not used by physical acceptance.'
+    Add-Precondition 'HostAdministrator' $isAdministrator 'Physical installer acceptance requires the specifically approved elevated session.'
     Add-Precondition 'MsiPath' (Test-MsiFile $MsiPath) 'The base MSI path must point to an existing .msi file.'
     Add-Precondition 'UpdatedMsiPath' (Test-MsiFile $UpdatedMsiPath) 'The updated MSI path must point to an existing .msi file for update and rollback.'
     Add-Precondition 'RollbackMsiPath' (Test-MsiFile $RollbackMsiPath) 'The rollback MSI path must point to an existing .msi file from the prior product version.'
@@ -643,12 +758,8 @@ try {
     if ($validMode -and $ExecutionMode -eq 'Local') {
         Add-Precondition 'Isolation' ([bool]$AllowLocalIsolatedExecution) 'Local execution requires explicit -AllowLocalIsolatedExecution and must be performed only on a disposable machine.'
         Add-Precondition 'LocalTargetOs' ($hostIsWindows -and $currentTarget -eq $TargetOs) "The live host target '$currentTarget' does not match the requested '$TargetOs'."
-    } elseif ($validMode -and $ExecutionMode -eq 'VM') {
-        Add-Precondition 'Isolation' ($virtualBoxReady -and $vmReady) 'VM execution requires VBoxManage and a running named VM; the driver must reset an isolated SC-CLEAN-BASELINE snapshot per case.'
-        Add-Precondition 'VmName' (-not [string]::IsNullOrWhiteSpace($VmName)) 'A named VM is required for VM execution.'
-        Add-Precondition 'WindowsIsoPath' (Test-IsoFile $WindowsIsoPath) 'A Windows ISO file is required to identify/recreate the target VM environment; absence is NOT_EXECUTED.'
     } else {
-        Add-Precondition 'Isolation' $false 'Isolation cannot be established until a valid execution mode is supplied.'
+        Add-Precondition 'Isolation' $false 'Only the approved physical-machine Local mode is supported.'
     }
 
     $script:Manifest.Preconditions = @($script:Preflight)
@@ -659,6 +770,30 @@ try {
         Add-MissingCaseResults $reason
         $script:ExitCode = 2
     } else {
+        New-Item -ItemType Directory -Path $OutputDirectory | Out-Null
+        New-Item -ItemType Directory -Path $caseDirectory | Out-Null
+        $acceptanceRoot = [IO.Path]::GetFullPath($env:STORAGE_CHRONICLE_ACCEPTANCE_TEST_ROOT)
+        $markerValue = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $acceptanceRoot '.storage-chronicle-testlab-marker.json') | ConvertFrom-Json
+        $volume = Get-Volume -FilePath $acceptanceRoot -ErrorAction Stop
+        $script:OwnerReceiptPath = Join-Path $OutputDirectory "installer-owner-$runId.json"
+        Write-NewJsonFile $script:OwnerReceiptPath ([ordered]@{
+            Schema = 'StorageChronicle.PhysicalInstallerOwnerReceipt.v1'
+            RunId = $runId
+            ComputerName = $env:COMPUTERNAME
+            HumanConfirmation = $script:PhysicalMachineConfirmation
+            TestDataRoot = $acceptanceRoot
+            TestDataVolumeUniqueId = [string]$volume.UniqueId
+            EvidenceRoot = [IO.Path]::GetFullPath($OutputDirectory)
+            HistoryPath = [IO.Path]::GetFullPath($HistoryPath)
+            StoragePermissionPath = [IO.Path]::GetFullPath($StoragePermissionPath)
+            InstallPath = [IO.Path]::GetFullPath($InstallPath)
+            BaseMsiSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $MsiPath).Hash
+            UpdatedMsiSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $UpdatedMsiPath).Hash
+            RollbackMsiSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $RollbackMsiPath).Hash
+            MarkerTestId = [string]$markerValue.TestId
+            CreatedUtc = [DateTimeOffset]::UtcNow
+        })
+        $script:Manifest.OwnerReceipt = $script:OwnerReceiptPath
         foreach ($definition in $caseDefinitions) {
             Invoke-InstallerCase -Definition $definition
         }
@@ -694,7 +829,7 @@ try {
     $script:Manifest.Summary = $summary
     $script:Manifest.AcceptanceEligible = $script:Manifest.Status -eq 'PASSED' -and $summary.Total -eq $summary.Passed -and $summary.Failed -eq 0 -and $summary.NotExecuted -eq 0
     $json = $script:Manifest | ConvertTo-Json -Depth 20
-    Set-Content -LiteralPath $manifestPath -Value $json -Encoding UTF8
+    Write-NewUtf8File $manifestPath $json
     Write-MarkdownArtifact
     Write-Host "Installer acceptance JSON: $manifestPath" -ForegroundColor Cyan
     Write-Host "Installer acceptance Markdown: $markdownPath" -ForegroundColor Cyan

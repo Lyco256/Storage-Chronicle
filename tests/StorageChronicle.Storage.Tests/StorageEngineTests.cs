@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using StorageChronicle.Domain.Contracts;
 using StorageChronicle.Storage;
@@ -39,7 +40,7 @@ public sealed class StorageEngineTests
             var segments = Directory.GetFiles(directory, "*.zst");
             Assert.NotEmpty(segments);
             Assert.Empty(Directory.GetFiles(directory, "*.open"));
-            await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(directory, "index.sqlite") }.ToString()))
+            await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(directory, "index.sqlite"), Pooling = false }.ToString()))
             {
                 await connection.OpenAsync();
                 using var command = connection.CreateCommand();
@@ -161,6 +162,49 @@ public sealed class StorageEngineTests
     }
 
     [Fact]
+    public async Task IncompleteOpenSegmentIsReadWithoutTruncationAndNeverReopenedForAppend()
+    {
+        var directory = CreateDirectory();
+        try
+        {
+            string damagedPath;
+            await using (var initial = new AppendOnlyStorageEngine(new StorageEngineOptions(directory)
+            {
+                CompressClosedSegments = false,
+                FlushInterval = TimeSpan.FromMinutes(1)
+            }))
+            {
+                await initial.AppendSourceAsync(CreateSource(1));
+                await initial.FlushAsync();
+            }
+
+            damagedPath = Assert.Single(Directory.GetFiles(directory, "*.open"));
+            await using (var stream = new FileStream(damagedPath, FileMode.Append, FileAccess.Write, FileShare.None))
+            {
+                await stream.WriteAsync(new byte[] { 32, 0, 0, 0, 1, 0 }, TestContext.Current.CancellationToken);
+            }
+            var originalDamagedBytes = await File.ReadAllBytesAsync(damagedPath, TestContext.Current.CancellationToken);
+
+            await using (var recovered = new AppendOnlyStorageEngine(new StorageEngineOptions(directory)
+            {
+                CompressClosedSegments = false,
+                FlushInterval = TimeSpan.FromMinutes(1)
+            }))
+            {
+                Assert.Single(await ToListAsync(recovered.ReadSourceAsync()));
+                await recovered.AppendSourceAsync(CreateSource(2));
+                await recovered.FlushAsync();
+                Assert.Equal(originalDamagedBytes, await File.ReadAllBytesAsync(damagedPath, TestContext.Current.CancellationToken));
+                Assert.Equal(2, Directory.GetFiles(directory, "*.open").Length);
+            }
+        }
+        finally
+        {
+            RemoveDirectory(directory);
+        }
+    }
+
+    [Fact]
     public async Task BoundedCanonicalBatchKeepsOrderDeduplicatesAndRebuilds()
     {
         var directory = CreateDirectory();
@@ -218,6 +262,8 @@ public sealed class StorageEngineTests
     {
         var directory = CreateDirectory();
         var destination = CreateDirectory();
+        AssertFixtureOwnership(destination);
+        Directory.Delete(destination);
         try
         {
             await using var store = CreateStore(directory);
@@ -239,6 +285,69 @@ public sealed class StorageEngineTests
         {
             RemoveDirectory(directory);
             RemoveDirectory(destination);
+        }
+    }
+
+    [Fact]
+    public async Task RelocationRefusesExistingEmptyDestinationWithoutRemovingIt()
+    {
+        var directory = CreateDirectory();
+        var destination = CreateDirectory();
+        try
+        {
+            await using var store = CreateStore(directory);
+            await Assert.ThrowsAsync<IOException>(() => store.RelocateAsync(destination).AsTask());
+
+            Assert.True(Directory.Exists(destination));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(destination));
+            Assert.Equal(Path.GetFullPath(directory), store.StorageDirectory);
+        }
+        finally
+        {
+            RemoveDirectory(directory);
+            RemoveDirectory(destination);
+        }
+    }
+
+    [Fact]
+    public void UnownedExistingHistoryIsRefusedWithoutDeletingOrChangingFiles()
+    {
+        var directory = CreateDirectory();
+        var unexpectedIndex = Path.Combine(directory, "index.sqlite");
+        byte[] original = [0x53, 0x43, 0x01, 0x7F];
+        try
+        {
+            File.WriteAllBytes(unexpectedIndex, original);
+
+            Assert.Throws<IOException>(() => CreateStore(directory));
+
+            Assert.Equal(original, File.ReadAllBytes(unexpectedIndex));
+            Assert.False(File.Exists(Path.Combine(directory, ".storage-chronicle-history-owner.json")));
+        }
+        finally
+        {
+            RemoveDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task UnknownEntryInOwnedHistoryIsPreservedAndPreventsRecovery()
+    {
+        var directory = CreateDirectory();
+        var unexpected = Path.Combine(directory, "user-notes.txt");
+        byte[] original = [0x75, 0x73, 0x65, 0x72];
+        try
+        {
+            await using (CreateStore(directory)) { }
+            await File.WriteAllBytesAsync(unexpected, original);
+
+            Assert.Throws<IOException>(() => CreateStore(directory));
+
+            Assert.Equal(original, await File.ReadAllBytesAsync(unexpected));
+        }
+        finally
+        {
+            RemoveDirectory(directory);
         }
     }
 
@@ -273,26 +382,49 @@ public sealed class StorageEngineTests
 
     private static string CreateDirectory()
     {
-        var path = Path.Combine(Path.GetTempPath(), "StorageChronicle.Storage.Tests", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(path);
-        return path;
+        var runId = Guid.NewGuid().ToString("N");
+        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.Storage.Tests", runId);
+        Directory.CreateDirectory(root);
+        using (var marker = new FileStream(Path.Combine(root, ".test-owner.json"), FileMode.CreateNew, FileAccess.Write, FileShare.Read))
+            JsonSerializer.Serialize(marker, new { Schema = "StorageChronicle.TestFixtureOwner.v1", RunId = runId });
+        var history = Path.Combine(root, "history");
+        Directory.CreateDirectory(history);
+        return history;
     }
 
     private static void RemoveDirectory(string path)
     {
-        for (var attempt = 0; attempt < 20 && Directory.Exists(path); attempt++)
+        var fullPath = Path.GetFullPath(path);
+        var root = Path.GetDirectoryName(fullPath) ?? throw new IOException("The storage test fixture has no owner directory.");
+        if (!Directory.Exists(root)) return;
+        var expectedParent = Path.Combine(Path.GetTempPath(), "StorageChronicle.Storage.Tests");
+        if (!string.Equals(Path.GetDirectoryName(root), expectedParent, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("The storage test fixture escaped its dedicated temp parent.");
+        AssertFixtureOwnership(path);
+        for (var attempt = 0; attempt < 60 && Directory.Exists(root); attempt++)
         {
-            try
-            {
-                Directory.Delete(path, recursive: true);
-            }
-            catch (IOException)
+            try { Directory.Delete(root, recursive: true); }
+            catch (IOException) when (attempt < 59)
             {
                 GC.Collect();
                 GC.WaitForPendingFinalizers();
-                Thread.Sleep(25);
+                Thread.Sleep(100);
             }
         }
+        if (Directory.Exists(root)) throw new IOException("The marked storage test fixture could not be removed.");
+    }
+
+    private static void AssertFixtureOwnership(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var root = Path.GetDirectoryName(fullPath) ?? throw new IOException("The storage test fixture has no owner directory.");
+        var expectedParent = Path.Combine(Path.GetTempPath(), "StorageChronicle.Storage.Tests");
+        var runId = Path.GetFileName(root);
+        if (!string.Equals(Path.GetDirectoryName(root), expectedParent, StringComparison.OrdinalIgnoreCase) || !Guid.TryParseExact(runId, "N", out _))
+            throw new IOException("The storage test fixture escaped its dedicated temp parent or run GUID.");
+        using var marker = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, ".test-owner.json")));
+        if (marker.RootElement.GetProperty("Schema").GetString() != "StorageChronicle.TestFixtureOwner.v1" || marker.RootElement.GetProperty("RunId").GetString() != runId)
+            throw new IOException("The storage fixture owner marker does not match this run.");
     }
 
     private sealed class FixedCapacityProbe(long available) : IStorageCapacityProbe

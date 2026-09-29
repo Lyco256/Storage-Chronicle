@@ -252,13 +252,24 @@ public sealed class LiveCorrelationValidatorTests
 
     private static string CreateTempRoot()
     {
-        var path = Path.Combine(Path.GetTempPath(), "StorageChronicle.LiveCorrelationValidator", Guid.NewGuid().ToString("N"));
+        var runId = Guid.NewGuid().ToString("N");
+        var path = Path.Combine(Path.GetTempPath(), "StorageChronicle.LiveCorrelationValidator", runId);
         Directory.CreateDirectory(path);
+        using var marker = new FileStream(Path.Combine(path, ".test-owner.json"), FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+        JsonSerializer.Serialize(marker, new { Schema = "StorageChronicle.TestFixtureOwner.v1", RunId = runId });
         return path;
     }
 
     private static void DeleteTempRoot(string path)
     {
-        if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+        if (!Directory.Exists(path)) return;
+        var fullPath = Path.GetFullPath(path);
+        var runId = Path.GetFileName(fullPath);
+        if (!Guid.TryParseExact(runId, "N", out _) || !string.Equals(Path.GetDirectoryName(fullPath), Path.Combine(Path.GetTempPath(), "StorageChronicle.LiveCorrelationValidator"), StringComparison.OrdinalIgnoreCase))
+            throw new IOException("The live-correlation fixture escaped its dedicated temp root.");
+        using var marker = JsonDocument.Parse(File.ReadAllText(Path.Combine(fullPath, ".test-owner.json")));
+        if (marker.RootElement.GetProperty("Schema").GetString() != "StorageChronicle.TestFixtureOwner.v1" || marker.RootElement.GetProperty("RunId").GetString() != runId)
+            throw new IOException("The live-correlation fixture marker does not match this run.");
+        Directory.Delete(fullPath, recursive: true);
     }
 }

@@ -1,8 +1,8 @@
 # ExternalMediaContracts.cs
 
-Defines the platform-neutral media mirror contracts: format/schema/projection versions, volume capability and mirror policy records, quality and recovery outcomes, import ledgers, media-only filters, monitoring exclusion registration, and the deterministic clock abstraction.
+Defines the platform-neutral media mirror contracts: format/schema/projection versions, volume capability and mirror policy records, quality and recovery outcomes, import ledgers, media-only filters, monitoring exclusion registration, and the deterministic clock abstraction. `MediaVolumeDescriptor` uses the shared `ProtectedVolumeRoles` representation and carries live mount points, classification completeness, and a separate write-time identity-binding flag. The mirror policy rejects any unknown/protected role and also rejects a root whose current volume identity was not bound immediately before use.
 
-Invariants: a mirror is never enabled for system, boot, recovery, or EFI volumes; media quality remains explicit rather than being upgraded by a UI; the import ledger is keyed by immutable manifest/segment SHA-256 values; and no contract creates or changes a USN journal. Tests cover policy rejection, quality classification, filtering, and mount-session clock behavior.
+Invariants: a mirror is never enabled for system, boot, recovery, or EFI volumes, nor when any such role is unclassified; a matching mount-point string alone is not sufficient to authorize writing; media quality remains explicit rather than being upgraded by a UI; the import ledger is keyed by immutable manifest/segment SHA-256 values; and no contract creates or changes a USN journal. Tests cover incomplete/unsafe role rejection, missing identity binding, quality classification, filtering, and mount-session clock behavior.
 
 ## Role
 

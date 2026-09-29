@@ -1,4 +1,5 @@
 using StorageChronicle.Domain.Contracts;
+using StorageChronicle.Contracts;
 
 namespace StorageChronicle.ExternalMedia;
 
@@ -20,16 +21,27 @@ public sealed record MediaVolumeDescriptor(
     string FileSystem,
     bool IsReadOnly,
     bool SupportsUsn,
-    bool IsSystemVolume = false,
-    bool IsBootVolume = false,
-    bool IsRecoveryVolume = false,
-    bool IsEfiVolume = false);
+    ProtectedVolumeRoles ProtectedRoles = ProtectedVolumeRoles.Unknown,
+    bool IsProtectedRoleClassificationComplete = false)
+{
+    /// <summary>Gets the current volume mount points used to bind an opted-in mirror path to this media.</summary>
+    public IReadOnlyList<string> MountPoints { get; init; } = Array.Empty<string>();
+
+    /// <summary>Gets whether this volume is the Windows system volume.</summary>
+    public bool IsSystemVolume => ProtectedRoles.HasFlag(ProtectedVolumeRoles.System);
+    /// <summary>Gets whether this volume is the running Windows boot volume.</summary>
+    public bool IsBootVolume => ProtectedRoles.HasFlag(ProtectedVolumeRoles.Boot);
+    /// <summary>Gets whether this volume is a recognized Windows recovery volume.</summary>
+    public bool IsRecoveryVolume => ProtectedRoles.HasFlag(ProtectedVolumeRoles.Recovery);
+    /// <summary>Gets whether this volume is an EFI System Partition.</summary>
+    public bool IsEfiVolume => ProtectedRoles.HasFlag(ProtectedVolumeRoles.Efi);
+}
 
 /// <summary>Configuration for the optional media mirror.</summary>
-public sealed record MediaMirrorConfiguration(bool Enabled, string MediaRoot, bool IsSystemVolume = false, bool IsBootVolume = false, bool IsRecoveryVolume = false, bool IsEfiVolume = false)
+public sealed record MediaMirrorConfiguration(bool Enabled, string MediaRoot, ProtectedVolumeRoles ProtectedRoles = ProtectedVolumeRoles.Unknown, bool IsProtectedRoleClassificationComplete = false)
 {
     /// <summary>Returns whether this configuration can be enabled.</summary>
-    public bool IsAllowed => Enabled && !IsSystemVolume && !IsBootVolume && !IsRecoveryVolume && !IsEfiVolume;
+    public bool IsAllowed => Enabled && IsProtectedRoleClassificationComplete && ProtectedRoles == ProtectedVolumeRoles.None;
 }
 
 /// <summary>Quality assigned to media monitoring and recovery facts.</summary>

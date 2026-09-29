@@ -16,7 +16,9 @@ param(
     [string]$WorkloadOraclePath,
     [string]$AgentHistoryPath,
     [string]$AgentPipeName = 'StorageChronicle.Agent',
+    [Parameter(Mandatory = $true)][string]$EvidenceRoot,
     [switch]$CreateVhdx,
+    [switch]$ConfirmCreateVhdx,
     [switch]$CreateUsnJournal,
     [switch]$WaitForMediaChange,
     [int]$MediaTimeoutSeconds = 300
@@ -25,11 +27,53 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'quality/AcceptanceContracts.ps1')
+$ErrorActionPreference = 'Stop'
+
+function Assert-NoReparsePath([string]$Path) {
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    if ($fullPath.StartsWith('\\', [StringComparison]::Ordinal)) { throw "UNC paths are not accepted: $fullPath" }
+    $rootPath = [IO.Path]::GetPathRoot($fullPath)
+    if ([string]::IsNullOrWhiteSpace($rootPath) -or $rootPath -notmatch '^[A-Za-z]:\\$') { throw "A local drive path is required: $fullPath" }
+    $cursor = $rootPath
+    $segments = $fullPath.Substring($rootPath.Length).Split([char[]]@('\', '/'), [StringSplitOptions]::RemoveEmptyEntries)
+    foreach ($segment in $segments) {
+        $cursor = Join-Path $cursor $segment
+        if (Test-Path -LiteralPath $cursor) {
+            $item = Get-Item -LiteralPath $cursor -Force -ErrorAction Stop
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Reparse points are not accepted in a test path: $cursor" }
+        }
+    }
+}
+
+function Write-NewUtf8File([string]$Path, [string]$Value) {
+    $encoding = [Text.UTF8Encoding]::new($false)
+    $bytes = $encoding.GetBytes($Value)
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
+}
+
 $platformTestProject = Join-Path $root 'tests/StorageChronicle.Platform.Windows.Integration.Tests/StorageChronicle.Platform.Windows.Integration.Tests.csproj'
 $agentTestProject = Join-Path $root 'tests/StorageChronicle.Agent.Tests/StorageChronicle.Agent.Tests.csproj'
 $testProjects = @($platformTestProject, $agentTestProject)
-$artifactRoot = Join-Path $root 'artifacts/acceptance'
-$runId = Get-Date -Format 'yyyyMMdd-HHmmss'
+$artifactRoot = [IO.Path]::GetFullPath($EvidenceRoot)
+$repoRoot = [IO.Path]::GetFullPath($root).TrimEnd('\') + '\'
+if ($artifactRoot.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'EvidenceRoot must be outside the repository and any synced workspace.'
+}
+if ($artifactRoot -match '^\\\\' -or $artifactRoot -match '(?i)\\OneDrive\\|\\Documents\\') {
+    throw 'EvidenceRoot must be a local non-synced path, not UNC, OneDrive, or Documents.'
+}
+if (-not (Test-Path -LiteralPath (Split-Path -Parent $artifactRoot) -PathType Container)) { throw 'EvidenceRoot parent directory must already exist.' }
+Assert-NoReparsePath (Split-Path -Parent $artifactRoot)
+if (Test-Path -LiteralPath $artifactRoot) {
+    throw "EvidenceRoot must be a new path; refusing to write into existing data: $artifactRoot"
+}
+$evidenceVolume = Get-Volume -FilePath (Split-Path -Parent $artifactRoot) -ErrorAction Stop
+if ([string]$evidenceVolume.FileSystem -ne 'NTFS' -or [string]$evidenceVolume.DriveType -ne 'Fixed') { throw 'EvidenceRoot must be on a local fixed NTFS volume.' }
+$runId = if ([string]::IsNullOrWhiteSpace($TestId)) { [guid]::NewGuid().ToString('D') } else { $TestId }
+$parsedRunId = [guid]::Empty
+if (-not [guid]::TryParse($runId, [ref]$parsedRunId)) { throw 'TestId must be a GUID for privileged acceptance.' }
+$runId = $parsedRunId.ToString('D')
 $manifestPath = Join-Path $artifactRoot "windows-privileged-$runId.json"
 $runOutputPath = Join-Path $artifactRoot "windows-privileged-$runId.log"
 $environmentNames = @(
@@ -62,10 +106,10 @@ $manifest = [ordered]@{
     Artifacts = [ordered]@{ Manifest = $manifestPath; Log = $runOutputPath }
 }
 
-New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
+New-Item -ItemType Directory -Path $artifactRoot | Out-Null
 $evidenceDirectory = Join-Path $artifactRoot "windows-privileged-$runId"
 $reconciliationEvidencePath = Join-Path $evidenceDirectory 'confirmed-reconciliation.json'
-Start-Transcript -Path $runOutputPath -Force | Out-Null
+Start-Transcript -Path $runOutputPath -NoClobber | Out-Null
 
 function Set-ProcessEnvironment([string]$Name, [string]$Value) {
     if ([string]::IsNullOrWhiteSpace($Value)) {
@@ -119,7 +163,9 @@ function Invoke-DiskPartScript([string]$Root, [string[]]$Lines) {
     $scriptPath = Join-Path $Root ('.storage-chronicle-diskpart-' + $runId + '.txt')
     if (-not ([IO.Path]::GetFullPath($scriptPath).StartsWith([IO.Path]::GetFullPath($Root).TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase))) { throw 'The DiskPart script path escaped TestLabRoot.' }
     try {
-        Set-Content -LiteralPath $scriptPath -Value ($Lines -join [Environment]::NewLine) -Encoding ASCII
+        $bytes = [Text.Encoding]::ASCII.GetBytes(($Lines -join [Environment]::NewLine))
+        $stream = [IO.File]::Open($scriptPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
         $result = Invoke-Captured 'diskpart.exe' @('/s', $scriptPath)
         if ($result.ExitCode -ne 0) { throw "DiskPart failed with exit code $($result.ExitCode): $($result.Error.Trim())" }
         return $result
@@ -149,6 +195,98 @@ function Get-VolumeForPath([string]$Path) {
     }
 
     return $null
+}
+
+function Get-VerifiedVhdxDisk([string]$ExpectedUniqueId, [switch]$RequireRawUnpartitioned) {
+    $image = Get-DiskImage -ImagePath $VhdxPath -ErrorAction Stop
+    $actualImagePath = [IO.Path]::GetFullPath([string]$image.ImagePath)
+    if (-not $image.Attached -or -not $actualImagePath.Equals($VhdxPath, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'The attached disk image does not resolve to the exact newly created VHDX path.'
+    }
+    $disks = @($image | Get-Disk -ErrorAction Stop)
+    if ($disks.Count -ne 1) { throw "Expected exactly one disk for the VHDX image; found $($disks.Count)." }
+    $disk = $disks[0]
+    $uniqueId = [string]$disk.UniqueId
+    if ([string]::IsNullOrWhiteSpace($uniqueId)) { throw 'The attached VHDX disk has no stable unique ID.' }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedUniqueId) -and -not $uniqueId.Equals($ExpectedUniqueId, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'The VHDX disk unique ID changed during the operation.'
+    }
+    if ([string]$disk.BusType -ne 'File Backed Virtual') { throw "The image is not reported as a file-backed virtual disk: $($disk.BusType)" }
+    if ($null -eq $disk.IsBoot -or $null -eq $disk.IsSystem) { throw 'System/boot classification is unavailable; disk mutation is refused.' }
+    if ($disk.IsBoot -or $disk.IsSystem) { throw 'The image disk is classified as a boot or system disk.' }
+    if ($disk.Size -lt 4GB) { throw 'The attached VHDX is smaller than the required 4 GiB test volume.' }
+    # Storage cmdlets below resolve disks again by UniqueId. Verify that lookup
+    # still denotes the exact disk returned for this image on every guard call.
+    $resolvedDisks = @(Get-Disk -UniqueId $uniqueId -ErrorAction Stop)
+    if ($resolvedDisks.Count -ne 1 -or [string]$resolvedDisks[0].UniqueId -ne $uniqueId -or [uint32]$resolvedDisks[0].Number -ne [uint32]$disk.Number -or [string]$resolvedDisks[0].BusType -ne 'File Backed Virtual') {
+        throw 'UniqueId no longer resolves to exactly the file-backed disk mapped from the approved VHDX image.'
+    }
+    $resolvedImage = Get-DiskImage -ImagePath $VhdxPath -ErrorAction Stop
+    $resolvedImagePath = [IO.Path]::GetFullPath([string]$resolvedImage.ImagePath)
+    $resolvedImageDisks = @($resolvedImage | Get-Disk -ErrorAction Stop)
+    if (-not $resolvedImage.Attached -or -not $resolvedImagePath.Equals($VhdxPath, [StringComparison]::OrdinalIgnoreCase) -or $resolvedImageDisks.Count -ne 1 -or [string]$resolvedImageDisks[0].UniqueId -ne $uniqueId -or [uint32]$resolvedImageDisks[0].Number -ne [uint32]$disk.Number) {
+        throw 'The disk identity no longer maps to the exact approved attached VHDX image.'
+    }
+    if ($RequireRawUnpartitioned) {
+        $partitions = @(Get-Partition -DiskId $uniqueId -ErrorAction Stop)
+        if ([string]$disk.PartitionStyle -ne 'RAW' -or $partitions.Count -ne 0) {
+            throw 'The newly created VHDX is not a blank RAW disk; initialization and formatting are refused.'
+        }
+    }
+    return $disk
+}
+
+function Resolve-ExistingVolumeForConfiguredPath([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return }
+    $candidate = [Environment]::ExpandEnvironmentVariables($Path.Trim())
+    $candidate = $candidate.Replace('\\?\', '').Replace('\??\', '')
+    $probe = $candidate
+    while (-not (Test-Path -LiteralPath $probe)) {
+        $parent = Split-Path -Parent $probe
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $probe) { throw "Could not resolve configured OS-role path to an existing volume: $candidate" }
+        $probe = $parent
+    }
+    $volume = Get-Volume -FilePath $probe -ErrorAction Stop
+    if ($null -eq $volume -or [string]::IsNullOrWhiteSpace([string]$volume.UniqueId)) { throw "Could not resolve an OS-role path to one stable volume identity: $candidate" }
+    return $volume
+}
+
+function Assert-VolumePathIsNotOnVhdxDisk([string]$Path, [string]$DiskUniqueId) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return }
+    $volume = Resolve-ExistingVolumeForConfiguredPath $Path
+    $partitions = @($volume | Get-Partition -ErrorAction Stop)
+    $disks = @($partitions | Get-Disk -ErrorAction Stop)
+    if (@($disks | Where-Object { [string]$_.UniqueId -eq $DiskUniqueId }).Count -gt 0) {
+        throw "The VHDX disk is configured as a pagefile or crash-dump target: $candidate"
+    }
+}
+
+function Assert-VhdxDiskHasNoPagingOrCrashDumpRole([string]$DiskUniqueId) {
+    $pageFiles = @(Get-CimInstance -ClassName Win32_PageFileUsage -ErrorAction Stop)
+    foreach ($pageFile in $pageFiles) { Assert-VolumePathIsNotOnVhdxDisk ([string]$pageFile.Name) $DiskUniqueId }
+    $crashControl = Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl' -ErrorAction Stop
+    foreach ($propertyName in @('DumpFile', 'DedicatedDumpFile', 'MinidumpDir')) {
+        Assert-VolumePathIsNotOnVhdxDisk ([string]$crashControl.$propertyName) $DiskUniqueId
+    }
+}
+
+function Assert-VhdxVolumeHasNoPagingOrCrashDumpRole([string]$DiskUniqueId, [string]$VolumeUniqueId) {
+    if ([string]::IsNullOrWhiteSpace($VolumeUniqueId)) { throw 'The VHDX volume has no stable identity for pagefile/crash-dump role checks.' }
+    $pageFiles = @(Get-CimInstance -ClassName Win32_PageFileUsage -ErrorAction Stop)
+    foreach ($pageFile in $pageFiles) {
+        $candidate = [Environment]::ExpandEnvironmentVariables(([string]$pageFile.Name).Trim()).Replace('\\?\', '').Replace('\??\', '')
+        $pageVolume = Resolve-ExistingVolumeForConfiguredPath $candidate
+        if ([string]$pageVolume.UniqueId -eq $VolumeUniqueId) { throw 'The VHDX volume is used for a pagefile; formatting is refused.' }
+        Assert-VolumePathIsNotOnVhdxDisk $candidate $DiskUniqueId
+    }
+    $crashControl = Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl' -ErrorAction Stop
+    foreach ($propertyName in @('DumpFile', 'DedicatedDumpFile', 'MinidumpDir')) {
+        $value = [Environment]::ExpandEnvironmentVariables(([string]$crashControl.$propertyName).Trim()).Replace('\\?\', '').Replace('\??\', '')
+        if ([string]::IsNullOrWhiteSpace($value)) { continue }
+        $dumpVolume = Resolve-ExistingVolumeForConfiguredPath $value
+        if ([string]$dumpVolume.UniqueId -eq $VolumeUniqueId) { throw 'The VHDX volume is configured for crash dumps; formatting is refused.' }
+        Assert-VolumePathIsNotOnVhdxDisk $value $DiskUniqueId
+    }
 }
 
 function Is-Administrator {
@@ -184,7 +322,7 @@ function Assert-TestLabMarker([string]$RootPath, [string[]]$AllowedRoles) {
             default { [pscustomobject]@{ Label = 'SC_TEST_VOLUME'; FileSystem = 'NTFS' } }
         }
         if ([string]$marker.VolumeLabel -ne $expected.Label -or [string]$marker.FileSystem -ine $expected.FileSystem) { throw "TestLab marker label/filesystem is invalid: $path" }
-        if (-not [string]::IsNullOrWhiteSpace($TestId) -and [string]$marker.TestId -ne $TestId) { throw "TestLab marker TestId does not match the requested acceptance run: $path" }
+        if ([string]$marker.TestId -ne $runId) { throw "TestLab marker TestId does not match this unique acceptance run: $path" }
         $markers += $marker
     }
     if ([string]$markers[0].Role -ne [string]$markers[1].Role -or [string]$markers[0].TestId -ne [string]$markers[1].TestId) { throw "The two TestLab markers disagree: $RootPath" }
@@ -238,6 +376,14 @@ function Write-Manifest([int]$ExitCode, [string]$Status) {
     $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 }
 
+function Save-FinalManifest {
+    $json = $manifest | ConvertTo-Json -Depth 20
+    Set-Content -LiteralPath $manifestPath -Value $json -Encoding UTF8
+    if ($manifest.Artifacts.Contains('Result') -and (Test-Path -LiteralPath ([string]$manifest.Artifacts.Result) -PathType Leaf)) {
+        Set-Content -LiteralPath ([string]$manifest.Artifacts.Result) -Value $json -Encoding UTF8
+    }
+}
+
 function Write-ProductEvidencePayload([string]$Name, $Value) {
     $Value | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $manifest.Artifacts[$Name] -Encoding UTF8
 }
@@ -278,7 +424,9 @@ function Populate-ProductEvidence {
 }
 
 $createdVhdx = $false
-$mountedVhdx = $false
+$createdVhdxDiskUniqueId = $null
+$createdVhdxVolumeUniqueId = $null
+$detachFailure = $null
 $exitCode = 0
 try {
     $hostIsWindows = [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)
@@ -287,7 +435,7 @@ try {
         Add-NotExecuted 'all' 'This acceptance suite requires a Windows host.'
         $exitCode = 2
         Write-Manifest $exitCode 'NOT_EXECUTED'
-        exit $exitCode
+    exit $exitCode
     }
 
     $TestLabRoot = if ([string]::IsNullOrWhiteSpace($TestLabRoot)) { [Environment]::GetEnvironmentVariable('SC_TESTLAB_ROOT', 'Process') } else { $TestLabRoot }
@@ -298,43 +446,115 @@ try {
         Write-Manifest $exitCode 'NOT_EXECUTED'
         exit $exitCode
     }
-    $TestLabRoot = [IO.Path]::GetFullPath($TestLabRoot).TrimEnd('\')
+    $normalizedTestLabRoot = [IO.Path]::GetFullPath($TestLabRoot)
+    $volumeRoot = [IO.Path]::GetPathRoot($normalizedTestLabRoot)
+    if ($normalizedTestLabRoot.TrimEnd('\').Equals($volumeRoot.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'TestLabRoot cannot be a volume root.'
+    }
+    $TestLabRoot = $normalizedTestLabRoot.TrimEnd('\')
     if (-not (Test-Path -LiteralPath $TestLabRoot -PathType Container)) { throw "The approved TestLab root does not exist: $TestLabRoot" }
+    if ($TestLabRoot.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCase) -or $TestLabRoot -match '(?i)\\OneDrive\\|\\Documents\\') {
+        throw 'TestLabRoot must be outside the repository, OneDrive, and Documents.'
+    }
+    if ($TestLabRoot.Equals($artifactRoot, [StringComparison]::OrdinalIgnoreCase) -or $TestLabRoot.StartsWith($artifactRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or $artifactRoot.StartsWith($TestLabRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'EvidenceRoot and TestLabRoot must be separate, non-overlapping directories.'
+    }
+    if (-not (Is-PathSafeForAcceptance $TestLabRoot)) { throw "Refusing a volume root or protected TestLabRoot: $TestLabRoot" }
+    Assert-NoReparsePath $TestLabRoot
+    $testLabVolume = Get-VolumeForPath $TestLabRoot
+    if ($null -eq $testLabVolume -or [string]$testLabVolume.FileSystem -ne 'NTFS' -or [string]$testLabVolume.DriveType -ne 'Fixed') {
+        throw 'TestLabRoot must resolve to a local fixed NTFS volume.'
+    }
+    if ([uint64]$testLabVolume.SizeRemaining -lt 40GB) { throw 'At least 40 GiB free space is required before creating a new VHDX.' }
     if ($CreateUsnJournal) { throw 'Refusing -CreateUsnJournal: the acceptance suite must query/read an existing journal and must not create or resize a journal.' }
 
     if ($CreateVhdx) {
+        if (-not $ConfirmCreateVhdx) { throw 'VHDX creation requires explicit -ConfirmCreateVhdx authorization after the physical safety review.' }
+        if ([string]::IsNullOrWhiteSpace($TestId)) { throw 'VHDX creation requires an explicit unique TestId GUID included in the VHDX filename.' }
         if ([string]::IsNullOrWhiteSpace($VhdxPath)) { throw '-CreateVhdx requires -VhdxPath.' }
         $VhdxPath = [IO.Path]::GetFullPath($VhdxPath)
         if ([IO.Path]::GetExtension($VhdxPath) -ine '.vhdx') { throw '-VhdxPath must have a .vhdx extension.' }
+        if ([IO.Path]::GetFileName($VhdxPath).IndexOf($runId, [StringComparison]::OrdinalIgnoreCase) -lt 0) { throw 'The new VHDX filename must include the current TestId GUID.' }
         if (-not ($VhdxPath.Equals($TestLabRoot, [StringComparison]::OrdinalIgnoreCase) -or $VhdxPath.StartsWith($TestLabRoot + '\', [StringComparison]::OrdinalIgnoreCase))) { throw "The disposable VHDX must be under the approved TestLab root: $VhdxPath" }
         if (Test-Path -LiteralPath $VhdxPath) { throw "Refusing to overwrite an existing VHDX: $VhdxPath" }
         if (-not (Test-Path -LiteralPath (Split-Path -Parent $VhdxPath))) { throw 'The VHDX parent directory must already exist.' }
+        Assert-NoReparsePath (Split-Path -Parent $VhdxPath)
+        $vhdxParentVolume = Get-VolumeForPath (Split-Path -Parent $VhdxPath)
+        if ($null -eq $vhdxParentVolume -or [string]$vhdxParentVolume.UniqueId -ne [string]$testLabVolume.UniqueId) {
+            throw 'The VHDX parent directory is not on the exact verified TestLabRoot volume.'
+        }
+        if ([uint64]$vhdxParentVolume.SizeRemaining -lt 40GB) { throw 'At least 40 GiB free space is required immediately before VHDX creation.' }
+        if (-not (Is-Administrator)) { throw 'Creating or formatting a VHDX requires an explicitly elevated acceptance process.' }
         foreach ($command in @('Get-DiskImage', 'Mount-DiskImage', 'Dismount-DiskImage', 'Get-Disk', 'Set-Disk', 'Initialize-Disk', 'New-Partition', 'Format-Volume')) {
             if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "The Windows Storage command $command is not available; VHDX setup was not executed." }
         }
 
+        $createdVhdx = $true
         Invoke-DiskPartScript -Root $TestLabRoot -Lines @(
             ('create vdisk file="{0}" maximum=4096 type=expandable' -f $VhdxPath),
             ('select vdisk file="{0}"' -f $VhdxPath),
             'attach vdisk'
         ) | Out-Null
-        $createdVhdx = $true
-        $diskImage = Get-DiskImage -ImagePath $VhdxPath -ErrorAction Stop
-        if (-not $diskImage.Attached) { throw "The disposable VHDX did not attach: $VhdxPath" }
-        $mountedVhdx = $true
-        $disk = $diskImage | Get-Disk
-        if ($disk.IsOffline) { Set-Disk -Number $disk.Number -IsOffline $false }
-        if ($disk.IsReadOnly) { Set-Disk -Number $disk.Number -IsReadOnly $false }
-        Initialize-Disk -Number $disk.Number -PartitionStyle GPT -Confirm:$false | Out-Null
-        $partition = New-Partition -DiskNumber $disk.Number -UseMaximumSize -AssignDriveLetter
-        Format-Volume -Partition $partition -FileSystem NTFS -NewFileSystemLabel 'SC_TEST_VOLUME' -Confirm:$false | Out-Null
-        $VhdxRoot = "$($partition.DriveLetter):\"
+        $disk = Get-VerifiedVhdxDisk '' -RequireRawUnpartitioned
+        $diskUniqueId = [string]$disk.UniqueId
+        Assert-VhdxDiskHasNoPagingOrCrashDumpRole $diskUniqueId
+        if ($disk.IsOffline) {
+            $disk = Get-VerifiedVhdxDisk $diskUniqueId -RequireRawUnpartitioned
+            Assert-VhdxDiskHasNoPagingOrCrashDumpRole $diskUniqueId
+            Set-Disk -UniqueId $diskUniqueId -IsOffline $false -ErrorAction Stop
+        }
+        $disk = Get-VerifiedVhdxDisk $diskUniqueId -RequireRawUnpartitioned
+        if ($disk.IsReadOnly) {
+            Assert-VhdxDiskHasNoPagingOrCrashDumpRole $diskUniqueId
+            Set-Disk -UniqueId $diskUniqueId -IsReadOnly $false -ErrorAction Stop
+        }
+        $disk = Get-VerifiedVhdxDisk $diskUniqueId -RequireRawUnpartitioned
+        Assert-VhdxDiskHasNoPagingOrCrashDumpRole $diskUniqueId
+        $disk = Get-VerifiedVhdxDisk $diskUniqueId -RequireRawUnpartitioned
+        Initialize-Disk -UniqueId $diskUniqueId -PartitionStyle GPT -Confirm:$false -ErrorAction Stop | Out-Null
+        $disk = Get-VerifiedVhdxDisk $diskUniqueId
+        Assert-VhdxDiskHasNoPagingOrCrashDumpRole $diskUniqueId
+        $disk = Get-VerifiedVhdxDisk $diskUniqueId
+        $partition = New-Partition -DiskId $diskUniqueId -UseMaximumSize -AssignDriveLetter -ErrorAction Stop
+        $partitions = @(Get-Partition -DiskId $diskUniqueId -ErrorAction Stop)
+        if ($partitions.Count -ne 1 -or [string]$partitions[0].DiskId -ne $diskUniqueId -or [uint64]$partitions[0].Size -le 0) {
+            throw 'The newly created partition does not uniquely match the verified VHDX disk.'
+        }
+        $partition = $partitions[0]
+        $disk = Get-VerifiedVhdxDisk $diskUniqueId
+        $partitions = @(Get-Partition -DiskId $diskUniqueId -ErrorAction Stop)
+        if ($partitions.Count -ne 1 -or [string]$partitions[0].DiskId -ne $diskUniqueId -or [uint64]$partitions[0].Offset -ne [uint64]$partition.Offset) {
+            throw 'The partition identity changed before formatting; format is refused.'
+        }
+        $unformattedVolume = Get-Volume -Partition $partitions[0] -ErrorAction Stop
+        Assert-VhdxVolumeHasNoPagingOrCrashDumpRole $diskUniqueId ([string]$unformattedVolume.UniqueId)
+        $disk = Get-VerifiedVhdxDisk $diskUniqueId
+        $partitions = @(Get-Partition -DiskId $diskUniqueId -ErrorAction Stop)
+        if ($partitions.Count -ne 1 -or [string]$partitions[0].DiskId -ne $diskUniqueId -or [uint64]$partitions[0].Offset -ne [uint64]$partition.Offset) {
+            throw 'The verified VHDX partition changed immediately before formatting; format is refused.'
+        }
+        $currentVolume = Get-Volume -Partition $partitions[0] -ErrorAction Stop
+        if ([string]$currentVolume.UniqueId -ne [string]$unformattedVolume.UniqueId -or -not [string]::IsNullOrWhiteSpace([string]$currentVolume.FileSystem)) {
+            throw 'The volume identity or blank-filesystem state changed immediately before formatting.'
+        }
+        Assert-VhdxVolumeHasNoPagingOrCrashDumpRole $diskUniqueId ([string]$currentVolume.UniqueId)
+        $disk = Get-VerifiedVhdxDisk $diskUniqueId
+        Format-Volume -Partition $partitions[0] -FileSystem NTFS -NewFileSystemLabel 'SC_TEST_VOLUME' -Confirm:$false -ErrorAction Stop | Out-Null
+        $volume = Get-Volume -Partition $partitions[0] -ErrorAction Stop
+        if ($null -eq $volume -or [string]$volume.FileSystem -ne 'NTFS' -or [string]$volume.FileSystemLabel -ne 'SC_TEST_VOLUME' -or [string]::IsNullOrWhiteSpace([string]$volume.UniqueId)) {
+            throw 'The formatted volume identity/label does not match the verified disposable VHDX.'
+        }
+        if ([string]$volume.UniqueId -notmatch '^\\\\\?\\Volume\{[0-9A-Fa-f-]+\}\\$') { throw 'The formatted VHDX volume has no valid Volume GUID path.' }
+        $createdVhdxDiskUniqueId = $diskUniqueId
+        $createdVhdxVolumeUniqueId = [string]$volume.UniqueId
+        $VhdxRoot = [string]$volume.UniqueId
         $AcceptanceRoot = Join-Path $VhdxRoot 'StorageChronicleAcceptance'
-        New-Item -ItemType Directory -Force -Path $AcceptanceRoot | Out-Null
-        $markerValue = [ordered]@{ Schema = 'StorageChronicle.TestLabDataMarker.v1'; TestId = $runId; Role = 'Workload'; VolumeLabel = 'SC_TEST_VOLUME'; FileSystem = 'NTFS'; VhdxPath = $VhdxPath; CreatedUtc = [DateTimeOffset]::UtcNow }
+        if (Test-Path -LiteralPath $AcceptanceRoot) { throw 'The freshly formatted VHDX unexpectedly contains an existing acceptance directory.' }
+        New-Item -ItemType Directory -Path $AcceptanceRoot | Out-Null
+        $markerValue = [ordered]@{ Schema = 'StorageChronicle.TestLabDataMarker.v1'; TestId = $runId; Role = 'Workload'; VolumeLabel = 'SC_TEST_VOLUME'; FileSystem = 'NTFS'; VhdxPath = $VhdxPath; DiskUniqueId = $createdVhdxDiskUniqueId; VolumeUniqueId = $createdVhdxVolumeUniqueId; CreatedUtc = [DateTimeOffset]::UtcNow }
         $markerJson = $markerValue | ConvertTo-Json -Depth 10
-        Set-Content -LiteralPath (Join-Path $AcceptanceRoot '.storage-chronicle-testlab-marker.json') -Value $markerJson -Encoding UTF8
-        Set-Content -LiteralPath (Join-Path $AcceptanceRoot 'StorageChronicleTestVolume.json') -Value $markerJson -Encoding UTF8
+        Write-NewUtf8File (Join-Path $AcceptanceRoot '.storage-chronicle-testlab-marker.json') $markerJson
+        Write-NewUtf8File (Join-Path $AcceptanceRoot 'StorageChronicleTestVolume.json') $markerJson
         Write-Host "Created and mounted disposable VHDX at $VhdxPath -> $AcceptanceRoot" -ForegroundColor Cyan
     } elseif (-not [string]::IsNullOrWhiteSpace($VhdxRoot)) {
         $VhdxRoot = [IO.Path]::GetFullPath($VhdxRoot)
@@ -357,13 +577,21 @@ try {
 
     $admin = Is-Administrator
     $volume = if ($AcceptanceRoot) { Get-VolumeForPath $AcceptanceRoot } else { $null }
+    if ($CreateVhdx) {
+        $image = Get-DiskImage -ImagePath $VhdxPath -ErrorAction Stop
+        $imageVolumes = @($image | Get-Disk | Get-Partition | Get-Volume)
+        if (-not $image.Attached -or $imageVolumes.Count -ne 1 -or [string]$imageVolumes[0].UniqueId -ne $createdVhdxVolumeUniqueId -or [string]$volume.UniqueId -ne $createdVhdxVolumeUniqueId) {
+            throw 'The acceptance path does not resolve to the single volume attached from the exact newly created VHDX.'
+        }
+        $imageDisk = @($image | Get-Disk)
+        if ($imageDisk.Count -ne 1 -or [string]$imageDisk[0].UniqueId -ne $createdVhdxDiskUniqueId) { throw 'The attached image disk identity changed after VHDX creation.' }
+    }
     $isNtfs = $null -ne $volume -and $volume.FileSystem -eq 'NTFS'
     $nonNtfsVolume = if ($NonNtfsRoot) { Get-VolumeForPath $NonNtfsRoot } else { $null }
     $nonNtfsReady = $null -ne $nonNtfsVolume -and $nonNtfsVolume.FileSystem -ne 'NTFS'
     $device = $DevicePath
     if ([string]::IsNullOrWhiteSpace($device) -and $AcceptanceRoot) {
-        $driveRoot = [IO.Path]::GetPathRoot($AcceptanceRoot)
-        if ($driveRoot -and $driveRoot.Length -ge 2 -and $driveRoot[1] -eq ':') { $device = "\\.\$($driveRoot[0]):" }
+        if ($volume -and $volume.DriveLetter) { $device = "\\.\$($volume.DriveLetter):" }
     }
     $vhdxAttached = $false
     $vhdxReason = 'A mounted VHDX path was not supplied.'
@@ -374,7 +602,11 @@ try {
             $vhdxReason = 'Get-DiskImage is unavailable on this host.'
         } else {
             $image = Get-DiskImage -ImagePath $VhdxPath -ErrorAction SilentlyContinue
-            $vhdxAttached = $null -ne $image -and $image.Attached -and $isNtfs
+            $imageDisk = if ($image -and $image.Attached) { @($image | Get-Disk -ErrorAction SilentlyContinue) } else { @() }
+            $imageVolumes = if ($image -and $image.Attached) { @($image | Get-Disk | Get-Partition | Get-Volume) } else { @() }
+            $imagePathMatches = $image -and [IO.Path]::GetFullPath([string]$image.ImagePath).Equals([IO.Path]::GetFullPath($VhdxPath), [StringComparison]::OrdinalIgnoreCase)
+            $identityMatches = $CreateVhdx -and $imageDisk.Count -eq 1 -and $imageVolumes.Count -eq 1 -and [string]$imageDisk[0].UniqueId -eq $createdVhdxDiskUniqueId -and [string]$imageVolumes[0].UniqueId -eq $createdVhdxVolumeUniqueId
+            $vhdxAttached = $null -ne $image -and $image.Attached -and $imagePathMatches -and $isNtfs -and ($identityMatches -or -not $CreateVhdx)
             $vhdxReason = if ($vhdxAttached) { 'Attached VHDX with an NTFS mount was detected.' } else { 'The VHDX is not attached with an NTFS mount.' }
         }
     }
@@ -433,13 +665,18 @@ try {
         Architecture = if ([Environment]::Is64BitOperatingSystem) { 'x64' } else { 'x86' }
         IsAdministrator = $admin
         AcceptanceRoot = $AcceptanceRoot
+        EvidenceRoot = $artifactRoot
         NonNtfsRoot = $NonNtfsRoot
-        TestId = $TestId
+        TestId = $runId
+        TestLabRoot = $TestLabRoot
+        TestLabVolumeUniqueId = if ($testLabVolume) { $testLabVolume.UniqueId } else { $null }
         AcceptanceMarkerRole = if ($acceptanceMarker) { $acceptanceMarker.Role } else { $null }
         NonNtfsMarkerRole = if ($nonNtfsMarker) { $nonNtfsMarker.Role } else { $null }
         DevicePath = $device
         VhdxPath = $VhdxPath
         VhdxRoot = $VhdxRoot
+        VhdxDiskUniqueId = $createdVhdxDiskUniqueId
+        VhdxVolumeUniqueId = $createdVhdxVolumeUniqueId
         RemovableRoot = $RemovableRoot
         SmbShareName = $SmbShareName
         ServiceName = $ServiceName
@@ -450,7 +687,6 @@ try {
         NonNtfsVolumeFileSystem = if ($nonNtfsVolume) { $nonNtfsVolume.FileSystem } else { $null }
         VhdxAttached = $vhdxAttached
         ReconciliationEvidencePath = $reconciliationEvidencePath
-        TestLabRoot = $TestLabRoot
     }
 
     $capabilities = @(
@@ -540,7 +776,7 @@ try {
     Write-Manifest $exitCode $status
     Write-Host "Acceptance manifest: $manifestPath" -ForegroundColor Cyan
     Write-Host "Overall: $status (exit code $exitCode)" -ForegroundColor $(if ($exitCode -eq 0) { 'Green' } elseif ($exitCode -eq 2) { 'Yellow' } else { 'Red' })
-    exit $exitCode
+        exit $exitCode
 } catch {
     $exitCode = 1
     $manifest.Tests += [ordered]@{ Capability = 'runner'; Status = 'FAILED'; Reason = $_.Exception.Message }
@@ -550,12 +786,43 @@ try {
     Write-Manifest $exitCode 'FAILED'
     exit $exitCode
 } finally {
-    if ($mountedVhdx -and $VhdxPath) {
-        Dismount-DiskImage -ImagePath $VhdxPath -ErrorAction SilentlyContinue
-    }
     if ($createdVhdx -and $VhdxPath -and (Test-Path -LiteralPath $VhdxPath -PathType Leaf)) {
-        Remove-Item -LiteralPath $VhdxPath -Force -ErrorAction SilentlyContinue
+        try {
+            $image = Get-DiskImage -ImagePath $VhdxPath -ErrorAction Stop
+            if (-not [IO.Path]::GetFullPath([string]$image.ImagePath).Equals([IO.Path]::GetFullPath($VhdxPath), [StringComparison]::OrdinalIgnoreCase)) {
+                throw 'Refusing to detach: image lookup did not return the exact VHDX file created by this run.'
+            }
+            if ($image.Attached) { Dismount-DiskImage -ImagePath $VhdxPath -ErrorAction Stop }
+            $afterDetach = Get-DiskImage -ImagePath $VhdxPath -ErrorAction Stop
+            if ($afterDetach.Attached) { throw 'The newly created VHDX remains attached after the detach request.' }
+            $manifest.VhdxDetachStatus = 'DETACHED_VERIFIED'
+            Save-FinalManifest
+        } catch {
+            $exitCode = 1
+            $detachFailure = $_.Exception.Message
+            $manifest.VhdxDetachStatus = 'FAILED'
+            $manifest.Tests += [ordered]@{ Capability = 'vhdx-detach'; Status = 'FAILED'; Reason = $_.Exception.Message }
+            $manifest.Status = 'FAILED'
+            $manifest.ExitCode = 1
+            $manifest.AcceptanceEligible = $false
+            Save-FinalManifest
+        }
+    } elseif ($createdVhdx) {
+        $exitCode = 1
+        $detachFailure = 'The created VHDX path is missing; attached state cannot be verified.'
+        $manifest.VhdxDetachStatus = 'UNVERIFIABLE_VHDX_PATH_MISSING'
+        $manifest.Tests += [ordered]@{ Capability = 'vhdx-detach'; Status = 'FAILED'; Reason = 'The created VHDX path is missing; attached state cannot be verified.' }
+        $manifest.Status = 'FAILED'
+        $manifest.ExitCode = 1
+        $manifest.AcceptanceEligible = $false
+        Save-FinalManifest
+    } elseif ($createdVhdx -and $exitCode -eq 0) {
+        $exitCode = 1
     }
+    # Preserve the uniquely created VHDX and all evidence for manual, marker-verified cleanup.
     foreach ($name in $environmentNames) { [Environment]::SetEnvironmentVariable($name, $oldEnvironment[$name], 'Process') }
     Stop-Transcript | Out-Null
+    if (-not [string]::IsNullOrWhiteSpace($detachFailure)) {
+        throw "VHDX detach could not be verified; acceptance is failed and the image requires manual attention: $detachFailure"
+    }
 }

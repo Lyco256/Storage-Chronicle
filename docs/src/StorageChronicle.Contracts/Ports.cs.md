@@ -1,6 +1,6 @@
 # Ports.cs
 
-Defines append-only event, state, normalization, collector, projection, volume, capability, and local message-codec interfaces. Implementations depend on these ports rather than duplicating contracts. Contract tests cover serialization, idempotence, bounded reads, and protocol-version rejection.
+Defines append-only event, state, normalization, collector, projection, volume, capability, and local message-codec interfaces. `ProtectedVolumeRoles` is the single shared role representation for system, boot, recovery, EFI, and unknown; `VolumeDescriptor` carries classification completeness and a separate write-time volume-identity binding. Unknown roles are never interpreted as no protected role, and the default false identity binding prevents mirror writes until the actual target is revalidated. Implementations depend on these ports rather than duplicating role contracts. Contract tests cover serialization, idempotence, bounded reads, and protocol-version rejection.
 
 ## Role
 

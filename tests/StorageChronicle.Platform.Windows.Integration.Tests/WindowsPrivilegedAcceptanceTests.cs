@@ -56,7 +56,7 @@ public sealed class WindowsPrivilegedAcceptanceTests
             Directory.CreateDirectory(scenario);
             using (File.Create(marker)) { }
             File.Move(marker, renamed);
-            Directory.Delete(scenario, recursive: true);
+            File.Delete(renamed);
 
             var reader = new UsnJournalReader(
                 api,

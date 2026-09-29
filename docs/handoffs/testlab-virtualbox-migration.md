@@ -1,38 +1,32 @@
-# TestLab VirtualBox migration handoff
+# Physical data-protection acceptance handoff
 
 ## Scope
 
-This handoff covers the code-side migration on `feat/testlab-virtualbox-migration`. The authoritative migration requirements are `Requirements/32_VIRTUALBOX_MIGRATION_AND_SUPERSESSION.md` through `Requirements/36_VIRTUALBOX_MIGRATION_ACCEPTANCE_AND_REAUDIT.md`; `Requirements/22_SAFE_HYPERV_TESTLAB.md` contains the required supersession notice.
+This handoff records the superseding physical-test safety work on `feat/testlab-virtualbox-migration`. The user clarified that writes are not categorically forbidden: the primary prohibition is irreversible or recovery-difficult changes to existing user, system, or external-media data. Product-owned history writes and mutations confined to newly created, run-owned fixtures are allowed under `Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md`. Storage Chronicle's own settings may be updated through its normal UI using the existing atomic-replacement and backup flow. VirtualBox/VM execution requirements are historical and are not authorization to run those workflows.
 
 ## Changes
 
-- Replaced Hyper-V TestLab control with the platform-neutral TestLab entry points backed by `VBoxManage` and VirtualBox Guest Additions guest control.
-- Added exact Windows 11 and Windows 10 VM definitions, safe-device checks, dynamic VDI provisioning, baseline restore, one-VM-at-a-time execution, bounded guest copy/command helpers, and fail-closed cleanup.
-- Replaced host-side Hyper-V VHD control in `build/Test-Privileged.ps1` with DiskPart and Windows Storage cmdlets while retaining the guest-internal disposable VHDX contract and markers.
-- Migrated installer acceptance, Windows 10 Stage A, final acceptance, correlation, packaging, and documentation references.
-- Removed the obsolete Hyper-V installer orchestrator and driver; historical documentation remains explicitly marked as superseded.
-- Added mirrored documentation for every new or changed source/tool file and recorded the migration inventory and review.
+- Rewrote `Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md` to prohibit destructive changes to existing data while allowing approved product-owned writes and isolated fixture operations.
+- Bound external-media reads and writes to a Windows volume-identity-pinned directory session; added authoritative role classification and fail-closed behavior for unknown or ambiguous volumes.
+- Hardened product history ownership, append-only recovery, settings-path separation, installer acceptance gates, and test-fixture ownership. New source files have matching `docs/src` explanations.
+- Disabled automatic installer/VHDX cleanup paths where ownership cannot be independently proven; recorded remaining safety gaps in `docs/release/physical-readonly-audit.md` and machine-readable audit data.
+- Updated this handoff from obsolete VM instructions to the current physical test policy.
 
 ## Validation commands and results
 
-- PowerShell parser scan for repository scripts, excluding generated/build output: 51 files, 0 errors.
-- `git diff --check`: passed.
-- `build/quality/Test-DocMirror.ps1`: exit 0.
-- `build/quality/Test-VirtualBoxTestLab.ps1`: 6/6 provider-boundary contract cases passed; this does not claim a real guest run.
-- `build/quality/Test-Quality.ps1`: exit 0; architecture, integration, coverage, and VirtualBox boundary contract checks passed.
-- `build/Test-Fast.ps1 -NoRestore`: exit 0; all runnable suites passed, with only the existing environment-gated skips.
-- Release Installer tests: 8/8 passed.
-- Release LiveCorrelation validator tests: 4/4 passed.
-- Release Windows Integration build: 0 errors.
-- Forbidden runtime Hyper-V-control scan: no matches in source/build/tools/tests; historical docs and audit-only references are intentionally retained.
-- Host preflight negative-path run: exit 2 as required when the host is not ready; no VM mutation was attempted.
+- `./build/Test-All.ps1`: exit 0 on 2026-09-29; solution build had 0 warnings/0 errors, all fast tests passed, and quality/coverage and UI checks passed.
+- Agent tests: 36 passed, 3 physical acceptance tests skipped because no acceptance root was configured.
+- ExternalMedia tests: 20/20; Windows filesystem tests: 21/21; Storage: 12/12; Settings: 17/17; Diff View: 6/6; Event Stack: 9/9; UI settings: 13/13.
+- Correlation and real-I/O oracle validator suites each passed 4/4, including negative evidence cases that intentionally emit `FAILED` payloads to verify rejection.
+- `git diff --check`: no whitespace errors. DocMirror ran as part of the full suite.
+- No physical product, service, installer, privileged runner, VHDX workflow, or real external-media mirror was started. These results are not a physical-machine safety certification.
 
 ## Known limitations and required user handoff
 
-Real VirtualBox execution has not been claimed. The latest normal-user preflight observed no discoverable `VBoxManage.exe`, no supplied official ISO paths, and approximately 2.67 GiB available host memory, below the 6 GiB gate. No VM, Guest Additions installation, baseline snapshot, guest credential, installer matrix, Stage A, 10K/100K/1M MFT acceptance, performance acceptance, or final physical re-audit was executed.
+Physical execution remains **DO NOT RUN** for ordinary monitored volumes, privileged acceptance, installer operations, and cleanup. Host preflight and independent process-attributed write monitoring are `NOT_EXECUTED`. Static review still has material gaps: marker authenticity is forgeable, ancestor `DELETE_CHILD`/directory race resistance is unproven, live partition-role querying is untested, and complete installer/runner source-to-sink review is incomplete. Passing unit tests and skipped acceptance cases are not physical acceptance.
 
-The user must complete the fixed handoff in Requirements 34: install the approved VirtualBox 7.2.x Windows host package through normal UAC with no Extension Pack, provide official ISO media and a safe local NTFS TestLabRoot, resolve any real firmware/virtualization issue without disabling security controls, complete guest setup and matching Guest Additions, create the exact `SC-CLEAN-BASELINE`, and send back only non-secret preflight fields. Host applications must be closed until the latest 2.67 GiB available-RAM reading reaches the 6 GiB gate. Codex must remain a normal non-administrator host process.
+User action is required before physical acceptance: identify and approve a dedicated local NTFS fixture/evidence root on a dedicated test host, review any UAC/installer action, and provide the required Windows 10 22H2 machine if available. Never provide credentials. Code-level safety gates and an independent runtime monitor must pass before starting product or privileged processes.
 
 ## Merge gate
 
-This branch is not ready to merge to `devenv` or `main` until the user-controlled handoff is complete and the real VirtualBox acceptance sequence, installer cases, Stage A, performance/resource tests, correlation evidence, cleanup/recovery, and Requirements 36 final re-audit all pass.
+The non-privileged code changes may be integrated into `devenv` after review and revalidation. `main` is not ready: outstanding physical gates, product feature gaps, performance measurements, and requirements-coverage items in `docs/release/main-readiness.md` must pass first. Do not run irreversible operations on existing data or merge to `main` while any requirement remains `NOT_EXECUTED` or unmet.
