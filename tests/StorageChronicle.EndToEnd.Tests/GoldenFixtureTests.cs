@@ -18,8 +18,7 @@ public sealed class GoldenFixtureTests
     public async Task CreationDeleteGoldenFixtureSurvivesAgentRestartAndSqliteRebuild()
     {
         var fixture = await LoadFixtureAsync("creation-delete.json", TestContext.Current.CancellationToken);
-        var directory = Path.Combine(Path.GetTempPath(), "StorageChronicle.Golden", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(directory);
+        var directory = CreateOwnedFixture("StorageChronicle.Golden");
         try
         {
             await using (var first = new AppendOnlyStorageEngine(new StorageEngineOptions(directory) { FlushInterval = TimeSpan.FromMinutes(1) }))
@@ -28,7 +27,7 @@ public sealed class GoldenFixtureTests
                 await first.StopAsync(TestContext.Current.CancellationToken);
             }
 
-            foreach (var sqliteFile in Directory.EnumerateFiles(directory, "*.db*")) File.Delete(sqliteFile);
+            foreach (var sqliteFile in Directory.EnumerateFiles(directory, "*.db*")) DeleteOwnedFixtureFile(directory, sqliteFile);
 
             await using var restarted = new AppendOnlyStorageEngine(new StorageEngineOptions(directory) { FlushInterval = TimeSpan.FromMinutes(1) });
             await restarted.RebuildSqliteAsync(TestContext.Current.CancellationToken);
@@ -41,15 +40,14 @@ public sealed class GoldenFixtureTests
         }
         finally
         {
-            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+            RemoveOwnedFixture(directory);
         }
     }
 
     [Fact]
     public async Task CapacityFailureIsExplicitAndDoesNotSilentlyDropSourceQuality()
     {
-        var directory = Path.Combine(Path.GetTempPath(), "StorageChronicle.Capacity", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(directory);
+        var directory = CreateOwnedFixture("StorageChronicle.Capacity");
         try
         {
             await using var store = new AppendOnlyStorageEngine(new StorageEngineOptions(directory) { MinimumFreeBytes = long.MaxValue, FlushInterval = TimeSpan.FromMinutes(1) });
@@ -58,7 +56,7 @@ public sealed class GoldenFixtureTests
         }
         finally
         {
-            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+            RemoveOwnedFixture(directory);
         }
     }
 
@@ -76,6 +74,51 @@ public sealed class GoldenFixtureTests
         var path = Path.Combine(AppContext.BaseDirectory, "Golden", fileName);
         await using var stream = File.OpenRead(path);
         return await JsonSerializer.DeserializeAsync<GoldenFixture>(stream, JsonOptions, cancellationToken) ?? throw new InvalidDataException(path);
+    }
+
+    private static string CreateOwnedFixture(string category)
+    {
+        var runId = Guid.NewGuid().ToString("N");
+        var directory = Path.Combine(Path.GetTempPath(), category, runId);
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, ".test-owner"), runId);
+        return directory;
+    }
+
+    private static void DeleteOwnedFixtureFile(string directory, string file)
+    {
+        ValidateOwnedFixture(directory);
+        var target = Path.GetFullPath(file);
+        var boundary = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!target.StartsWith(boundary, StringComparison.OrdinalIgnoreCase) || !File.Exists(target) || (File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidOperationException("Refusing to delete a database outside the owned end-to-end fixture.");
+        File.Delete(target);
+    }
+
+    private static void RemoveOwnedFixture(string directory)
+    {
+        if (!Directory.Exists(directory)) return;
+        ValidateOwnedFixture(directory);
+        Directory.Delete(directory, recursive: true);
+    }
+
+    private static void ValidateOwnedFixture(string directory)
+    {
+        var target = Path.GetFullPath(directory);
+        var category = Path.GetDirectoryName(target);
+        var runId = Path.GetFileName(target);
+        if (category is null || !Guid.TryParseExact(runId, "N", out _) || !string.Equals(Path.GetDirectoryName(category), Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Refusing to modify an end-to-end fixture outside its run-specific temporary root.");
+        var owner = Path.Combine(target, ".test-owner");
+        if (!File.Exists(owner) || !string.Equals(File.ReadAllText(owner), runId, StringComparison.Ordinal))
+            throw new InvalidOperationException("Refusing to modify an end-to-end fixture without its owner marker.");
+        var boundary = target.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        foreach (var entry in Directory.EnumerateFileSystemEntries(target, "*", SearchOption.AllDirectories))
+        {
+            var resolved = Path.GetFullPath(entry);
+            if (!resolved.StartsWith(boundary, StringComparison.OrdinalIgnoreCase) || (File.GetAttributes(resolved) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidOperationException("Refusing to modify an end-to-end fixture with an out-of-root path or reparse point.");
+        }
     }
 
     private static async Task<List<T>> ToListAsync<T>(IAsyncEnumerable<T> source, CancellationToken cancellationToken)

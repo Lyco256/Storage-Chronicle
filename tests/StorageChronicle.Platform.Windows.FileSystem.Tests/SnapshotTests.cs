@@ -14,11 +14,12 @@ public sealed class SnapshotTests
     [Fact]
     public async Task InitialSnapshotRecordsReparsePointButDoesNotTraverseIt()
     {
-        var root = Directory.CreateTempSubdirectory("storage-chronicle-snapshot");
+        var root = CreateFixture();
         try
         {
+            ValidateFixture(root);
             Directory.CreateDirectory(Path.Combine(root.FullName, "junction-loop", "hidden"));
-            File.WriteAllText(Path.Combine(root.FullName, "visible.txt"), "not read by collector");
+            WriteFixtureFile(root, Path.Combine(root.FullName, "visible.txt"), "not read by collector");
             var native = new FakeFileNative(path =>
             {
                 var name = Path.GetFileName(path);
@@ -36,18 +37,18 @@ public sealed class SnapshotTests
         }
         finally
         {
-            root.Delete(true);
+            DeleteFixture(root);
         }
     }
 
     [Fact]
     public async Task AccessDeniedMetadataFallsBackToExistenceOnly()
     {
-        var root = Directory.CreateTempSubdirectory("storage-chronicle-access");
+        var root = CreateFixture();
         try
         {
             var denied = Path.Combine(root.FullName, "denied.txt");
-            File.WriteAllText(denied, "placeholder");
+            WriteFixtureFile(root, denied, "placeholder");
             var native = new FakeFileNative(path => new NativeFileMetadataRecord(FileId.Create("id:" + path), null, Path.GetFileName(path), FileKind.File, null, null, null, null, null, null, FileAttributes.Normal, null, true, !string.Equals(path, root.FullName, StringComparison.OrdinalIgnoreCase)));
             var volume = new VolumeDescriptor(VolumeId.Create("V"), "exFAT", [root.FullName], false, true, false, false, true);
             var reader = new WindowsVolumeSnapshotReader(native);
@@ -58,14 +59,14 @@ public sealed class SnapshotTests
         }
         finally
         {
-            root.Delete(true);
+            DeleteFixture(root);
         }
     }
 
     [Fact]
     public async Task CancellationStopsSnapshotWithoutPartialRecoveryEvent()
     {
-        var root = Directory.CreateTempSubdirectory("storage-chronicle-cancel");
+        var root = CreateFixture();
         try
         {
             using var cancellation = new CancellationTokenSource();
@@ -79,7 +80,7 @@ public sealed class SnapshotTests
         }
         finally
         {
-            root.Delete(true);
+            DeleteFixture(root);
         }
     }
 
@@ -88,5 +89,49 @@ public sealed class SnapshotTests
         var result = new List<SourceEvent>();
         await foreach (var item in source.WithCancellation(cancellationToken)) result.Add(item);
         return result;
+    }
+
+    private static DirectoryInfo CreateFixture()
+    {
+        var runId = Guid.NewGuid().ToString("N");
+        var path = Path.Combine(Path.GetTempPath(), "StorageChronicle.WindowsFileSystem.Tests", runId);
+        Directory.CreateDirectory(path);
+        File.WriteAllText(Path.Combine(path, ".test-owner"), runId);
+        return new DirectoryInfo(path);
+    }
+
+    private static void WriteFixtureFile(DirectoryInfo root, string path, string content)
+    {
+        ValidateFixture(root);
+        var target = Path.GetFullPath(path);
+        var boundary = Path.GetFullPath(root.FullName).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!target.StartsWith(boundary, StringComparison.OrdinalIgnoreCase) || (File.Exists(target) && (File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0))
+            throw new InvalidOperationException("Refusing to write outside the owned snapshot fixture.");
+        File.WriteAllText(target, content);
+    }
+
+    private static void DeleteFixture(DirectoryInfo root)
+    {
+        ValidateFixture(root);
+        Directory.Delete(root.FullName, recursive: true);
+    }
+
+    private static void ValidateFixture(DirectoryInfo root)
+    {
+        var target = Path.GetFullPath(root.FullName);
+        var allowedRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "StorageChronicle.WindowsFileSystem.Tests"));
+        var runId = Path.GetFileName(target);
+        if (!string.Equals(Path.GetDirectoryName(target), allowedRoot, StringComparison.OrdinalIgnoreCase) || !Guid.TryParseExact(runId, "N", out _))
+            throw new InvalidOperationException("Refusing to modify a snapshot fixture outside its run-specific root.");
+        var marker = Path.Combine(target, ".test-owner");
+        if (!File.Exists(marker) || !string.Equals(File.ReadAllText(marker), runId, StringComparison.Ordinal))
+            throw new InvalidOperationException("Refusing to modify a snapshot fixture without its run owner marker.");
+        var boundary = target.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        foreach (var entry in Directory.EnumerateFileSystemEntries(target, "*", SearchOption.AllDirectories))
+        {
+            var resolved = Path.GetFullPath(entry);
+            if (!resolved.StartsWith(boundary, StringComparison.OrdinalIgnoreCase) || (File.GetAttributes(resolved) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidOperationException("Refusing to modify a snapshot fixture with an out-of-root path or reparse point.");
+        }
     }
 }

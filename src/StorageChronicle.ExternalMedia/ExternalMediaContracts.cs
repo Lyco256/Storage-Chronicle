@@ -23,7 +23,8 @@ public sealed record MediaVolumeDescriptor(
     bool IsSystemVolume = false,
     bool IsBootVolume = false,
     bool IsRecoveryVolume = false,
-    bool IsEfiVolume = false);
+    bool IsEfiVolume = false,
+    IReadOnlyList<string>? MountPoints = null);
 
 /// <summary>Configuration for the optional media mirror.</summary>
 public sealed record MediaMirrorConfiguration(bool Enabled, string MediaRoot, bool IsSystemVolume = false, bool IsBootVolume = false, bool IsRecoveryVolume = false, bool IsEfiVolume = false)

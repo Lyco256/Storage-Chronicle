@@ -20,4 +20,3 @@ public sealed class DiffExplorerView
         return model.ExplorerRows.Skip(skip).Take(pageSize).ToArray();
     }
 }
-

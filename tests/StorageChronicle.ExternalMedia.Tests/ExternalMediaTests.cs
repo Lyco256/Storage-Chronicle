@@ -27,7 +27,7 @@ public sealed class ExternalMediaTests
             var segmentPath = Path.Combine(store.WriterDirectory, segment.FileName);
             var segmentBytes = await File.ReadAllBytesAsync(segmentPath, TestContext.Current.CancellationToken);
             segmentBytes[^1] ^= 0x20;
-            await File.WriteAllBytesAsync(segmentPath, segmentBytes, TestContext.Current.CancellationToken);
+            await WriteFixtureBytesAsync(root, segmentPath, segmentBytes, TestContext.Current.CancellationToken);
             await Assert.ThrowsAsync<InvalidDataException>(async () => await store.ReadSegmentAsync(segment, TestContext.Current.CancellationToken));
             Assert.Equal("1", second.FormatVersion);
             Assert.Equal(EventSchemaVersion.Current, second.SchemaVersion);
@@ -64,7 +64,7 @@ public sealed class ExternalMediaTests
     public async Task ImportFromAnotherPcDeduplicatesSegmentsAcrossRunsAndPersistsLedger()
     {
         var root = TestRoot();
-        var ledgerPath = Path.Combine(Path.GetTempPath(), "StorageChronicle.Media.Tests", Guid.NewGuid().ToString("N"), "ledger.json");
+        var ledgerPath = Path.Combine(root, "ledger", "ledger.json");
         try
         {
             var source = new ExternalMediaStore(root, "pc-a");
@@ -82,24 +82,24 @@ public sealed class ExternalMediaTests
             Assert.Empty(second.Events);
             Assert.Equal(1, second.DuplicateSegmentCount);
         }
-        finally { DeleteRoot(root); DeleteRoot(Path.GetDirectoryName(ledgerPath)!); }
+        finally { DeleteRoot(root); }
     }
 
     [Fact]
     public async Task CorruptImportLedgerRecoversAsEmptyAndCanBeReplaced()
     {
         var root = TestRoot();
-        var ledgerPath = Path.Combine(Path.GetTempPath(), "StorageChronicle.Media.Tests", Guid.NewGuid().ToString("N"), "ledger.json");
+        var ledgerPath = Path.Combine(root, "ledger", "ledger.json");
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(ledgerPath)!);
-            await File.WriteAllBytesAsync(ledgerPath, [0xFF, 0x00, 0x01], TestContext.Current.CancellationToken);
+            await WriteFixtureBytesAsync(root, ledgerPath, [0xFF, 0x00, 0x01], TestContext.Current.CancellationToken);
             var store = new MediaImportLedgerStore(ledgerPath);
             Assert.Equal(MediaImportLedger.Empty.ManifestHashes, (await store.LoadAsync(TestContext.Current.CancellationToken)).ManifestHashes);
             await store.SaveAsync(MediaImportLedger.Empty, TestContext.Current.CancellationToken);
             Assert.NotEqual(new byte[] { 0xFF, 0x00, 0x01 }, await File.ReadAllBytesAsync(ledgerPath, TestContext.Current.CancellationToken));
         }
-        finally { DeleteRoot(root); DeleteRoot(Path.GetDirectoryName(ledgerPath)!); }
+        finally { DeleteRoot(root); }
     }
 
     [Fact]
@@ -137,10 +137,10 @@ public sealed class ExternalMediaTests
             var manifestPath = Path.Combine(store.WriterDirectory, "manifest-A.json");
             var bytes = await File.ReadAllBytesAsync(manifestPath, TestContext.Current.CancellationToken);
             bytes[^1] = (byte)(bytes[^1] ^ 0x20);
-            await File.WriteAllBytesAsync(manifestPath, bytes, TestContext.Current.CancellationToken);
+            await WriteFixtureBytesAsync(root, manifestPath, bytes, TestContext.Current.CancellationToken);
             Assert.Null(await store.ReadManifestSlotAsync(TestContext.Current.CancellationToken));
 
-            await File.WriteAllTextAsync(manifestPath, "{\"formatVersion\":\"1\",\"schemaVersion\":{\"major\":1,\"minor\":0},\"logicalMediaId\":\"m\",\"writerPcId\":\"p\",\"mountSessionId\":\"s\",\"segments\":[{\"fileName\":\"..\\\\escape.seg\",\"sha256\":\"00\",\"recordCount\":1,\"writerPcId\":\"p\"}],\"createdUtc\":\"2026-01-01T00:00:00Z\",\"sha256\":\"00\",\"projectionVersion\":\"1\"}", TestContext.Current.CancellationToken);
+            await WriteFixtureTextAsync(root, manifestPath, "{\"formatVersion\":\"1\",\"schemaVersion\":{\"major\":1,\"minor\":0},\"logicalMediaId\":\"m\",\"writerPcId\":\"p\",\"mountSessionId\":\"s\",\"segments\":[{\"fileName\":\"..\\\\escape.seg\",\"sha256\":\"00\",\"recordCount\":1,\"writerPcId\":\"p\"}],\"createdUtc\":\"2026-01-01T00:00:00Z\",\"sha256\":\"00\",\"projectionVersion\":\"1\"}", TestContext.Current.CancellationToken);
             Assert.Null(await store.ReadManifestSlotAsync(TestContext.Current.CancellationToken));
         }
         finally { DeleteRoot(root); }
@@ -155,15 +155,21 @@ public sealed class ExternalMediaTests
             var store = new ExternalMediaStore(root, "pc-a");
             var segment = await store.AppendSegmentAsync([TestEvent("media-1", "volume-a", "mount-a")], TestContext.Current.CancellationToken);
             var sourceBytes = await File.ReadAllBytesAsync(Path.Combine(store.WriterDirectory, segment.FileName), TestContext.Current.CancellationToken);
-            var completeTemp = Path.Combine(store.WriterDirectory, "complete.tmp");
-            await File.WriteAllBytesAsync(completeTemp, sourceBytes, TestContext.Current.CancellationToken);
+            var completeTemp = Path.Combine(store.WriterDirectory, Guid.NewGuid().ToString("N") + ".tmp");
+            await WriteFixtureBytesAsync(root, completeTemp, sourceBytes, TestContext.Current.CancellationToken);
             var complete = await store.RecoverInterruptedWriteAsync(TestContext.Current.CancellationToken);
             Assert.True(complete!.Finalized);
 
-            await File.WriteAllBytesAsync(Path.Combine(store.WriterDirectory, "broken.tmp"), [1, 2, 3], TestContext.Current.CancellationToken);
+            var brokenTemp = Path.Combine(store.WriterDirectory, Guid.NewGuid().ToString("N") + ".tmp");
+            await WriteFixtureBytesAsync(root, brokenTemp, [1, 2, 3], TestContext.Current.CancellationToken);
             var discarded = await store.RecoverInterruptedWriteAsync(TestContext.Current.CancellationToken);
             Assert.True(discarded!.Discarded);
-            Assert.False(File.Exists(Path.Combine(store.WriterDirectory, "broken.tmp")));
+            Assert.False(File.Exists(brokenTemp));
+
+            var unrelated = Path.Combine(store.WriterDirectory, "notes.tmp");
+            await WriteFixtureTextAsync(root, unrelated, "user data", TestContext.Current.CancellationToken);
+            Assert.Null(await store.RecoverInterruptedWriteAsync(TestContext.Current.CancellationToken));
+            Assert.Equal("user data", await File.ReadAllTextAsync(unrelated, TestContext.Current.CancellationToken));
         }
         finally { DeleteRoot(root); }
     }
@@ -180,6 +186,98 @@ public sealed class ExternalMediaTests
             Assert.StartsWith("recovered-", recovery.Branch.Value, StringComparison.Ordinal);
             Assert.True(File.Exists(recovery.MarkerPath));
             Assert.True(Directory.Exists(Path.Combine(root, ".StorageChronicle", "writers", "pc-b")));
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Fact]
+    public async Task ExistingUnownedMediaDirectoryIsNeverModified()
+    {
+        var root = TestRoot();
+        try
+        {
+            var logRoot = Path.Combine(root, ".StorageChronicle");
+            Directory.CreateDirectory(logRoot);
+            var sentinel = Path.Combine(logRoot, "important.txt");
+            await WriteFixtureTextAsync(root, sentinel, "keep exactly", TestContext.Current.CancellationToken);
+
+            Assert.Throws<IOException>(() => new ExternalMediaStore(root, "pc-a"));
+            Assert.Equal("keep exactly", await File.ReadAllTextAsync(sentinel, TestContext.Current.CancellationToken));
+            Assert.False(Directory.Exists(Path.Combine(logRoot, "writers")));
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Fact]
+    public async Task NonCreatingImportReadsHistoryWithoutInitializingAbsentMediaRoot()
+    {
+        var root = TestRoot();
+        try
+        {
+            var source = new ExternalMediaStore(root, "pc-a", createIfMissing: false);
+
+            var result = await new MediaHistoryImporter().ImportAsync(source, MediaImportLedger.Empty, cancellationToken: TestContext.Current.CancellationToken);
+
+            Assert.Empty(result.Events);
+            Assert.False(Directory.Exists(Path.Combine(root, ".StorageChronicle")));
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Fact]
+    public void WriterRefusesToCreateMissingConfiguredMediaRoot()
+    {
+        var root = TestRoot();
+        try
+        {
+            var missingMediaRoot = Path.Combine(root, "not-mounted");
+
+            Assert.Throws<DirectoryNotFoundException>(() => new ExternalMediaStore(missingMediaRoot, "pc-a"));
+
+            Assert.False(Directory.Exists(missingMediaRoot));
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Fact]
+    public async Task NonCreatingImportReadsOwnedHistoryWithoutChangingMediaFiles()
+    {
+        var root = TestRoot();
+        try
+        {
+            var writer = new ExternalMediaStore(root, "pc-a");
+            var segment = await writer.AppendSegmentAsync([TestEvent("media-1", "volume-a", "mount-a")], TestContext.Current.CancellationToken);
+            await writer.PublishManifestAsync("media-1", null, "mount-a", [segment], TestContext.Current.CancellationToken);
+            var before = Directory.EnumerateFiles(writer.WriterDirectory, "*", SearchOption.AllDirectories)
+                .ToDictionary(path => Path.GetRelativePath(writer.MediaLogDirectory, path), path => File.ReadAllBytes(path), StringComparer.OrdinalIgnoreCase);
+            var reader = new ExternalMediaStore(root, "pc-b", createIfMissing: false);
+
+            var result = await new MediaHistoryImporter().ImportAsync(reader, MediaImportLedger.Empty, cancellationToken: TestContext.Current.CancellationToken);
+
+            Assert.Single(result.Events);
+            var after = Directory.EnumerateFiles(writer.WriterDirectory, "*", SearchOption.AllDirectories)
+                .ToDictionary(path => Path.GetRelativePath(writer.MediaLogDirectory, path), path => File.ReadAllBytes(path), StringComparer.OrdinalIgnoreCase);
+            Assert.Equal(before.Keys.Order(), after.Keys.Order());
+            foreach (var path in before.Keys) Assert.Equal(before[path], after[path]);
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Fact]
+    public async Task RecoveryRefusesExistingLogPathWithoutChangingItsContents()
+    {
+        var root = TestRoot();
+        try
+        {
+            var logRoot = Path.Combine(root, ".StorageChronicle");
+            Directory.CreateDirectory(logRoot);
+            var sentinel = Path.Combine(logRoot, "keep.bin");
+            await WriteFixtureBytesAsync(root, sentinel, [4, 5, 6], TestContext.Current.CancellationToken);
+
+            await Assert.ThrowsAsync<IOException>(async () => await MediaRecovery.RecoverDeletedLogAsync(root, "media-1", "pc-a", TestContext.Current.CancellationToken));
+
+            Assert.Equal(new byte[] { 4, 5, 6 }, await File.ReadAllBytesAsync(sentinel, TestContext.Current.CancellationToken));
+            Assert.Single(Directory.EnumerateFiles(logRoot));
         }
         finally { DeleteRoot(root); }
     }
@@ -231,6 +329,20 @@ public sealed class ExternalMediaTests
     }
 
     [Fact]
+    public void MirrorPathMustBelongToCurrentlyConnectedVolumeMountPoint()
+    {
+        var root = TestRoot();
+        try
+        {
+            ExternalMediaStore.ValidateMediaRootOnVolume(Path.Combine(root, "mirror"), [root]);
+
+            Assert.Throws<IOException>(() => ExternalMediaStore.ValidateMediaRootOnVolume(Path.Combine(root, "mirror"), [Path.Combine(root, "other-volume")]));
+            Assert.Throws<IOException>(() => ExternalMediaStore.ValidateMediaRootOnVolume(Path.Combine(root, "mirror"), Array.Empty<string>()));
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Fact]
     public void MountSessionsLinkPreviousSessionWithoutClockCorrection()
     {
         var clock = new ManualMediaClock();
@@ -275,6 +387,75 @@ public sealed class ExternalMediaTests
         return new(EventId.New(), EventSchemaVersion.Current, CanonicalOperation.Create, EventOrigin.LiveUsn, VolumeId.Create(volume), FileId.Create(Guid.NewGuid().ToString("N")), null, "file.txt", null, null, new EventTime(now, TimeSpan.Zero, null, now, new SourceSequence(1), new MountSequence(1)), EventQuality.Exact, null, ProcessAttributionQuality.Unknown, MountSessionId.Create(mount), null, properties);
     }
 
-    private static string TestRoot() => Path.Combine(Path.GetTempPath(), "StorageChronicle.Media.Tests", Guid.NewGuid().ToString("N"));
-    private static void DeleteRoot(string path) { if (Directory.Exists(path)) Directory.Delete(path, true); }
+    private static string TestRoot()
+    {
+        var runId = Guid.NewGuid().ToString("N");
+        var path = Path.Combine(Path.GetTempPath(), "StorageChronicle.Media.Tests", runId);
+        Directory.CreateDirectory(path);
+        File.WriteAllText(Path.Combine(path, ".test-owner"), runId);
+        return path;
+    }
+
+    private static async Task WriteFixtureBytesAsync(string fixtureRoot, string targetPath, byte[] bytes, CancellationToken cancellationToken)
+    {
+        ValidateFixtureTarget(fixtureRoot, targetPath);
+        await File.WriteAllBytesAsync(targetPath, bytes, cancellationToken);
+    }
+
+    private static async Task WriteFixtureTextAsync(string fixtureRoot, string targetPath, string value, CancellationToken cancellationToken)
+    {
+        ValidateFixtureTarget(fixtureRoot, targetPath);
+        await File.WriteAllTextAsync(targetPath, value, cancellationToken);
+    }
+
+    private static void ValidateFixtureTarget(string fixtureRoot, string targetPath)
+    {
+        ValidateFixtureOwnership(fixtureRoot);
+        var boundary = Path.GetFullPath(fixtureRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var target = Path.GetFullPath(targetPath);
+        if (!target.StartsWith(boundary, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Refusing to mutate a test path outside its owned fixture root.");
+        var parent = new DirectoryInfo(Path.GetDirectoryName(target)!);
+        while (parent is not null && parent.Exists)
+        {
+            if ((File.GetAttributes(parent.FullName) & FileAttributes.ReparsePoint) != 0) throw new InvalidOperationException("Refusing to mutate a fixture path through a reparse point.");
+            if (string.Equals(parent.FullName, Path.GetFullPath(fixtureRoot), StringComparison.OrdinalIgnoreCase)) break;
+            parent = parent.Parent;
+        }
+        if (File.Exists(target) && (File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0) throw new InvalidOperationException("Refusing to overwrite a fixture reparse point.");
+    }
+
+    private static void ValidateFixtureOwnership(string path)
+    {
+        var allowedRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "StorageChronicle.Media.Tests"));
+        var target = Path.GetFullPath(path);
+        var parent = Path.GetDirectoryName(target);
+        var runId = Path.GetFileName(target);
+        if (!string.Equals(parent, allowedRoot, StringComparison.OrdinalIgnoreCase) || !Guid.TryParseExact(runId, "N", out _))
+            throw new InvalidOperationException("Refusing to modify a media test path outside its run-specific fixture root.");
+        var marker = Path.Combine(target, ".test-owner");
+        if (!File.Exists(marker) || !string.Equals(File.ReadAllText(marker), runId, StringComparison.Ordinal))
+            throw new InvalidOperationException("Refusing to modify a media test fixture without its matching owner marker.");
+    }
+
+    private static void DeleteRoot(string path)
+    {
+        if (!Directory.Exists(path)) return;
+        ValidateFixtureOwnership(path);
+        var allowedRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "StorageChronicle.Media.Tests"));
+        var target = Path.GetFullPath(path);
+        var parent = Path.GetDirectoryName(target);
+        var runId = Path.GetFileName(target);
+        if (!string.Equals(parent, allowedRoot, StringComparison.OrdinalIgnoreCase) || !Guid.TryParseExact(runId, "N", out _))
+            throw new InvalidOperationException("Refusing to clean a media test path outside its run-specific fixture root.");
+        var boundary = target.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        foreach (var entry in Directory.EnumerateFileSystemEntries(target, "*", SearchOption.AllDirectories).Prepend(target))
+        {
+            var resolved = Path.GetFullPath(entry);
+            if (!resolved.StartsWith(boundary, StringComparison.OrdinalIgnoreCase) && !string.Equals(resolved, target, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Refusing to clean a test fixture containing an out-of-root path.");
+            if ((File.GetAttributes(resolved) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidOperationException("Refusing to clean a test fixture containing a reparse point.");
+        }
+        Directory.Delete(target, true);
+    }
 }

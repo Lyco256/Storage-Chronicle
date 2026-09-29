@@ -71,9 +71,9 @@ public sealed class StorageEngineTests
                 await store.StopAsync();
             }
 
-            File.Delete(Path.Combine(directory, "index.sqlite"));
-            File.Delete(Path.Combine(directory, "index.sqlite-wal"));
-            File.Delete(Path.Combine(directory, "index.sqlite-shm"));
+            DeleteFixtureFile(directory, "index.sqlite");
+            DeleteFixtureFile(directory, "index.sqlite-wal");
+            DeleteFixtureFile(directory, "index.sqlite-shm");
             await using (var recovered = CreateStore(directory))
             {
                 await recovered.RebuildSqliteAsync();
@@ -105,7 +105,7 @@ public sealed class StorageEngineTests
             var damaged = segments[segments.Length / 2];
             var bytes = await File.ReadAllBytesAsync(damaged);
             bytes[^1] ^= 0x5a;
-            await File.WriteAllBytesAsync(damaged, bytes);
+            WriteFixtureFile(directory, damaged, bytes);
 
             await using (var recovered = CreateStore(directory, segmentMaxBytes: 1024))
             {
@@ -243,18 +243,23 @@ public sealed class StorageEngineTests
 
     private static string CreateDirectory()
     {
-        var path = Path.Combine(Path.GetTempPath(), "StorageChronicle.Storage.Tests", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(path);
-        return path;
+        var runId = Guid.NewGuid().ToString("N");
+        var fixtureRoot = Path.Combine(Path.GetTempPath(), "StorageChronicle.Storage.Tests", runId);
+        var dataPath = Path.Combine(fixtureRoot, "data");
+        Directory.CreateDirectory(dataPath);
+        File.WriteAllText(Path.Combine(fixtureRoot, ".test-owner"), runId);
+        return dataPath;
     }
 
     private static void RemoveDirectory(string path)
     {
-        for (var attempt = 0; attempt < 20 && Directory.Exists(path); attempt++)
+        ValidateOwnedFixture(path);
+        var fixtureRoot = Path.GetDirectoryName(Path.GetFullPath(path))!;
+        for (var attempt = 0; attempt < 20 && Directory.Exists(fixtureRoot); attempt++)
         {
             try
             {
-                Directory.Delete(path, recursive: true);
+                Directory.Delete(fixtureRoot, recursive: true);
             }
             catch (IOException)
             {
@@ -262,6 +267,45 @@ public sealed class StorageEngineTests
                 GC.WaitForPendingFinalizers();
                 Thread.Sleep(25);
             }
+        }
+    }
+
+    private static void DeleteFixtureFile(string directory, string fileName)
+    {
+        ValidateOwnedFixture(directory);
+        var target = Path.Combine(directory, fileName);
+        if (File.Exists(target) && (File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidOperationException("Refusing to delete a reparse-point fixture file.");
+        if (File.Exists(target)) File.Delete(target);
+    }
+
+    private static void WriteFixtureFile(string directory, string targetPath, byte[] bytes)
+    {
+        ValidateOwnedFixture(directory);
+        var target = Path.GetFullPath(targetPath);
+        var boundary = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!target.StartsWith(boundary, StringComparison.OrdinalIgnoreCase) || !File.Exists(target) || (File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidOperationException("Refusing to mutate a file outside the owned storage fixture.");
+        File.WriteAllBytes(target, bytes);
+    }
+
+    private static void ValidateOwnedFixture(string path)
+    {
+        var allowedRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "StorageChronicle.Storage.Tests"));
+        var target = Path.GetFullPath(path);
+        var fixtureRoot = Path.GetDirectoryName(target);
+        var runId = fixtureRoot is null ? string.Empty : Path.GetFileName(fixtureRoot);
+        if (!string.Equals(Path.GetFileName(target), "data", StringComparison.Ordinal) || fixtureRoot is null || !string.Equals(Path.GetDirectoryName(fixtureRoot), allowedRoot, StringComparison.OrdinalIgnoreCase) || !Guid.TryParseExact(runId, "N", out _))
+            throw new InvalidOperationException("Refusing to modify a storage test path outside its run-specific fixture root.");
+        var marker = Path.Combine(fixtureRoot, ".test-owner");
+        if (!File.Exists(marker) || !string.Equals(File.ReadAllText(marker), runId, StringComparison.Ordinal))
+            throw new InvalidOperationException("Refusing to modify a storage test fixture without its matching owner marker.");
+        var boundary = fixtureRoot.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        foreach (var entry in Directory.EnumerateFileSystemEntries(fixtureRoot, "*", SearchOption.AllDirectories))
+        {
+            var resolved = Path.GetFullPath(entry);
+            if (!resolved.StartsWith(boundary, StringComparison.OrdinalIgnoreCase) || (File.GetAttributes(resolved) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidOperationException("Refusing to modify a storage fixture containing an out-of-root path or reparse point.");
         }
     }
 

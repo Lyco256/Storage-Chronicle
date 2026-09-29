@@ -18,16 +18,20 @@ public static class MediaRecovery
         ValidateComponent(writerPcId, nameof(writerPcId));
         var fullRoot = Path.GetFullPath(mediaRoot);
         var logRoot = Path.Combine(fullRoot, ".StorageChronicle");
-        var missing = !Directory.Exists(logRoot);
-        Directory.CreateDirectory(Path.Combine(logRoot, "writers", writerPcId));
+        if (Directory.Exists(logRoot) || File.Exists(logRoot))
+            throw new IOException("Recovery is allowed only when the dedicated media history directory is absent; existing content was left untouched.");
         var source = Encoding.UTF8.GetBytes($"{logicalMediaId}|{writerPcId}|{DateTimeOffset.UtcNow:O}");
         var branch = HistoryBranchId.Create("recovered-" + Convert.ToHexString(SHA256.HashData(source))[..16]);
-        var markerPath = Path.Combine(logRoot, "recovery-marker.json");
+        _ = new ExternalMediaStore(fullRoot, writerPcId);
+        var markerPath = Path.Combine(logRoot, "recovery-marker-" + Guid.NewGuid().ToString("N") + ".json");
         var marker = new { LogicalMediaId = logicalMediaId, WriterPcId = writerPcId, Branch = branch.Value, PreviousManifestSha256 = (string?)null, CreatedUtc = DateTimeOffset.UtcNow };
-        var temporary = markerPath + ".tmp";
-        await File.WriteAllBytesAsync(temporary, JsonSerializer.SerializeToUtf8Bytes(marker), cancellationToken).ConfigureAwait(false);
-        File.Move(temporary, markerPath, true);
-        return new MediaLogDeletionRecovery(missing, branch, null, markerPath);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(marker);
+        await using (var stream = new FileStream(markerPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough | FileOptions.Asynchronous))
+        {
+            await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        return new MediaLogDeletionRecovery(true, branch, null, markerPath);
     }
 
     private static void ValidateComponent(string value, string parameterName)

@@ -12,7 +12,6 @@ public sealed class DiffPaneState
     /// <summary>Gets or sets whether the pane is pinned to its selection.</summary>
     public bool IsPinned { get; set; }
 }
-
 /// <summary>Tracks split-pane state without creating a second projection.</summary>
 public sealed class DiffSplitPaneState
 {
@@ -58,4 +57,3 @@ public sealed class DiffReplayState
     /// <summary>Pauses replay playback state.</summary>
     public void Pause() => IsPlaying = false;
 }
-

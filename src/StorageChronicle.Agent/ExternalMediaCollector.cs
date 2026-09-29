@@ -91,7 +91,7 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
                 foreach (var descriptor in enumeration.Descriptors!.Where(value => value.IsExternal && value.IsDirectoryReadable))
                 {
                     if (active.ContainsKey(descriptor.Id)) continue;
-                    var media = new MediaVolumeDescriptor(descriptor.Id.Value, descriptor.Id, descriptor.FileSystem, descriptor.IsReadOnly, descriptor.SupportsUsn, descriptor.IsSystem);
+                    var media = new MediaVolumeDescriptor(descriptor.Id.Value, descriptor.Id, descriptor.FileSystem, descriptor.IsReadOnly, descriptor.SupportsUsn, descriptor.IsSystem, MountPoints: descriptor.MountPoints);
                     var assessment = MediaQuality.Assess(media);
                     var session = sessions.Start(descriptor.Id, pcId, ToContinuity(assessment.Quality));
                     active[descriptor.Id] = (session, media);
@@ -101,7 +101,7 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
                     {
                         Exception? registrationFailure = null;
                         try { await mirrorCoordinator.RegisterAsync(media, session, cancellationToken).ConfigureAwait(false); }
-                        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+                        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
                         {
                             registrationFailure = exception;
                         }
@@ -114,7 +114,7 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
                     {
                         await foreach (var imported in ImportMirrorAsync(media, session, cancellationToken).ConfigureAwait(false)) importedEvents.Add(imported);
                     }
-                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
                     {
                         importFailure = exception;
                     }
@@ -151,10 +151,11 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
         var configured = settings.Load().Settings.MediaMirrors.TryGetValue(media.LogicalMediaId, out var mirrorRoot) ? mirrorRoot : null;
         if (string.IsNullOrWhiteSpace(configured)) yield break;
         var configuration = ExternalMediaStore.ValidateMirrorConfiguration(new MediaMirrorConfiguration(true, configured!, media.IsSystemVolume, media.IsBootVolume, media.IsRecoveryVolume, media.IsEfiVolume));
-        if (!configuration.IsAllowed || media.IsReadOnly) yield break;
+        if (!configuration.IsAllowed) yield break;
+        ExternalMediaStore.ValidateMediaRootOnVolume(configuration.MediaRoot, media.MountPoints);
 
         ExternalMediaStore store;
-        try { store = new ExternalMediaStore(configuration.MediaRoot, pcId); }
+        try { store = new ExternalMediaStore(configuration.MediaRoot, pcId, createIfMissing: false); }
         catch (Exception) { yield break; }
 
         var ledgerPath = Path.Combine(ledgerRoot, Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(media.LogicalMediaId)) + ".json");

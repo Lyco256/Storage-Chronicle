@@ -59,9 +59,11 @@ public sealed class ExternalMediaMirrorCoordinator : IMediaMirrorSessionCoordina
             if (string.IsNullOrWhiteSpace(configured) || media.IsReadOnly) return;
             var configuration = ExternalMediaStore.ValidateMirrorConfiguration(new MediaMirrorConfiguration(true, configured!, media.IsSystemVolume, media.IsBootVolume, media.IsRecoveryVolume, media.IsEfiVolume));
             if (!configuration.IsAllowed) return;
+            ExternalMediaStore.ValidateMediaRootOnVolume(configuration.MediaRoot, media.MountPoints);
 
-            var store = new ExternalMediaStore(configuration.MediaRoot, pcId);
+            var store = new ExternalMediaStore(configuration.MediaRoot, pcId, createIfMissing: false);
             store.RegisterMonitoringExclusion(exclusionRegistrar);
+            store.InitializeForWriting();
             await store.RecoverInterruptedWriteAsync(cancellationToken).ConfigureAwait(false);
             var parent = await store.ReadManifestSlotAsync(cancellationToken).ConfigureAwait(false);
             sessions.Add(media.VolumeId, new MirrorSession(media, session, store, parent?.Sha256));
