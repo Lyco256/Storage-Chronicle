@@ -12,6 +12,16 @@ public sealed class InstallerManifestTests
         Assert.Contains("Storage Chronicle", wix, StringComparison.Ordinal);
         Assert.Contains("Account=\"LocalSystem\"", wix, StringComparison.Ordinal);
         Assert.Contains("ServiceConfig", wix, StringComparison.Ordinal);
+        Assert.Contains("RestartServiceDelayInSeconds=\"5\"", wix, StringComparison.Ordinal);
+        Assert.Contains("distinct 5/15/60-second delays", wix, StringComparison.Ordinal);
+        var recovery = File.ReadAllText(Path.Combine(root, "src", "StorageChronicle.Agent", "WindowsServiceRecoveryConfigurator.cs"));
+        Assert.Contains("5_000", recovery, StringComparison.Ordinal);
+        Assert.Contains("15_000", recovery, StringComparison.Ordinal);
+        Assert.Contains("60_000", recovery, StringComparison.Ordinal);
+        Assert.Contains("ChangeServiceConfig2", recovery, StringComparison.Ordinal);
+        Assert.Contains("CurrentVersion\\Run", wix, StringComparison.Ordinal);
+        Assert.Contains("CommonAppDataFolder", wix, StringComparison.Ordinal);
+        Assert.Contains("Permanent=\"yes\"", wix, StringComparison.Ordinal);
         Assert.DoesNotContain("Driver", wix, StringComparison.OrdinalIgnoreCase);
     }
 

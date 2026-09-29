@@ -1,4 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><IsTestProject>true</IsTestProject><RootNamespace>StorageChronicle.ExternalMedia.Tests</RootNamespace><TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport></PropertyGroup>
-  <ItemGroup><ProjectReference Include="..\..\src\StorageChronicle.ExternalMedia\StorageChronicle.ExternalMedia.csproj" /><PackageReference Include="xunit.v3" /><PackageReference Include="xunit.v3.runner.inproc.console" /><PackageReference Include="xunit.v3.mtp-v1" /><PackageReference Include="Microsoft.NET.Test.Sdk" /><PackageReference Include="Microsoft.Testing.Platform" /><PackageReference Include="Microsoft.Testing.Platform.MSBuild" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="..\..\src\StorageChronicle.ExternalMedia\StorageChronicle.ExternalMedia.csproj" /><PackageReference Include="xunit.v3.runner.inproc.console" /><PackageReference Include="xunit.v3.mtp-v2" /><PackageReference Include="Microsoft.NET.Test.Sdk" /><PackageReference Include="Microsoft.Testing.Platform" /><PackageReference Include="Microsoft.Testing.Platform.MSBuild" /></ItemGroup>
 </Project>

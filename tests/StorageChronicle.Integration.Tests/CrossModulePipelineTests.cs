@@ -13,8 +13,10 @@ public sealed class CrossModulePipelineTests
     [Fact]
     public async Task CollectorToAppendLogAndStateIsRecoverable()
     {
-        var directory = Path.Combine(Path.GetTempPath(), "StorageChronicle.Integration", Guid.NewGuid().ToString("N"));
+        var runId = Guid.NewGuid().ToString("N");
+        var directory = Path.Combine(Path.GetTempPath(), "StorageChronicle.Integration", runId);
         Directory.CreateDirectory(directory);
+        await File.WriteAllTextAsync(Path.Combine(directory, ".test-owner"), runId, TestContext.Current.CancellationToken);
         try
         {
             await using var store = new AppendOnlyStorageEngine(new StorageEngineOptions(directory) { FlushInterval = TimeSpan.FromMinutes(1) });
@@ -26,8 +28,25 @@ public sealed class CrossModulePipelineTests
         }
         finally
         {
-            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+            CleanupFixture(directory);
         }
+    }
+
+    private static void CleanupFixture(string directory)
+    {
+        if (!Directory.Exists(directory)) return;
+        var owner = Path.Combine(directory, ".test-owner");
+        if (!string.Equals(Path.GetDirectoryName(Path.GetFullPath(directory)), Path.GetFullPath(Path.Combine(Path.GetTempPath(), "StorageChronicle.Integration")), StringComparison.OrdinalIgnoreCase) ||
+            !Guid.TryParseExact(Path.GetFileName(directory), "N", out _) || !File.Exists(owner) || !string.Equals(File.ReadAllText(owner), Path.GetFileName(directory), StringComparison.Ordinal))
+            throw new InvalidOperationException("Refusing to clean an integration fixture without its run owner marker.");
+        var boundary = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        foreach (var entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.AllDirectories))
+        {
+            var resolved = Path.GetFullPath(entry);
+            if (!resolved.StartsWith(boundary, StringComparison.OrdinalIgnoreCase) || (File.GetAttributes(resolved) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidOperationException("Refusing to clean an integration fixture with an out-of-root path or reparse point.");
+        }
+        Directory.Delete(directory, recursive: true);
     }
 
     private static SourceEvent CreateSource()

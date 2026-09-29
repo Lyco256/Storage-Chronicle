@@ -12,6 +12,22 @@ public sealed record DiffEntry(FileId? FileId, string? OldPath, string? NewPath,
 /// <summary>Describes a source, normalized, or grouped event-stack row.</summary>
 public sealed record EventStackRow(EventId Id, DateTimeOffset TimeUtc, string DisplayRoute, CanonicalOperation Operation, string Summary, EventQuality Quality, ProcessInstanceId? ProcessId, ProcessAttributionQuality ProcessQuality, EventOrigin Origin, IReadOnlyList<EventId> Children);
 
+/// <summary>Bounded detail data for one Event Stack selection.</summary>
+public sealed record EventDetailsSnapshot(
+    EventStackRow Row,
+    EventOrigin SourceOrigin,
+    EventQuality Quality,
+    DateTimeOffset RecordedUtc,
+    TimeSpan LocalOffset,
+    SourceSequence SourceSequence,
+    MountSequence MountSequence,
+    string? ProcessName,
+    ProcessInstanceId? ParentProcess,
+    IReadOnlyList<ProcessInstanceId> ChildProcesses,
+    bool IsReconciliation,
+    bool IsUnverifiedGap,
+    bool IsExistenceOnly);
+
 /// <summary>Controls which event-stack projection is returned.</summary>
 public enum EventStackMode { Source, Normalized, Grouped }
 

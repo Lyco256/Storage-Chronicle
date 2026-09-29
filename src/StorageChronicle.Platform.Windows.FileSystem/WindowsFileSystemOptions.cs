@@ -11,6 +11,12 @@ public sealed record WindowsFileSystemOptions
     /// <summary>Gets additional user-selected directory roots to exclude.</summary>
     public IReadOnlyList<string> UserExcludedRoots { get; init; } = Array.Empty<string>();
 
+    /// <summary>Gets monitored directory roots; an empty list means all local readable roots.</summary>
+    public IReadOnlyList<string> MonitoredRoots { get; init; } = Array.Empty<string>();
+
+    /// <summary>Gets filesystem names handled by a higher-fidelity collector, such as the NTFS USN collector.</summary>
+    public IReadOnlySet<string> SkipFileSystems { get; init; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Gets the maximum number of entries emitted in one initial-snapshot batch.</summary>
     public int SnapshotBatchSize { get; init; } = 256;
 

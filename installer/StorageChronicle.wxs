@@ -11,18 +11,32 @@
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Storage Chronicle" />
     </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="PRODUCTDATADIR" Name="Storage Chronicle">
+        <Directory Id="HISTORYDIR" Name="history" />
+        <Directory Id="CONFIGDIR" Name="config" />
+      </Directory>
+    </StandardDirectory>
     <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
       <Component Id="AgentServiceComponent" Guid="4F5B0D43-3CB7-4D99-8E20-9FC5B4FA5A01" Bitness="always64">
         <File Id="AgentExe" Source="$(var.AgentSource)" KeyPath="yes" />
         <ServiceInstall Id="AgentServiceInstall" Name="StorageChronicleAgent" DisplayName="Storage Chronicle Agent" Type="ownProcess" Start="auto" Account="LocalSystem" ErrorControl="normal" Vital="yes" />
         <ServiceControl Id="AgentServiceControl" Name="StorageChronicleAgent" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
-        <util:ServiceConfig ServiceName="StorageChronicleAgent" FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart" ResetPeriodInDays="1" />
+        <!-- The installer enables restart recovery actions. The Agent host applies the distinct 5/15/60-second delays after the service exists. -->
+        <util:ServiceConfig ServiceName="StorageChronicleAgent" FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart" RestartServiceDelayInSeconds="5" ResetPeriodInDays="1" />
       </Component>
       <Component Id="SessionAgentComponent" Guid="4F5B0D43-3CB7-4D99-8E20-9FC5B4FA5A02" Bitness="always64">
         <File Id="SessionAgentExe" Source="$(var.SessionAgentSource)" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="StorageChronicleSessionAgent" Type="string" Value="[INSTALLFOLDER]StorageChronicle.SessionAgent.exe" />
       </Component>
       <Component Id="UiComponent" Guid="4F5B0D43-3CB7-4D99-8E20-9FC5B4FA5A03" Bitness="always64">
         <File Id="UiExe" Source="$(var.UiSource)" KeyPath="yes" />
+      </Component>
+      <Component Id="HistoryRetentionComponent" Guid="4F5B0D43-3CB7-4D99-8E20-9FC5B4FA5A04" Directory="HISTORYDIR" Permanent="yes">
+        <CreateFolder />
+      </Component>
+      <Component Id="ConfigRetentionComponent" Guid="4F5B0D43-3CB7-4D99-8E20-9FC5B4FA5A05" Directory="CONFIGDIR" Permanent="yes">
+        <CreateFolder />
       </Component>
     </ComponentGroup>
   </Fragment>

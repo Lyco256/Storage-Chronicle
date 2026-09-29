@@ -89,8 +89,7 @@ public sealed class SettingsTests
     public void LegacySchemaAndUnknownFieldsAreAccepted()
     {
         using var fixture = new SettingsFixture();
-        Directory.CreateDirectory(Path.GetDirectoryName(fixture.MachinePath)!);
-        File.WriteAllText(fixture.MachinePath, "{\"schemaVersion\":0,\"settings\":{\"flushIntervalSeconds\":7,\"logStoragePath\":\"" + Escape(fixture.Root + "\\logs") + "\",\"monitoringPaths\":[\"" + Escape(fixture.Root) + "\"],\"unknownFutureField\":true},\"unknownRootField\":42}", new UTF8Encoding(false));
+        fixture.WriteText(fixture.MachinePath, "{\"schemaVersion\":0,\"settings\":{\"flushIntervalSeconds\":7,\"logStoragePath\":\"" + Escape(fixture.Root + "\\logs") + "\",\"monitoringPaths\":[\"" + Escape(fixture.Root) + "\"],\"unknownFutureField\":true},\"unknownRootField\":42}", new UTF8Encoding(false));
 
         var result = fixture.Machine.Load();
 
@@ -106,7 +105,7 @@ public sealed class SettingsTests
         var second = new UserSettings { EventStackPageSize = 200 };
         fixture.User.Save(first);
         fixture.User.Save(second);
-        File.WriteAllText(fixture.UserPath, "{broken", new UTF8Encoding(false));
+        fixture.WriteText(fixture.UserPath, "{broken", new UTF8Encoding(false));
 
         var result = fixture.User.Load();
 
@@ -119,9 +118,8 @@ public sealed class SettingsTests
     public void BothCorruptGenerationsRecoverToDefaultsWithWarning()
     {
         using var fixture = new SettingsFixture();
-        Directory.CreateDirectory(Path.GetDirectoryName(fixture.UserPath)!);
-        File.WriteAllText(fixture.UserPath, "bad", new UTF8Encoding(false));
-        File.WriteAllText(fixture.UserPath + ".bak", "bad", new UTF8Encoding(false));
+        fixture.WriteText(fixture.UserPath, "bad", new UTF8Encoding(false));
+        fixture.WriteText(fixture.UserPath + ".bak", "bad", new UTF8Encoding(false));
 
         var result = fixture.User.Load();
 
@@ -230,10 +228,13 @@ public sealed class SettingsTests
 
     private sealed class SettingsFixture : IDisposable
     {
-        private readonly string tempDirectory = Path.Combine(Path.GetTempPath(), "StorageChronicleSettingsTests", Guid.NewGuid().ToString("N"));
+        private readonly string runId = Guid.NewGuid().ToString("N");
+        private readonly string tempDirectory;
         public SettingsFixture()
         {
+            tempDirectory = Path.Combine(Path.GetTempPath(), "StorageChronicleSettingsTests", runId);
             Directory.CreateDirectory(tempDirectory);
+            File.WriteAllText(Path.Combine(tempDirectory, ".test-owner"), runId);
             var paths = new WindowsSettingsPathProvider(tempDirectory, tempDirectory);
             FileSystem = new RecordingFileSystem();
             Machine = new MachineSettingsStore(paths, FileSystem);
@@ -247,7 +248,34 @@ public sealed class SettingsTests
         public UserSettingsStore User { get; }
         public MachineSettings ValidMachine => new() { MonitoringPaths = new[] { Root }, LogStoragePath = Root, FlushIntervalSeconds = 5 };
         public byte[] ReadBytes(string path) => File.ReadAllBytes(path);
-        public void Dispose() => Directory.Delete(tempDirectory, recursive: true);
+        public void WriteText(string path, string value, Encoding encoding)
+        {
+            var target = Path.GetFullPath(path);
+            var boundary = Path.GetFullPath(tempDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (!target.StartsWith(boundary, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Refusing to write outside the owned settings fixture.");
+            if (!File.Exists(Path.Combine(tempDirectory, ".test-owner")) || !string.Equals(File.ReadAllText(Path.Combine(tempDirectory, ".test-owner")), runId, StringComparison.Ordinal))
+                throw new InvalidOperationException("Refusing to write a settings fixture without its owner marker.");
+            var parent = Path.GetDirectoryName(target)!;
+            if (Directory.Exists(parent) && (File.GetAttributes(parent) & FileAttributes.ReparsePoint) != 0) throw new InvalidOperationException("Refusing to write through a fixture reparse point.");
+            if (File.Exists(target) && (File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0) throw new InvalidOperationException("Refusing to overwrite a fixture reparse point.");
+            Directory.CreateDirectory(parent);
+            File.WriteAllText(target, value, encoding);
+        }
+        public void Dispose()
+        {
+            var allowedRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "StorageChronicleSettingsTests"));
+            if (!string.Equals(Path.GetDirectoryName(Path.GetFullPath(tempDirectory)), allowedRoot, StringComparison.OrdinalIgnoreCase) ||
+                !File.Exists(Path.Combine(tempDirectory, ".test-owner")) || !string.Equals(File.ReadAllText(Path.Combine(tempDirectory, ".test-owner")), runId, StringComparison.Ordinal))
+                throw new InvalidOperationException("Refusing to clean a settings fixture without its matching run owner marker.");
+            var boundary = Path.GetFullPath(tempDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            foreach (var entry in Directory.EnumerateFileSystemEntries(tempDirectory, "*", SearchOption.AllDirectories))
+            {
+                var resolved = Path.GetFullPath(entry);
+                if (!resolved.StartsWith(boundary, StringComparison.OrdinalIgnoreCase) || (File.GetAttributes(resolved) & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidOperationException("Refusing to clean a settings fixture with an out-of-root path or reparse point.");
+            }
+            Directory.Delete(tempDirectory, recursive: true);
+        }
     }
 
     private sealed class RecordingFileSystem : ISettingsFileSystem

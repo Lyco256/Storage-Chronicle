@@ -1,5 +1,7 @@
 # AppendOnlyStorageEngine.cs
 
+The Agent also uses its bounded indexed canonical/source page and count methods for IPC projections; this avoids reading the entire immutable log into memory for every UI page. Segments remain authoritative and SQLite remains rebuildable. A validated log-storage setting can relocate history to a new empty directory by flushing, copying only immutable segments, rebuilding SQLite, and swapping writers under the writer gate; failures leave the original writer active.
+
 ## 役割
 
 `IEventStore`と`IStateStore`を実装し、SegmentLogとSqliteIndexを単一writer境界で統合する。source eventはSQLiteなしでもセグメントから読み出せ、canonical eventの状態適用だけがSQLite state cacheを更新する。
@@ -14,4 +16,4 @@
 
 ## 依存関係・テスト
 
-共有契約、Domain contracts、SegmentLog、SqliteIndexに依存する。`StorageEngineTests`は正常往復、実SQLite、再構築、破損スキップ、容量停止、キャンセル、single-writerと複数readerを実行する。
+共有契約、Domain contracts、SegmentLog、SqliteIndexに依存する。`StorageEngineTests`は正常往復、実SQLite、再構築、破損スキップ、容量停止、キャンセル、single-writer、複数reader、履歴移動を実行する。

@@ -1,4 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><TargetFramework>net10.0-windows10.0.19041.0</TargetFramework><OutputType>Exe</OutputType><RootNamespace>StorageChronicle.SessionAgent</RootNamespace><AssemblyName>StorageChronicle.SessionAgent</AssemblyName><SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion></PropertyGroup>
-  <ItemGroup><ProjectReference Include="..\StorageChronicle.Platform.Windows.Session\StorageChronicle.Platform.Windows.Session.csproj" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="..\StorageChronicle.Platform.Windows.Session\StorageChronicle.Platform.Windows.Session.csproj" /><ProjectReference Include="..\StorageChronicle.Contracts\StorageChronicle.Contracts.csproj" /></ItemGroup>
 </Project>

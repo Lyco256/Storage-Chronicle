@@ -26,7 +26,8 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
     private const uint ErrorDeviceNotConnected = 1167;
     private const uint ErrorPathNotFound = 3;
     private const uint ErrorFileNotFound = 2;
-    private const uint CmNotifyFilterTypeAll = 0;
+    private const uint CmNotifyFilterFlagAllInterfaceClasses = 0x00000001;
+    private const uint CmNotifyFilterTypeDeviceInterface = 0;
     private const uint CmNotifyActionDeviceInterfaceArrival = 0;
     private const uint CmNotifyActionDeviceInterfaceRemoval = 1;
 
@@ -296,7 +297,14 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
 
         public void Start()
         {
-            var filter = new CmNotifyFilter { Size = (uint)Marshal.SizeOf<CmNotifyFilter>(), Type = CmNotifyFilterTypeAll };
+            var filter = new CmNotifyFilter
+            {
+                Size = (uint)Marshal.SizeOf<CmNotifyFilter>(),
+                Flags = CmNotifyFilterFlagAllInterfaceClasses,
+                FilterType = CmNotifyFilterTypeDeviceInterface,
+                Reserved = 0,
+                DeviceInterface = new CmNotifyFilterDeviceInterface { ClassGuid = Guid.Empty }
+            };
             var result = CmRegisterNotification(ref filter, IntPtr.Zero, callbackDelegate, out handle);
             if (result != 0)
             {
@@ -320,8 +328,32 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
         }
     }
 
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct CmNotifyFilter { public uint Size; public uint Type; public Guid Reserved; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CmNotifyFilter
+    {
+        public uint Size;
+        public uint Flags;
+        public uint FilterType;
+        public uint Reserved;
+        public CmNotifyFilterUnion Union;
+
+        public CmNotifyFilterDeviceInterface DeviceInterface
+        {
+            set => Union = new CmNotifyFilterUnion { DeviceInterface = value };
+        }
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 400)]
+    private struct CmNotifyFilterUnion
+    {
+        [FieldOffset(0)] public CmNotifyFilterDeviceInterface DeviceInterface;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CmNotifyFilterDeviceInterface
+    {
+        public Guid ClassGuid;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct FileIdInfo { public ulong VolumeSerialNumber; [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)] public byte[] FileId; }
@@ -339,8 +371,8 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool ReadDirectoryChangesW(SafeFileHandle directoryHandle, IntPtr buffer, uint bufferLength, [MarshalAs(UnmanagedType.Bool)] bool watchSubtree, uint notifyFilter, out uint bytesReturned, IntPtr overlapped, IntPtr completionRoutine);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool CancelIoEx(SafeFileHandle fileHandle, IntPtr overlapped);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetFileInformationByHandleEx(SafeFileHandle fileHandle, int fileInformationClass, ref FileIdInfo fileInformation, uint bufferSize);
-    [DllImport("Cfgmgr32.dll", SetLastError = false)] private static extern uint CmRegisterNotification(ref CmNotifyFilter filter, IntPtr context, CmNotifyCallback callback, out IntPtr notifyContext);
-    [DllImport("Cfgmgr32.dll", SetLastError = false)] private static extern uint CmUnregisterNotification(IntPtr notifyContext);
+    [DllImport("Cfgmgr32.dll", EntryPoint = "CM_Register_Notification", SetLastError = false)] private static extern uint CmRegisterNotification(ref CmNotifyFilter filter, IntPtr context, CmNotifyCallback callback, out IntPtr notifyContext);
+    [DllImport("Cfgmgr32.dll", EntryPoint = "CM_Unregister_Notification", SetLastError = false)] private static extern uint CmUnregisterNotification(IntPtr notifyContext);
 }
 
 /// <summary>Windows drive type values returned by GetDriveTypeW.</summary>

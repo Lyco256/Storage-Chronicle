@@ -1,3 +1,3 @@
 # ExternalMediaTests.cs
 
-Tests verify immutable segment/manifest round-trip, same-parent history branching, and path traversal rejection.
+Tests verify segment/manifest round-trip and corruption detection, history branching and cross-PC deduplication, interrupted-write recovery, cancellation, non-creating read-only import, recovery behavior, volume-mount identity enforcement, missing-root refusal, and path traversal rejection. Every fixture uses a unique GUID directory under the test-specific temporary root, has a matching owner marker, and is cleaned only after the root, marker, containment, and child reparse-point checks pass. Tests explicitly preserve unowned media files and verify that importing existing history does not change its file set or bytes.

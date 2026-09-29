@@ -1,3 +1,3 @@
 # DiffViewModelTests.cs
 
-Headless tests verify shared projection rows, all Explorer presentation modes, and that pausing live UI updates does not stop the agent projection source.
+Headless tests cover common Projection reuse, all eight Explorer presentation modes, gutter tokens, lazy Tree descendants, virtual deleted/unknown roots, Explorer open eligibility, path back/forward navigation, split panes, reciprocal Move navigation, Replay timeline/cursor, and Live pause/resume semantics.

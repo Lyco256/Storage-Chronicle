@@ -1,4 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>WinExe</OutputType><RootNamespace>StorageChronicle.UI.Desktop</RootNamespace><AssemblyName>StorageChronicle.UI.Desktop</AssemblyName><ApplicationIcon /></PropertyGroup>
-  <ItemGroup><ProjectReference Include="..\StorageChronicle.UI.Shared\StorageChronicle.UI.Shared.csproj" /><PackageReference Include="Avalonia.Desktop" /><PackageReference Include="Avalonia.Themes.Fluent" /><PackageReference Include="Avalonia.Fonts.Inter" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="..\StorageChronicle.UI.Shared\StorageChronicle.UI.Shared.csproj" /><ProjectReference Include="..\StorageChronicle.Contracts\StorageChronicle.Contracts.csproj" /><ProjectReference Include="..\StorageChronicle.Projection\StorageChronicle.Projection.csproj" /><ProjectReference Include="..\StorageChronicle.UI.EventStack\StorageChronicle.UI.EventStack.csproj" /><ProjectReference Include="..\StorageChronicle.UI.DiffView\StorageChronicle.UI.DiffView.csproj" /><PackageReference Include="Avalonia.Desktop" /><PackageReference Include="Avalonia.Themes.Fluent" /><PackageReference Include="Avalonia.Fonts.Inter" /></ItemGroup>
 </Project>

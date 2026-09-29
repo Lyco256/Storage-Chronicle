@@ -1,0 +1,8 @@
+{
+  "id": "golden-creation-delete-v1",
+  "events": [
+    { "sequence": 1, "operation": "Create", "name": "golden.txt", "quality": "Exact" },
+    { "sequence": 2, "operation": "Delete", "name": "golden.txt", "quality": "Exact" }
+  ],
+  "expected": { "sourceCount": 2, "canonicalCount": 2 }
+}
