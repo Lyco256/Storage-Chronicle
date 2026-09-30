@@ -44,6 +44,28 @@ public sealed class ReadDirectoryChangesTests
     }
 
     [Fact]
+    [Trait("Category", "WindowsApi")]
+    public async Task NativeDirectoryReadCancelsPromptlyOnTemporaryDirectory()
+    {
+        if (!OperatingSystem.IsWindows()) Assert.Skip("This test requires Windows overlapped directory notifications.");
+        var directory = Directory.CreateTempSubdirectory("storage-chronicle-cancel-read");
+        try
+        {
+            var monitor = new WindowsDirectoryChangeMonitorFactory().Create(VolumeId.Create("temporary-test-volume"), directory.FullName, 4096);
+            using var cancellation = new CancellationTokenSource();
+            var read = ReadAllAsync(monitor.ReadChangesAsync(cancellation.Token), cancellation.Token);
+            await Task.Delay(TimeSpan.FromMilliseconds(100), TestContext.Current.CancellationToken);
+            cancellation.Cancel();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => read.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            directory.Delete(true);
+        }
+    }
+
+    [Fact]
     public void ParserPairsRenameAndPreservesSequence()
     {
         var buffer = BuildBuffer((4, "old.txt"), (5, "new.txt"), (1, "created.txt"));

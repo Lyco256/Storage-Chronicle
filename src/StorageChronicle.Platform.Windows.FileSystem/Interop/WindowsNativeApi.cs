@@ -15,6 +15,7 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
     private const uint OpenExisting = 3;
     private const uint FileFlagBackupSemantics = 0x02000000;
     private const uint FileFlagOpenReparsePoint = 0x00200000;
+    private const uint FileFlagOverlapped = 0x40000000;
     private const uint FileNotifyChangeFileName = 0x00000001;
     private const uint FileNotifyChangeDirName = 0x00000002;
     private const uint FileNotifyChangeAttributes = 0x00000004;
@@ -36,6 +37,8 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
     private const uint ErrorDeviceNotConnected = 1167;
     private const uint ErrorPathNotFound = 3;
     private const uint ErrorFileNotFound = 2;
+    private const int ErrorIoPending = 997;
+    private const int ErrorOperationAborted = 995;
     private const uint CmNotifyFilterTypeAll = 0;
     private const uint CmNotifyActionDeviceInterfaceArrival = 0;
     private const uint CmNotifyActionDeviceInterfaceRemoval = 1;
@@ -178,7 +181,7 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
             throw new PlatformNotSupportedException("Windows directory handles are unavailable on this operating system.");
         }
 
-        var handle = CreateFile(path, FileListDirectory, FileShareRead | FileShareWrite | FileShareDelete, IntPtr.Zero, OpenExisting, FileFlagBackupSemantics | FileFlagOpenReparsePoint, IntPtr.Zero);
+        var handle = CreateFile(path, FileListDirectory, FileShareRead | FileShareWrite | FileShareDelete, IntPtr.Zero, OpenExisting, FileFlagBackupSemantics | FileFlagOpenReparsePoint | FileFlagOverlapped, IntPtr.Zero);
         if (handle.IsInvalid)
         {
             var error = Marshal.GetLastWin32Error();
@@ -212,29 +215,43 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
             return new NativeDirectoryChangeReadResult(Array.Empty<byte>(), 0, (int)ErrorInvalidHandle);
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         var buffer = new byte[bufferSize];
         var pinned = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+        using var completed = new EventWaitHandle(false, EventResetMode.ManualReset);
+        var overlapped = Marshal.AllocHGlobal(Marshal.SizeOf<NativeOverlappedData>());
+        var completionHandle = completed.SafeWaitHandle;
+        var completionHandleReferenced = false;
         try
         {
-            var result = await Task.Run(() =>
+            completionHandle.DangerousAddRef(ref completionHandleReferenced);
+            Marshal.StructureToPtr(new NativeOverlappedData { EventHandle = completionHandle.DangerousGetHandle() }, overlapped, false);
+            using var cancellation = cancellationToken.Register(() => CancelIoEx(directoryHandle, overlapped));
+            var succeeded = ReadDirectoryChangesWOverlapped(directoryHandle, pinned.AddrOfPinnedObject(), (uint)buffer.Length, true, FileNotifyChangeFileName | FileNotifyChangeDirName | FileNotifyChangeAttributes | FileNotifyChangeSize | FileNotifyChangeLastWrite | FileNotifyChangeCreation | FileNotifyChangeSecurity, IntPtr.Zero, overlapped, IntPtr.Zero);
+            var error = succeeded ? 0 : Marshal.GetLastWin32Error();
+            if (!succeeded && error != ErrorIoPending)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var succeeded = ReadDirectoryChangesW(directoryHandle, pinned.AddrOfPinnedObject(), (uint)buffer.Length, true, FileNotifyChangeFileName | FileNotifyChangeDirName | FileNotifyChangeAttributes | FileNotifyChangeSize | FileNotifyChangeLastWrite | FileNotifyChangeCreation | FileNotifyChangeSecurity, out var bytesReturned, IntPtr.Zero, IntPtr.Zero);
-                var error = succeeded ? 0 : Marshal.GetLastWin32Error();
-                return new NativeDirectoryChangeReadResult(buffer, checked((int)bytesReturned), error);
-            }, cancellationToken).ConfigureAwait(false);
-            return result;
-        }
-        catch (OperationCanceledException)
-        {
-            CancelIoEx(directoryHandle, IntPtr.Zero);
-            throw;
+                if (error == ErrorOperationAborted && cancellationToken.IsCancellationRequested) throw new OperationCanceledException(cancellationToken);
+                return new NativeDirectoryChangeReadResult(buffer, 0, error);
+            }
+
+            if (cancellationToken.IsCancellationRequested) CancelIoEx(directoryHandle, overlapped);
+            await Task.Run(() => completed.WaitOne(), CancellationToken.None).ConfigureAwait(false);
+            if (!GetOverlappedResult(directoryHandle, overlapped, out var bytesReturned, false))
+            {
+                error = Marshal.GetLastWin32Error();
+                if (error == ErrorOperationAborted && cancellationToken.IsCancellationRequested) throw new OperationCanceledException(cancellationToken);
+                return new NativeDirectoryChangeReadResult(buffer, 0, error);
+            }
+
+            return new NativeDirectoryChangeReadResult(buffer, checked((int)bytesReturned), 0);
         }
         finally
         {
+            if (completionHandleReferenced) completionHandle.DangerousRelease();
+            Marshal.FreeHGlobal(overlapped);
             pinned.Free();
         }
-
     }
 
     public IDisposable Register(Action<ExternalMediaChangeKind> callback)
@@ -454,8 +471,9 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool GetVolumeInformation(string rootPathName, string volumeNameBuffer, uint volumeNameSize, ref uint volumeSerialNumber, ref uint maximumComponentLength, ref uint fileSystemFlags, string fileSystemNameBuffer, uint fileSystemNameSize);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern DriveType GetDriveType(string rootPathName);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern SafeFileHandle CreateFile(string fileName, uint desiredAccess, uint shareMode, IntPtr securityAttributes, uint creationDisposition, uint flagsAndAttributes, IntPtr templateFile);
-    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool ReadDirectoryChangesW(SafeFileHandle directoryHandle, IntPtr buffer, uint bufferLength, [MarshalAs(UnmanagedType.Bool)] bool watchSubtree, uint notifyFilter, out uint bytesReturned, IntPtr overlapped, IntPtr completionRoutine);
+    [DllImport("kernel32.dll", EntryPoint = "ReadDirectoryChangesW", SetLastError = true)] private static extern bool ReadDirectoryChangesWOverlapped(SafeFileHandle directoryHandle, IntPtr buffer, uint bufferLength, [MarshalAs(UnmanagedType.Bool)] bool watchSubtree, uint notifyFilter, IntPtr bytesReturned, IntPtr overlapped, IntPtr completionRoutine);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool CancelIoEx(SafeFileHandle fileHandle, IntPtr overlapped);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetOverlappedResult(SafeFileHandle fileHandle, IntPtr overlapped, out uint bytesTransferred, [MarshalAs(UnmanagedType.Bool)] bool wait);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetFileInformationByHandleEx(SafeFileHandle fileHandle, int fileInformationClass, ref FileIdInfo fileInformation, uint bufferSize);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetFileInformationByHandleEx(SafeFileHandle fileHandle, int fileInformationClass, ref FileBasicInfo fileInformation, uint bufferSize);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetFileInformationByHandleEx(SafeFileHandle fileHandle, int fileInformationClass, ref FileStandardInfo fileInformation, uint bufferSize);
@@ -470,6 +488,8 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
     private struct FileStandardInfo { public long AllocationSize; public long EndOfFile; public uint NumberOfLinks; public byte DeletePending; public byte Directory; }
     [StructLayout(LayoutKind.Sequential)]
     private struct FileAttributeTagInfo { public uint FileAttributes; public uint ReparseTag; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeOverlappedData { public IntPtr Internal; public IntPtr InternalHigh; public uint Offset; public uint OffsetHigh; public IntPtr EventHandle; }
 }
 
 /// <summary>Windows drive type values returned by GetDriveTypeW.</summary>

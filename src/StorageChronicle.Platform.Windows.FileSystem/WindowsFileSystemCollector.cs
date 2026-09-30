@@ -35,7 +35,12 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
     public async IAsyncEnumerable<SourceEvent> CollectAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var volumes = await volumeEnumerator.EnumerateAsync(cancellationToken).ConfigureAwait(false);
-        var output = Channel.CreateUnbounded<SourceEvent>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
+        var output = Channel.CreateBounded<SourceEvent>(new BoundedChannelOptions(options.PipelineChannelCapacity)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
+            SingleReader = true,
+            SingleWriter = false
+        });
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var workers = volumes.Select(volume => CollectVolumeAsync(volume, output.Writer, linkedCancellation.Token)).ToArray();
         var completion = CompleteOutputAsync(workers, output.Writer, linkedCancellation.Token);
@@ -51,7 +56,7 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
         finally
         {
             linkedCancellation.Cancel();
-            try { await completion.ConfigureAwait(false); } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+            try { await completion.ConfigureAwait(false); } catch (OperationCanceledException) when (linkedCancellation.IsCancellationRequested) { }
         }
     }
 
@@ -69,8 +74,8 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
 
             var rootPath = WindowsVolumePath.GetRootPath(volume);
             var monitor = monitorFactory.Create(volume.Id, rootPath, options.NotificationBufferSize);
-            var nativeReads = Channel.CreateUnbounded<DirectoryChangeRead>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
-            var liveReads = Channel.CreateUnbounded<DirectoryChangeRead>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
+            var nativeReads = CreateBoundedReadChannel(options.PipelineChannelCapacity);
+            var liveReads = CreateBoundedReadChannel(options.PipelineChannelCapacity);
             var monitorTask = PumpMonitorAsync(monitor, nativeReads.Writer, volumeToken);
             var pending = new InitialScanNotificationBuffer(options.InitialNotificationCapacity);
             pending.Begin(0);
@@ -135,15 +140,15 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
         }
         catch (UnauthorizedAccessException)
         {
-            await output.WriteAsync(WindowsSourceEventFactory.Gap(volume.Id, "Access denied while collecting volume", 0), CancellationToken.None).ConfigureAwait(false);
+            await WriteFailureGapAsync(output, volume.Id, "Access denied while collecting volume", cancellationToken).ConfigureAwait(false);
         }
         catch (IOException)
         {
-            await output.WriteAsync(WindowsSourceEventFactory.Gap(volume.Id, "Volume was removed or became unavailable", 0), CancellationToken.None).ConfigureAwait(false);
+            await WriteFailureGapAsync(output, volume.Id, "Volume was removed or became unavailable", cancellationToken).ConfigureAwait(false);
         }
         catch (Win32Exception)
         {
-            await output.WriteAsync(WindowsSourceEventFactory.Gap(volume.Id, "Windows API denied or lost the volume", 0), CancellationToken.None).ConfigureAwait(false);
+            await WriteFailureGapAsync(output, volume.Id, "Windows API denied or lost the volume", cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -209,6 +214,26 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
         finally
         {
             writer.TryComplete();
+        }
+    }
+
+    private static Channel<DirectoryChangeRead> CreateBoundedReadChannel(int capacity) => Channel.CreateBounded<DirectoryChangeRead>(new BoundedChannelOptions(capacity)
+    {
+        FullMode = BoundedChannelFullMode.Wait,
+        SingleReader = true,
+        SingleWriter = true
+    });
+
+    private static async ValueTask WriteFailureGapAsync(ChannelWriter<SourceEvent> output, VolumeId volumeId, string reason, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested) return;
+        try
+        {
+            await output.WriteAsync(WindowsSourceEventFactory.Gap(volumeId, reason, 0), cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The caller canceled collection; do not hold shutdown open trying to report a terminal gap.
         }
     }
 

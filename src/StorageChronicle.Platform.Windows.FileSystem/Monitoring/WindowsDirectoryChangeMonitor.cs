@@ -31,17 +31,27 @@ public sealed class WindowsDirectoryChangeMonitor
     /// <summary>Reads notifications until cancellation, handle loss, or a continuity gap.</summary>
     public async IAsyncEnumerable<DirectoryChangeRead> ReadChangesAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var channel = System.Threading.Channels.Channel.CreateUnbounded<DirectoryChangeRead>(new System.Threading.Channels.UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
-        var producer = ProduceChangesAsync(channel.Writer, cancellationToken);
-        await foreach (var read in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        using var producerCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var channel = System.Threading.Channels.Channel.CreateBounded<DirectoryChangeRead>(new System.Threading.Channels.BoundedChannelOptions(1)
         {
-            yield return read;
-        }
+            FullMode = System.Threading.Channels.BoundedChannelFullMode.Wait,
+            SingleReader = true,
+            SingleWriter = true
+        });
+        var producer = ProduceChangesAsync(channel.Writer, producerCancellation.Token);
         try
         {
-            await producer.ConfigureAwait(false);
+            await foreach (var read in channel.Reader.ReadAllAsync(producerCancellation.Token).ConfigureAwait(false))
+            {
+                yield return read;
+            }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        finally
+        {
+            producerCancellation.Cancel();
+            try { await producer.ConfigureAwait(false); }
+            catch (OperationCanceledException) when (producerCancellation.IsCancellationRequested) { }
+        }
     }
 
     private async Task ProduceChangesAsync(System.Threading.Channels.ChannelWriter<DirectoryChangeRead> writer, CancellationToken cancellationToken)
@@ -74,25 +84,37 @@ public sealed class WindowsDirectoryChangeMonitor
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         catch (UnauthorizedAccessException)
         {
-            await writer.WriteAsync(new DirectoryChangeRead(Array.Empty<DirectoryChangeNotification>(), CreateGap(5, "Access denied while opening or monitoring directory"), true, 5), CancellationToken.None).ConfigureAwait(false);
+            await TryWriteTerminalGapAsync(writer, CreateGap(5, "Access denied while opening or monitoring directory"), 5, cancellationToken).ConfigureAwait(false);
         }
         catch (Win32Exception exception)
         {
-            await writer.WriteAsync(new DirectoryChangeRead(Array.Empty<DirectoryChangeNotification>(), CreateGap(exception.NativeErrorCode, "Windows API failed while opening or monitoring directory"), true, exception.NativeErrorCode), CancellationToken.None).ConfigureAwait(false);
+            await TryWriteTerminalGapAsync(writer, CreateGap(exception.NativeErrorCode, "Windows API failed while opening or monitoring directory"), exception.NativeErrorCode, cancellationToken).ConfigureAwait(false);
         }
         catch (DirectoryNotFoundException)
         {
-            await writer.WriteAsync(new DirectoryChangeRead(Array.Empty<DirectoryChangeNotification>(), CreateGap(ErrorPathNotFound, "Directory disappeared during monitoring"), true, ErrorPathNotFound), CancellationToken.None).ConfigureAwait(false);
+            await TryWriteTerminalGapAsync(writer, CreateGap(ErrorPathNotFound, "Directory disappeared during monitoring"), ErrorPathNotFound, cancellationToken).ConfigureAwait(false);
         }
         catch (IOException exception)
         {
             var error = exception.HResult & 0xFFFF;
-            await writer.WriteAsync(new DirectoryChangeRead(Array.Empty<DirectoryChangeNotification>(), CreateGap(error, "I/O failure while monitoring directory"), true, error), CancellationToken.None).ConfigureAwait(false);
+            await TryWriteTerminalGapAsync(writer, CreateGap(error, "I/O failure while monitoring directory"), error, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             handle?.Dispose();
             writer.TryComplete();
+        }
+    }
+
+    private static async ValueTask TryWriteTerminalGapAsync(System.Threading.Channels.ChannelWriter<DirectoryChangeRead> writer, ContinuityGap gap, int errorCode, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await writer.WriteAsync(new DirectoryChangeRead(Array.Empty<DirectoryChangeNotification>(), gap, true, errorCode), cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Cancellation ends this monitor; no reader remains that could consume a terminal gap.
         }
     }
 

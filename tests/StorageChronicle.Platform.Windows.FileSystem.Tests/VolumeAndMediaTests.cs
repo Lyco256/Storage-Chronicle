@@ -46,6 +46,48 @@ public sealed class VolumeAndMediaTests
         Assert.Equal(ExternalMediaChangeKind.Connected, change.Kind);
     }
 
+    [Fact]
+    public async Task FullDeviceQueueEmitsOneReservedRescanSignalThenRecovers()
+    {
+        var native = new FakeDeviceNative();
+        await using var monitor = new WindowsExternalMediaMonitor(native, queueCapacity: 1);
+
+        native.Raise(ExternalMediaChangeKind.Connected);
+        native.Raise(ExternalMediaChangeKind.Disconnected);
+        native.Raise(ExternalMediaChangeKind.Connected);
+
+        Assert.Equal(ExternalMediaChangeKind.Connected, (await ReadOneAsync(monitor, TestContext.Current.CancellationToken)).Kind);
+        Assert.Equal(ExternalMediaChangeKind.RescanRequired, (await ReadOneAsync(monitor, TestContext.Current.CancellationToken)).Kind);
+
+        // The overflow marker is consumed, so subsequent notifications are accepted normally.
+        native.Raise(ExternalMediaChangeKind.Disconnected);
+        Assert.Equal(ExternalMediaChangeKind.Disconnected, (await ReadOneAsync(monitor, TestContext.Current.CancellationToken)).Kind);
+    }
+
+    [Fact]
+    public async Task FullDeviceQueueNeverBlocksCallbackAndCancellationPreservesQueuedChanges()
+    {
+        var native = new FakeDeviceNative();
+        await using var monitor = new WindowsExternalMediaMonitor(native, queueCapacity: 1);
+
+        using (var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100)))
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ReadOneAsync(monitor, cancellation.Token));
+        }
+
+        native.Raise(ExternalMediaChangeKind.Connected);
+        native.Raise(ExternalMediaChangeKind.Disconnected); // occupies the reserved rescan slot
+        // Further callbacks while overflow is pending are coalesced and return synchronously.
+        var testCancellation = TestContext.Current.CancellationToken;
+        var callback = Task.Run(() => native.Raise(ExternalMediaChangeKind.Connected), testCancellation);
+        Assert.Same(callback, await Task.WhenAny(callback, Task.Delay(TimeSpan.FromSeconds(2), testCancellation)));
+
+        Assert.Equal(ExternalMediaChangeKind.Connected, (await ReadOneAsync(monitor, TestContext.Current.CancellationToken)).Kind);
+        Assert.Equal(ExternalMediaChangeKind.RescanRequired, (await ReadOneAsync(monitor, TestContext.Current.CancellationToken)).Kind);
+        native.Raise(ExternalMediaChangeKind.Connected);
+        Assert.Equal(ExternalMediaChangeKind.Connected, (await ReadOneAsync(monitor, TestContext.Current.CancellationToken)).Kind);
+    }
+
     private static async Task<ExternalMediaChange> ReadOneAsync(WindowsExternalMediaMonitor monitor, CancellationToken cancellationToken)
     {
         await foreach (var change in monitor.ReadChangesAsync(cancellationToken)) return change;
