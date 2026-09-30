@@ -241,6 +241,28 @@ public sealed class InstallerManifestTests
         Assert.Contains("Join-Path $PSScriptRoot 'AcceptanceContracts.ps1'", finalizer, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Windows10PhysicalPreflightIsReadOnlyFailClosedAndWritesOnlyNewEvidence()
+    {
+        var root = FindRoot();
+        var verifier = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Verify-Windows10PhysicalAcceptance.ps1"));
+
+        Assert.Contains("EvidenceRoot", verifier, StringComparison.Ordinal);
+        Assert.Contains("Assert-NoReparsePath", verifier, StringComparison.Ordinal);
+        Assert.Contains("Get-Partition -DriveLetter", verifier, StringComparison.Ordinal);
+        Assert.Contains("Get-Disk -Number", verifier, StringComparison.Ordinal);
+        Assert.Contains("ExistingProductAndHistoryAbsent", verifier, StringComparison.Ordinal);
+        Assert.Contains("Get-ItemProperty -LiteralPath $uninstallKey.PSPath -ErrorAction Stop", verifier, StringComparison.Ordinal);
+        Assert.DoesNotContain("Get-ItemProperty -Path $uninstallPaths -ErrorAction SilentlyContinue", verifier, StringComparison.Ordinal);
+        Assert.Contains("AgentServiceNameAvailable", verifier, StringComparison.Ordinal);
+        Assert.Contains("Get-SmbShare -ErrorAction Stop", verifier, StringComparison.Ordinal);
+        Assert.Contains("[IO.FileMode]::CreateNew", verifier, StringComparison.Ordinal);
+        Assert.Contains("AcceptanceEligible = $false", verifier, StringComparison.Ordinal);
+        Assert.DoesNotContain("Set-Content", verifier, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Remove-Item", verifier, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("New-Item", verifier, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string FindRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);
