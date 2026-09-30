@@ -11,6 +11,39 @@ namespace StorageChronicle.Platform.Windows.FileSystem.Tests;
 public sealed class ReadDirectoryChangesTests
 {
     [Fact]
+    [Trait("Category", "WindowsApi")]
+    public async Task MonitorReportsGapWhenFinalRootComponentIsReparsePoint()
+    {
+        if (!OperatingSystem.IsWindows()) Assert.Skip("This test requires Windows directory-handle semantics.");
+        var root = Directory.CreateTempSubdirectory("storage-chronicle-reparse-root");
+        var target = Path.Combine(root.FullName, "target");
+        var link = Path.Combine(root.FullName, "link");
+        Directory.CreateDirectory(target);
+        Directory.CreateDirectory(Path.Combine(target, "must-not-be-watched"));
+        try
+        {
+            try
+            {
+                Directory.CreateSymbolicLink(link, target);
+            }
+            catch (Exception exception) when (exception is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+            {
+                Assert.Skip($"The host cannot create an unprivileged directory symbolic link: {exception.GetType().Name}.");
+            }
+
+            var monitor = new WindowsDirectoryChangeMonitorFactory().Create(VolumeId.Create("test-volume"), link, 4096);
+            var reads = await ReadAllAsync(monitor.ReadChangesAsync(TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
+
+            Assert.Contains(reads, read => read.Gap is not null && read.MonitorLost);
+            Assert.DoesNotContain(reads.SelectMany(read => read.Notifications), notification => notification.RelativePath.Contains("must-not-be-watched", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            root.Delete(true);
+        }
+    }
+
+    [Fact]
     public void ParserPairsRenameAndPreservesSequence()
     {
         var buffer = BuildBuffer((4, "old.txt"), (5, "new.txt"), (1, "created.txt"));

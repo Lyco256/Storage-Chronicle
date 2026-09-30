@@ -30,6 +30,9 @@ public sealed record NativeFileMetadataRecord(
     bool Exists,
     bool IsAccessDenied);
 
+/// <summary>One child name and its directory-entry attributes read from an opened directory handle.</summary>
+public sealed record NativeDirectoryEntry(string Name, FileAttributes Attributes);
+
 /// <summary>Result of one ReadDirectoryChangesW call.</summary>
 public sealed record NativeDirectoryChangeReadResult(byte[] Buffer, int BytesReturned, int ErrorCode);
 
@@ -46,7 +49,13 @@ public interface IWindowsFileMetadataNative
     /// <summary>Reads identity and standard metadata for an entry.</summary>
     NativeFileMetadataRecord ReadMetadata(string path, string? parentPath = null);
 
-    /// <summary>Attempts to open a directory for change monitoring.</summary>
+    /// <summary>Reads identity and standard metadata for the object already bound to an open handle.</summary>
+    NativeFileMetadataRecord ReadMetadata(SafeFileHandle handle, string path, string? parentPath = null);
+
+    /// <summary>Enumerates direct child names from an open, non-reparse directory handle.</summary>
+    IEnumerable<NativeDirectoryEntry> EnumerateDirectory(SafeFileHandle directoryHandle);
+
+    /// <summary>Opens a directory without following its final-component reparse point.</summary>
     SafeFileHandle OpenDirectory(string path);
 }
 

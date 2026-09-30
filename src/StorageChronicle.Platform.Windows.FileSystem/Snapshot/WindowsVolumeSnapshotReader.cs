@@ -4,6 +4,7 @@ using StorageChronicle.Domain.Contracts;
 using StorageChronicle.Platform.Abstractions;
 using StorageChronicle.Platform.Windows.FileSystem.Interop;
 using StorageChronicle.Platform.Windows.FileSystem.Policy;
+using StorageChronicle.Platform.Windows.FileSystem.Volumes;
 
 namespace StorageChronicle.Platform.Windows.FileSystem.Snapshot;
 
@@ -33,7 +34,7 @@ public sealed class WindowsVolumeSnapshotReader : IVolumeSnapshotReader
             yield break;
         }
 
-        var root = volume.MountPoints.Count == 0 ? volume.Id.Value + Path.DirectorySeparatorChar : volume.MountPoints[0];
+        var root = WindowsVolumePath.GetRootPath(volume);
         var pendingDirectories = new Stack<(string Path, FileId? ParentFileId)>();
         pendingDirectories.Push((root, null));
         while (pendingDirectories.Count > 0)
@@ -56,11 +57,16 @@ public sealed class WindowsVolumeSnapshotReader : IVolumeSnapshotReader
         var entries = new List<SourceEvent>(options.SnapshotBatchSize);
         try
         {
-            var directory = ReadEntry(volume, directoryPath, parentFileId, isRoot: true);
+            // Bind traversal to the directory object opened without following a final-component reparse point.
+            // The handle remains open while its entries are enumerated, so replacing the path cannot redirect
+            // this enumeration to a reparse target.
+            using var directoryHandle = native.OpenDirectory(directoryPath);
+            var directory = ReadEntry(volume, directoryHandle, directoryPath, parentFileId);
             entries.Add(WindowsSourceEventFactory.Snapshot(volume, directory, sequence++));
-            foreach (var entryPath in Directory.EnumerateFileSystemEntries(directoryPath, "*", new EnumerationOptions { RecurseSubdirectories = false, IgnoreInaccessible = false, ReturnSpecialDirectories = false, AttributesToSkip = 0 }))
+            foreach (var child in native.EnumerateDirectory(directoryHandle))
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var entryPath = Path.Combine(directoryPath, child.Name);
                 if (exclusionPolicy.ShouldExclude(entryPath)) continue;
                 var entry = ReadEntry(volume, entryPath, directory.FileId, isRoot: false);
                 entries.Add(WindowsSourceEventFactory.Snapshot(volume, entry, sequence++));
@@ -96,6 +102,27 @@ public sealed class WindowsVolumeSnapshotReader : IVolumeSnapshotReader
         try
         {
             var nativeEntry = native.ReadMetadata(path, isRoot ? null : Directory.GetParent(path)?.FullName);
+            return new NativeSnapshotEntry(nativeEntry.FileId, nativeEntry.ParentFileId ?? parentFileId, nativeEntry.Name, nativeEntry.Kind, nativeEntry.LogicalSize, nativeEntry.AllocatedSize, nativeEntry.CreatedUtc, nativeEntry.LastAccessUtc, nativeEntry.LastWriteUtc, nativeEntry.FileSystemChangeUtc, nativeEntry.Attributes, nativeEntry.ReparsePointKind, nativeEntry.IsAccessDenied ? EventQuality.ExistenceOnly : EventQuality.Exact, nativeEntry.Exists);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return MinimalEntry(volume, path, parentFileId, FileKind.Unknown);
+        }
+        catch (Win32Exception)
+        {
+            return MinimalEntry(volume, path, parentFileId, FileKind.Unknown);
+        }
+        catch (IOException)
+        {
+            return MinimalEntry(volume, path, parentFileId, FileKind.Unknown);
+        }
+    }
+
+    private NativeSnapshotEntry ReadEntry(VolumeDescriptor volume, Microsoft.Win32.SafeHandles.SafeFileHandle handle, string path, FileId? parentFileId)
+    {
+        try
+        {
+            var nativeEntry = native.ReadMetadata(handle, path, Directory.GetParent(path)?.FullName);
             return new NativeSnapshotEntry(nativeEntry.FileId, nativeEntry.ParentFileId ?? parentFileId, nativeEntry.Name, nativeEntry.Kind, nativeEntry.LogicalSize, nativeEntry.AllocatedSize, nativeEntry.CreatedUtc, nativeEntry.LastAccessUtc, nativeEntry.LastWriteUtc, nativeEntry.FileSystemChangeUtc, nativeEntry.Attributes, nativeEntry.ReparsePointKind, nativeEntry.IsAccessDenied ? EventQuality.ExistenceOnly : EventQuality.Exact, nativeEntry.Exists);
         }
         catch (UnauthorizedAccessException)

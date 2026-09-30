@@ -67,7 +67,7 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
                 return;
             }
 
-            var rootPath = volume.MountPoints.Count == 0 ? volume.Id.Value + Path.DirectorySeparatorChar : volume.MountPoints[0];
+            var rootPath = WindowsVolumePath.GetRootPath(volume);
             var monitor = monitorFactory.Create(volume.Id, rootPath, options.NotificationBufferSize);
             var nativeReads = Channel.CreateUnbounded<DirectoryChangeRead>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
             var liveReads = Channel.CreateUnbounded<DirectoryChangeRead>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
