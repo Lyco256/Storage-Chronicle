@@ -123,6 +123,40 @@ public sealed class VolumeAndMediaTests
     }
 
     [Fact]
+    public void VolumeDirectorySessionRejectsAReparseAncestorInAnExistingFixturePathWhenSupported()
+    {
+        var fixture = CreateOwnedFixture("storage-chronicle-reparse-ancestor-", out var runId);
+        var linkPath = Path.Combine(fixture.FullName, "redirect");
+        var linkCreated = false;
+        try
+        {
+            var target = Directory.CreateDirectory(Path.Combine(fixture.FullName, "real-target"));
+            var nested = Directory.CreateDirectory(Path.Combine(target.FullName, "nested"));
+            try
+            {
+                Directory.CreateSymbolicLink(linkPath, target.FullName);
+                linkCreated = true;
+            }
+            catch (UnauthorizedAccessException) { return; }
+            catch (PlatformNotSupportedException) { return; }
+
+            var mountPoint = new char[1024];
+            Assert.True(GetVolumePathName(nested.FullName, mountPoint, (uint)mountPoint.Length));
+            var volumeGuid = new char[1024];
+            var mount = new string(mountPoint).TrimEnd('\0');
+            Assert.True(GetVolumeNameForVolumeMountPoint(mount, volumeGuid, (uint)volumeGuid.Length));
+
+            Assert.Throws<IOException>(() => WindowsVolumeDirectorySession.OpenAtExistingDirectory(
+                new string(volumeGuid).TrimEnd('\0'), mount, Path.Combine(linkPath, "nested")));
+        }
+        finally
+        {
+            if (linkCreated) Directory.Delete(linkPath);
+            DeleteOwnedFixture(fixture.FullName, "storage-chronicle-reparse-ancestor-", runId);
+        }
+    }
+
+    [Fact]
     public void PublicVolumeSessionIsConfinedAndOnlyMovesItsOwnCreatedFileHandle()
     {
         var fixture = CreateOwnedFixture("storage-chronicle-media-boundary-", out var runId);

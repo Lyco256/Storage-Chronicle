@@ -2,6 +2,8 @@
 
 Updated 2026-08-20. This is the top-agent audit of requirements that still need external evidence or final branch integration. An unexecuted acceptance lane is recorded as pending; it is never converted into a pass by a default script.
 
+Continuation note (2026-09-30): `devenv` gained a handle-relative fixture traversal hardening in `WindowsVolumeDirectorySession.OpenAtExistingDirectory`, with a reparse-ancestor regression test. The focused Windows filesystem suite passed 22/22, DocMirror passed, and `build/Test-Fast.ps1 -NoRestore` exited 0 with zero build warnings/errors; Agent had 3 expected elevated/physical skips. This does not close production external-media race/ownership findings or any physical acceptance gate, and it invalidates the prior commit-bound safety audit. `main` remains not ready.
+
 ## Current verdict
 
 The ordinary build and non-privileged tests are green, and the previously identified confirmed-reconciliation implementation gaps are closed on this feature branch. Storage Chronicle is not ready for `devenv` or `main`: the remaining groups require a supported Windows TestLab/physical environment, fresh measurements, or final branch integration.

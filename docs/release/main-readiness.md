@@ -39,6 +39,8 @@ Codex can continue static review, implementation, documentation, and non-privile
 
 ## Current verification on 2026-09-30
 
+- Latest continuation on `devenv`: handle-relative fixture traversal change is documented in the physical-read-only audit; Windows filesystem tests passed 22/22, DocMirror passed, `build/Test-Fast.ps1 -NoRestore` exited 0, and standard `build/Test-All.ps1` exited 0 with zero build warnings/errors. Coverage gates passed (Domain 82.41%, State 94.13%, Projection 89.28%, Storage 87.69%; Diff/EventStack/Settings ViewModels 92.23%/78.51%/92.51%). Agent reported 51 passed and 3 expected elevated/physical skips. Intentional fail-closed validator fixtures passed. The isolated privileged acceptance lane was not run; no product, media, service, installer, or VHDX lane was started. This working-tree source change invalidates the previous commit-bound safety audit; readiness remains **NOT READY**.
+
 - Integrated `devenv` commit: `de93736` (`Merge branch 'feat/external-media' into devenv`).
 - `build/Test-Fast.ps1`: all listed projects reported success; Agent 47 passed / 3 privileged acceptance tests skipped; ExternalMedia 34/34; DocMirror passed. No warning/error was reported for the changed Agent/ExternalMedia builds.
 - `build/Test-All.ps1` (default, no `-RunPrivileged`): completed successfully. Build, Fast, quality/coverage, and UI passed; coverage gates passed (Domain 80.81%, State 94.13%, Projection 89.28%, Storage 85.61%; Diff ViewModel 92.23%, Event Stack 78.51%, Settings 92.51%). VirtualBox contract suite passed 6/6 using fake command responses and a run-owned temporary fixture. Agent's 3 elevated physical-acceptance cases were skipped by their environment gate.

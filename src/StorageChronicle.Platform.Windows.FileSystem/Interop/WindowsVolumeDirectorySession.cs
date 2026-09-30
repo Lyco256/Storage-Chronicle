@@ -115,28 +115,79 @@ public sealed class WindowsVolumeDirectorySession : IVolumeBoundMediaFileSystem
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Volume directory sessions are available only on Windows.");
         var expected = NormalizeVolumeGuidPath(volumeGuidPath);
         var mountRoot = Path.GetFullPath(volumeMountRoot);
+        if (!Path.EndsInDirectorySeparator(mountRoot)) mountRoot += Path.DirectorySeparatorChar;
         var fullDirectory = Path.GetFullPath(directoryPath);
         var relative = Path.GetRelativePath(mountRoot, fullDirectory);
         if (Path.IsPathRooted(relative) || relative == ".." || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
             throw new ArgumentException("The fixture directory must be beneath its reported volume mount root.", nameof(directoryPath));
-        var handle = CreateFile(fullDirectory, FileReadAttributes | FileListDirectory | FileTraverse | FileAddFile | FileAddSubdirectory | Synchronize,
-            FileShareRead | FileShareWrite | FileShareDelete, IntPtr.Zero, OpenExisting, FileFlagBackupSemantics | FileOpenReparsePoint, IntPtr.Zero);
-        if (handle.IsInvalid)
+
+        var mountVolumeBuffer = new char[1024];
+        if (!GetVolumeNameForVolumeMountPoint(mountRoot, mountVolumeBuffer, (uint)mountVolumeBuffer.Length))
         {
             var error = Marshal.GetLastWin32Error();
-            handle.Dispose();
-            throw new Win32Exception(error, "The isolated fixture directory could not be opened.");
+            throw new Win32Exception(error, "The fixture mount root could not be resolved to a volume identity.");
         }
+        var mountedVolume = NormalizeVolumeGuidPath(new string(mountVolumeBuffer).TrimEnd('\0'));
+        if (!string.Equals(mountedVolume, expected, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("The fixture mount root does not identify the expected volume GUID.");
+
+        var current = CreateFile(expected, FileReadAttributes | FileListDirectory | FileTraverse | Synchronize,
+            FileShareRead | FileShareWrite | FileShareDelete, IntPtr.Zero, OpenExisting, FileFlagBackupSemantics, IntPtr.Zero);
+        if (current.IsInvalid)
+        {
+            var error = Marshal.GetLastWin32Error();
+            current.Dispose();
+            throw new Win32Exception(error, "The expected volume root could not be opened for fixture traversal.");
+        }
+
         try
         {
-            EnsureExpectedVolume(handle, expected);
-            EnsureDirectoryNotReparsePoint(handle);
-            return new WindowsVolumeDirectorySession(expected, handle, rootHasCreateAccess: true);
+            EnsureExpectedVolume(current, expected);
+            EnsureDirectoryNotReparsePoint(current);
+            var components = relative == "."
+                ? Array.Empty<string>()
+                : relative.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+            for (var index = 0; index < components.Length; index++)
+            {
+                ValidateComponent(components[index]);
+                var access = index == components.Length - 1 ? FileAddFile | FileAddSubdirectory : 0;
+                var child = OpenDirectoryCore(current, components[index], FileOpen, expected, access);
+                current.Dispose();
+                current = child;
+            }
+
+            if (components.Length == 0)
+            {
+                var writableRoot = CreateFile(expected, FileReadAttributes | FileListDirectory | FileTraverse | FileAddFile | FileAddSubdirectory | Synchronize,
+                    FileShareRead | FileShareWrite | FileShareDelete, IntPtr.Zero, OpenExisting, FileFlagBackupSemantics, IntPtr.Zero);
+                if (writableRoot.IsInvalid)
+                {
+                    var error = Marshal.GetLastWin32Error();
+                    writableRoot.Dispose();
+                    throw new Win32Exception(error, "The isolated fixture volume root could not be opened with run-owned fixture access.");
+                }
+
+                try
+                {
+                    EnsureExpectedVolume(writableRoot, expected);
+                    EnsureDirectoryNotReparsePoint(writableRoot);
+                }
+                catch
+                {
+                    writableRoot.Dispose();
+                    throw;
+                }
+                current.Dispose();
+                current = writableRoot;
+            }
+
+            var session = new WindowsVolumeDirectorySession(expected, current, rootHasCreateAccess: true);
+            current = null!;
+            return session;
         }
-        catch
+        finally
         {
-            handle.Dispose();
-            throw;
+            current?.Dispose();
         }
     }
 
@@ -861,6 +912,10 @@ public sealed class WindowsVolumeDirectorySession : IVolumeBoundMediaFileSystem
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateFileW")]
     private static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "GetVolumeNameForVolumeMountPointW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetVolumeNameForVolumeMountPoint(string mountPoint, [Out] char[] volumeName, uint bufferLength);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "GetFinalPathNameByHandleW")]
     private static extern uint GetFinalPathNameByHandle(SafeFileHandle handle, [Out] char[] path, uint pathLength, uint flags);
