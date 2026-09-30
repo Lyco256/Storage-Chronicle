@@ -28,11 +28,11 @@ Concurrent dictionary and queue permit collector writes and projection reads. Li
 
 ## Failure behavior
 
-Invalid identity or default timestamp throws `ArgumentException`. Concurrent updates preserve the earliest observed exit; missing keys return false. Queue saturation fails visibly to the collector, and asynchronous persistence failure is reported to `AgentHealthState` and prevents later records from being accepted as durable.
+Invalid identity or default timestamp throws `ArgumentException`. Concurrent updates preserve the earliest observed exit; missing keys return false. Queue saturation fails visibly to the collector. Asynchronous persistence failure stops the writer, reports the number of additional queued facts it could not attempt through `AgentHealthState`, and prevents later records from being accepted as durable; it does not silently claim those facts were persisted or retry them.
 
 ## Tests
 
-`tests/StorageChronicle.Agent.Tests/AgentProjectionServiceTests.cs` covers projection effects, restart Replay recovery, Replay range-start overlap, invalid observations, earliest duplicate handling, bounded eviction, persistence failure reporting, and graceful queue drain.
+`tests/StorageChronicle.Agent.Tests/AgentProjectionServiceTests.cs` covers projection effects, restart Replay recovery, Replay range-start overlap, invalid observations, earliest duplicate handling, bounded eviction, persistence failure and unattempted-tail reporting, and graceful queue drain.
 
 ## OS constraints
 

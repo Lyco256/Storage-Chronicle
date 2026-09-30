@@ -69,6 +69,38 @@ public sealed class AgentProjectionServiceTests
     }
 
     [Fact]
+    public async Task ProcessLifecyclePersistenceFailureReportsUnattemptedQueuedTail()
+    {
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.ProcessLifecycleQueuedTail", out var runId);
+        var probe = new BlockingNoFreeSpaceProbe();
+        try
+        {
+            await using var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(Path.Combine(fixtureRoot, "history"))
+            {
+                MinimumFreeBytes = 1,
+                CapacityProbe = probe
+            });
+            var health = new AgentHealthState();
+            var state = new AgentProcessLifecycleState(storage, health);
+            var occurred = DateTimeOffset.UtcNow;
+            state.RecordProcessExit(ProcessInstanceId.Create("process-lifecycle-first"), occurred);
+            Assert.True(probe.Entered.Wait(TimeSpan.FromSeconds(3)), "The bounded persistence worker did not reach the controlled capacity probe.");
+            for (var index = 0; index < 3; index++)
+                state.RecordProcessExit(ProcessInstanceId.Create($"process-lifecycle-tail-{index}"), occurred.AddTicks(index + 1));
+
+            probe.Release.Set();
+            await state.DisposeAsync();
+
+            Assert.Contains("3 additional queued process lifecycle fact(s) were not attempted", health.Snapshot(storage.Status).Reason, StringComparison.Ordinal);
+        }
+        finally
+        {
+            probe.Release.Set();
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.ProcessLifecycleQueuedTail", runId);
+        }
+    }
+
+    [Fact]
     public async Task DiffProjectionReturnsConcurrentActivityFramesAndTimelinePages()
     {
         var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.ActivityFrames", out var runId);
@@ -330,5 +362,18 @@ public sealed class AgentProjectionServiceTests
     private sealed class NoFreeSpaceProbe : IStorageCapacityProbe
     {
         public long GetAvailableBytes(string storageDirectory) => 0;
+    }
+
+    private sealed class BlockingNoFreeSpaceProbe : IStorageCapacityProbe
+    {
+        public ManualResetEventSlim Entered { get; } = new();
+        public ManualResetEventSlim Release { get; } = new();
+
+        public long GetAvailableBytes(string storageDirectory)
+        {
+            Entered.Set();
+            if (!Release.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("The capacity-probe test gate was not released.");
+            return 0;
+        }
     }
 }

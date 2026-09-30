@@ -93,9 +93,14 @@ public sealed class AgentProcessLifecycleState : IProcessLifecycleSink, IAsyncDi
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
         {
-            Volatile.Write(ref persistenceFailure, exception);
-            health?.RecordPipelineFailure(exception);
-            persistenceQueue.Writer.TryComplete(exception);
+            var queuedTailCount = 0;
+            while (persistenceQueue.Reader.TryRead(out _)) queuedTailCount++;
+            var reportedFailure = queuedTailCount == 0
+                ? exception
+                : new StorageException($"Process lifecycle persistence stopped after a storage failure; {queuedTailCount} additional queued process lifecycle fact(s) were not attempted.", exception);
+            Volatile.Write(ref persistenceFailure, reportedFailure);
+            health?.RecordPipelineFailure(reportedFailure);
+            persistenceQueue.Writer.TryComplete(reportedFailure);
         }
     }
 }
