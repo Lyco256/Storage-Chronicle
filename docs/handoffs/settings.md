@@ -1,39 +1,24 @@
-# feat/settings handoff
+# `feat/settings` handoff
 
-## ??
+## Change in this handoff
 
-- `StorageChronicle.Settings` ?????Machine/User Settings ? version 1 JSON schema???????????/absolute path ??????
-- UTF-8?BOM??????????? stable flush????????? atomic replace?????? `.bak` ???schema 0 ?????????????????/????????????????
-- `AgentSettingsService` ?????IPC gateway?Machine ?????SettingsChanged ??????????scope/??/???????????????????????
-- `StorageChronicle.UI.Settings` ?????Agent gateway ?????????????????? ViewModel ????UI ??????????????
-- Settings/UI Settings ? csproj?Headless ????`docs/src` ?????????????
+Added a pre-apply impact review to `SettingsDialogViewModel`. A machine-settings change now produces an old/new preview of exact monitoring and exclusion paths, log destination, media identifier and mirror destination, noise-filter profile, and flush interval. The preview describes affected Agent behavior and limits writes to Agent-authorized product-owned settings/history locations; a mirror append is only allowed after the Agent verifies actual volume identity, allowed role, and product-owned destination, otherwise it must reject. The initial Apply action makes no gateway call for such a change; only the separate confirmation command applies the captured snapshot. Cancel or any edit to either draft invalidates the preview. User-Settings-only changes retain the ordinary Apply path. Gateway failures/exceptions remain errors and do not produce success status.
 
-## ?????????
+Added headless tests for preview-before-gateway, exact path/media/behavior display, snapshot invalidation, confirm, cancel, User-Settings-only apply, and failure after confirmation. Updated the mirrored source explanation.
 
-?????Domain??? UI shell?Requirements?`StorageChronicle.slnx` ?????????`StorageChronicle.slnx` ?? project entry ??????????????????????
+## Validation
 
-## ?????????
+Executed serially from `C:\Users\lyco2\.codex\worktrees` so SDK selection does not encounter this repository's pinned `10.0.302` (the host has `10.0.401`):
 
-- `dotnet restore src/StorageChronicle.Settings/StorageChronicle.Settings.csproj` ? ??
-- `dotnet restore src/StorageChronicle.UI.Settings/StorageChronicle.UI.Settings.csproj` ? ??
-- `dotnet restore tests/StorageChronicle.Settings.Tests/StorageChronicle.Settings.Tests.csproj` ? ??
-- `dotnet restore tests/StorageChronicle.UI.Settings.Tests/StorageChronicle.UI.Settings.Tests.csproj` ? ??
-- `dotnet build src/StorageChronicle.Settings/StorageChronicle.Settings.csproj --no-restore` ? ????? 0
-- `dotnet build src/StorageChronicle.UI.Settings/StorageChronicle.UI.Settings.csproj --no-restore` ? ????? 0
-- `dotnet build tests/StorageChronicle.Settings.Tests/StorageChronicle.Settings.Tests.csproj --no-restore` ? ????? 0
-- `dotnet build tests/StorageChronicle.UI.Settings.Tests/StorageChronicle.UI.Settings.Tests.csproj --no-restore` ? ????? 0
-- `dotnet test tests/StorageChronicle.Settings.Tests/StorageChronicle.Settings.Tests.csproj --no-restore` ? 13/13 ??
-- `dotnet test tests/StorageChronicle.UI.Settings.Tests/StorageChronicle.UI.Settings.Tests.csproj --no-restore` ? 4/4 ??
+- `dotnet test "C:\Users\lyco2\.codex\worktrees\settings-impact-review\Storage Chronicle\tests\StorageChronicle.UI.Settings.Tests\StorageChronicle.UI.Settings.Tests.csproj" --no-restore` — PASS, 9/9 (final run after preview-boundary and exception tests).
+- `dotnet test "C:\Users\lyco2\.codex\worktrees\settings-impact-review\Storage Chronicle\tests\StorageChronicle.Settings.Tests\StorageChronicle.Settings.Tests.csproj"` — PASS, 13/13.
+- `powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\lyco2\.codex\worktrees\settings-impact-review\Storage Chronicle\build\Test-Fast.ps1"` — PASS, exit 0. The solution runner reported the Domain test project, 2/2; it did not report broader project results in this checkout.
+- `git diff --check` — PASS (only Git's LF-to-CRLF advisory for edited files).
 
-## ??????
+The first fast-script attempt was blocked by the host PowerShell execution policy; rerunning with process-scoped `-ExecutionPolicy Bypass` succeeded. The SDK-specific invocation used the installed `10.0.401` because the repository pins unavailable SDK `10.0.302`; no repository SDK configuration was changed.
 
-`StorageChronicle.slnx` ??? 4 ??????????????? solution ?????/???/???????????
+## Limitations
 
-- `src/StorageChronicle.Settings/StorageChronicle.Settings.csproj`
-- `src/StorageChronicle.UI.Settings/StorageChronicle.UI.Settings.csproj`
-- `tests/StorageChronicle.Settings.Tests/StorageChronicle.Settings.Tests.csproj`
-- `tests/StorageChronicle.UI.Settings.Tests/StorageChronicle.UI.Settings.Tests.csproj`
-
-## ?????
-
-Agent ?? IPC transport ????? IPC ????????????? branch ?? `IAgentSettingsGateway` ????????????Linux ? XDG path provider ???? platform ??? `ISettingsPathProvider` ???????
+- This repository snapshot has no `Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md`; its exact product-settings policy section was read from the requirement-updated acceptance worktree. Requirement 09 and `AGENTS.md` were read from this feature worktree.
+- The current UI settings project is headless and exposes `ImpactPreview`, `ConfirmImpactAndApplyCommand`, and `CancelImpactPreviewCommand`; it has no concrete dialog view in this ownership path to visually render those properties. A shell binding must present `ImpactPreview` and bind explicit user controls to Confirm/Cancel before this is visually integrated.
+- No requirement, shared contract, Agent gateway, physical machine, privileged operation, or external-media write was changed or run.
