@@ -100,6 +100,8 @@ public sealed class VolumeAndMediaTests
             var childName = "storage-chronicle-fixture-" + Guid.NewGuid().ToString("N");
             using var chronicleDirectory = session.OpenOrCreateDirectory(fixtureHandle, childName);
             using var stream = session.CreateNewFile(chronicleDirectory, "pending.tmp");
+            Assert.False(stream.CanRead);
+            Assert.True(stream.CanWrite);
             stream.Write("fixture-bytes"u8);
             stream.Flush(flushToDisk: true);
             session.MoveFile(stream.SafeFileHandle, chronicleDirectory, "final.seg");

@@ -6,7 +6,7 @@ Implements the Windows volume-bound media filesystem contract. It pins and valid
 
 ## Public types and responsibilities
 
-`WindowsVolumeDirectorySession` opens the expected volume GUID root, verifies opened objects against that identity, rejects reparse redirection, performs component-wise handle-relative open/create and enumeration, creates files with `FILE_CREATE`, and publishes a session-issued create/recovery stream through handle-based `NtSetInformationFile`. Publication never replaces an existing destination. Existing product roots must have a valid ownership marker. The internal fixture entry point verifies the mount-point volume identity, then resolves each directory component relative to the pinned volume handle; it never opens the fixture target by its absolute path. Fixture/benchmark entry points are not public production API.
+`WindowsVolumeDirectorySession` opens the expected volume GUID root, verifies opened objects against that identity, rejects reparse redirection, performs component-wise handle-relative open/create and enumeration, creates files with `FILE_CREATE` and only the data-write/read-attributes/delete/synchronize rights required by the write-and-rename flow, and publishes a session-issued write-only create/recovery stream through handle-based `NtSetInformationFile`. Publication never replaces an existing destination. Existing product roots must have a valid ownership marker. The internal fixture entry point verifies the mount-point volume identity, then resolves each directory component relative to the pinned volume handle; it never opens the fixture target by its absolute path. Fixture/benchmark entry points are not public production API.
 
 ## Inputs and outputs
 
@@ -30,7 +30,7 @@ Unsupported OS, invalid volume identity, missing/invalid owner marker, wrong-vol
 
 ## Tests
 
-`tests/StorageChronicle.Platform.Windows.FileSystem.Tests/VolumeAndMediaTests.cs` covers marker bootstrap/validation, public confinement, handle-bound create and no-replace publication, enumeration, traversal rejection, arbitrary-stream refusal, and rejection of a reparse ancestor while opening an existing fixture (where symbolic-link creation is supported), using newly created local temp fixtures. ExternalMedia tests cover store-level ownership, corruption, cancellation, and recovery through an isolated adapter. These tests do not touch external or existing product media.
+`tests/StorageChronicle.Platform.Windows.FileSystem.Tests/VolumeAndMediaTests.cs` covers marker bootstrap/validation, public confinement, handle-bound create and no-replace publication, write-only stream capability, enumeration, traversal rejection, arbitrary-stream refusal, and rejection of a reparse ancestor while opening an existing fixture (where symbolic-link creation is supported), using newly created local temp fixtures. ExternalMedia tests cover store-level ownership, corruption, cancellation, and recovery through an isolated adapter. These tests do not touch external or existing product media.
 
 ## OS constraints
 

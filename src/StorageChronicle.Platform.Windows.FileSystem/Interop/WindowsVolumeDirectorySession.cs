@@ -18,8 +18,8 @@ public sealed class WindowsVolumeDirectorySession : IVolumeBoundMediaFileSystem
     private const uint FileReadAttributes = 0x0080;
     private const uint FileReadData = 0x0001;
     private const uint Delete = 0x00010000;
+    private const uint FileWriteData = 0x00000002;
     private const uint Synchronize = 0x00100000;
-    private const uint GenericWrite = 0x40000000;
     private const uint OpenExisting = 3;
     private const uint FileShareRead = 0x1;
     private const uint FileShareWrite = 0x2;
@@ -390,12 +390,14 @@ public sealed class WindowsVolumeDirectorySession : IVolumeBoundMediaFileSystem
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(createdOrRecoveryStream);
         EnsureOwnedMediaRoot();
-        if (createdOrRecoveryStream is not FileStream sourceStream || !sourceStream.CanRead)
-            throw new ArgumentException("The source must be an open file stream returned by this session.", nameof(createdOrRecoveryStream));
+        if (createdOrRecoveryStream is not FileStream sourceStream)
+            throw new ArgumentException("The source must be a file stream returned by this session.", nameof(createdOrRecoveryStream));
         lock (sync)
         {
             if (!movableStreams.Contains(createdOrRecoveryStream))
                 throw new ArgumentException("The source stream was not created or opened for recovery by this session.", nameof(createdOrRecoveryStream));
+            if (sourceStream.SafeFileHandle.IsClosed || sourceStream.SafeFileHandle.IsInvalid)
+                throw new ObjectDisposedException(nameof(createdOrRecoveryStream), "The session-issued source stream is no longer open.");
             if (sourceStream.CanWrite) sourceStream.Flush(flushToDisk: true);
             var source = sourceStream.SafeFileHandle;
             EnsureExpectedVolume(source, expectedVolumeGuidPath);
@@ -437,12 +439,12 @@ public sealed class WindowsVolumeDirectorySession : IVolumeBoundMediaFileSystem
         ArgumentNullException.ThrowIfNull(parent);
         ValidateComponent(name);
         EnsureExpectedVolume(parent, expectedVolumeGuidPath);
-        var handle = NtOpenRelative(parent, name, GenericWrite | FileReadAttributes | Delete | Synchronize,
+        var handle = NtOpenRelative(parent, name, FileWriteData | FileReadAttributes | Delete | Synchronize,
             FileShareRead | FileShareDelete, FileCreate, FileNonDirectoryFile | FileSynchronousIoNonAlert | FileOpenReparsePoint);
         try
         {
             EnsureExpectedVolume(handle, expectedVolumeGuidPath);
-            return new FileStream(handle, FileAccess.ReadWrite, 64 * 1024, isAsync: false);
+            return new FileStream(handle, FileAccess.Write, 64 * 1024, isAsync: false);
         }
         catch
         {
