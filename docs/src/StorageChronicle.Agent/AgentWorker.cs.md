@@ -1,6 +1,6 @@
 # AgentWorker.cs
 
-Adapts the multi-collector pipeline to the .NET hosted-service lifecycle. Before the first collection pass it rehydrates unresolved continuity prompts from canonical history, then forwards collector failures, source continuity, and bounded queue depth to health IPC, catches durable pipeline failures as quality state, retries recoverable stopped storage through `TryResumeAsync`, disposes event-driven Windows sources on shutdown, drains the process-lifecycle persistence queue, and only then stops durable storage. It has no UI and is intended for LocalSystem deployment with service recovery settings.
+Adapts the multi-collector pipeline to the .NET hosted-service lifecycle. Before the first collection pass it rehydrates unresolved continuity prompts from canonical history, then forwards collector failures, source continuity, and bounded queue depth to health IPC, catches durable pipeline failures as quality state, retries recoverable stopped storage through `TryResumeAsync` and then retries retained process-lifecycle facts, disposes event-driven Windows sources on shutdown, drains the process-lifecycle persistence queue, and only then stops durable storage. It has no UI and is intended for LocalSystem deployment with service recovery settings.
 
 ## Role
 

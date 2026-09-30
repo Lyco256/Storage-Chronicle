@@ -20,7 +20,7 @@ Depends on `IProcessLifecycleSink` and the domain `ProcessInstanceId` contract.
 
 ## Invariants
 
-Exit observations are never appended as Source or Canonical file events. Unknown or invalid identity/time is rejected rather than guessed. The in-memory cache clears on Agent restart; historical Replay obtains durable facts from the separate lifecycle index and segment records.
+Exit observations are never appended as Source or Canonical file events. Unknown or invalid identity/time is rejected rather than guessed. The in-memory cache clears on Agent restart; historical Replay obtains durable facts from the separate lifecycle index and segment records. Following a recoverable storage stop, `RetryPendingAsync` writes the retained facts in order with their original EventIds, then installs a fresh bounded callback queue.
 
 ## Threading and lifetime
 
@@ -28,11 +28,11 @@ Concurrent dictionary and queue permit collector writes and projection reads. Li
 
 ## Failure behavior
 
-Invalid identity or default timestamp throws `ArgumentException`. Concurrent updates preserve the earliest observed exit; missing keys return false. Queue saturation fails visibly to the collector. Asynchronous persistence failure stops the writer, reports the number of additional queued facts it could not attempt through `AgentHealthState`, and prevents later records from being accepted as durable; it does not silently claim those facts were persisted or retry them.
+Invalid identity or default timestamp throws `ArgumentException`. Concurrent updates preserve the earliest observed exit; missing keys return false. Queue saturation fails visibly to the collector. Asynchronous persistence failure retains the in-flight event and bounded queued tail, reports the retained count through `AgentHealthState`, and retains later observations in the same bounded retry queue. `RetryPendingAsync` retries after the storage engine has resumed; another failure leaves the queue intact and returns false. If the retry bound is reached, the newest observation fails visibly rather than being reported durable.
 
 ## Tests
 
-`tests/StorageChronicle.Agent.Tests/AgentProjectionServiceTests.cs` covers projection effects, restart Replay recovery, Replay range-start overlap, invalid observations, earliest duplicate handling, bounded eviction, persistence failure and unattempted-tail reporting, and graceful queue drain.
+`tests/StorageChronicle.Agent.Tests/AgentProjectionServiceTests.cs` covers projection effects, restart Replay recovery, Replay range-start overlap, invalid observations, earliest duplicate handling, bounded eviction, persistence failure and retained-tail reporting, cancellation and repeated failure during retry, capacity recovery followed by successful retry, continued writes after recovery, and graceful queue drain.
 
 ## OS constraints
 

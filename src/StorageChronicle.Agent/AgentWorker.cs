@@ -127,17 +127,18 @@ public sealed class AgentWorker : BackgroundService
                 }
 
                 if (stoppingToken.IsCancellationRequested) break;
+                if (storage.Status.State is RecordingState.Stopped or RecordingState.CapacityStopped)
+                {
+                    // Recover durable storage first, then retry exact lifecycle facts
+                    // retained by the bounded Agent queue using their original EventIds.
+                    if (await storage.TryResumeAsync(stoppingToken).ConfigureAwait(false) && processLifecycleState is not null)
+                        await processLifecycleState.RetryPendingAsync(stoppingToken).ConfigureAwait(false);
+                }
+
                 if (Interlocked.Exchange(ref restartRequested, 0) == 0)
                 {
                     // A finite collector is allowed to finish, but the service remains
                     // alive and gives the supervisor a chance to restart it on settings change.
-                    if (storage.Status.State is RecordingState.Stopped or RecordingState.CapacityStopped)
-                    {
-                        // TryResumeAsync rechecks capacity and recreates a running
-                        // recording boundary without deleting immutable history.
-                        await storage.TryResumeAsync(stoppingToken).ConfigureAwait(false);
-                    }
-
                     await Task.Delay(TimeSpan.FromMilliseconds(100), stoppingToken).ConfigureAwait(false);
                 }
             }
