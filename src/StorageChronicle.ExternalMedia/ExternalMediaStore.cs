@@ -86,11 +86,14 @@ public sealed class ExternalMediaStore
         !path.StartsWith("\\\\?\\Volume{", StringComparison.OrdinalIgnoreCase) &&
         !path.StartsWith("\\\\.\\Volume{", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>Appends canonical events to a temporary segment and atomically finalizes it.</summary>
+    /// <summary>Validates that every event matches the batch media identity, then atomically finalizes a segment.</summary>
     public async ValueTask<MediaSegment> AppendSegmentAsync(IReadOnlyList<CanonicalEvent> events, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(events);
         if (events.Count == 0) throw new ArgumentException("A media segment must contain at least one event.", nameof(events));
+        var mediaFilter = CreateBatchMediaFilter(events[0]);
+        if (events.Any(value => !MediaEventFilter.IsRelated(value, mediaFilter)))
+            throw new InvalidDataException("A media segment can contain only events related to its selected media identity.");
         EnsureOwnedWriterDirectory();
         var id = Guid.NewGuid().ToString("N");
         var temporary = Path.Combine(WriterDirectory, id + ".tmp");
@@ -126,6 +129,16 @@ public sealed class ExternalMediaStore
             if (temporaryCreated) TryDelete(temporary);
             throw;
         }
+    }
+
+    private static MediaOnlyFilter CreateBatchMediaFilter(CanonicalEvent first)
+    {
+        ArgumentNullException.ThrowIfNull(first);
+        first.Properties.TryGetValue("media.logicalMediaId", out var logicalMediaId);
+        var filter = new MediaOnlyFilter(first.VolumeId, logicalMediaId, first.MountSessionId);
+        if (!filter.IsSpecified || !MediaEventFilter.IsRelated(first, filter))
+            throw new InvalidDataException("A media segment requires a canonical event with a usable media identity.");
+        return filter;
     }
 
     /// <summary>Reads and verifies one finalized segment, including record CRC32C and segment SHA-256.</summary>

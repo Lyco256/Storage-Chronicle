@@ -73,7 +73,8 @@ public sealed class MediaHistoryImporter
 /// <summary>Persists media import deduplication hashes on the PC side.</summary>
 public sealed class MediaImportLedgerStore
 {
-    private sealed record LedgerDocument(string[] ManifestHashes, string[] SegmentHashes, string[] BranchHashes);
+    private const int CurrentSchemaVersion = 1;
+    private sealed record LedgerDocument(int SchemaVersion, string[] ManifestHashes, string[] SegmentHashes, string[] BranchHashes);
     private static readonly JsonSerializerOptions Options = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true, WriteIndented = false };
     private readonly string path;
 
@@ -84,26 +85,29 @@ public sealed class MediaImportLedgerStore
         this.path = Path.GetFullPath(path);
     }
 
-    /// <summary>Loads the ledger or returns an empty ledger when no ledger exists.</summary>
+    /// <summary>Loads a recognized ledger, recovers one unambiguous interrupted write, or returns empty when absent.</summary>
     public async ValueTask<MediaImportLedger> LoadAsync(CancellationToken cancellationToken = default)
     {
-        if (!File.Exists(path)) return MediaImportLedger.Empty;
+        var directory = Path.GetDirectoryName(path)!;
+        if (Directory.Exists(directory)) await ValidateLedgerLeavesAsync(directory, cancellationToken).ConfigureAwait(false);
+        var temporaryFiles = FindTemporaryFiles(directory);
+        if (File.Exists(path))
+        {
+            if (temporaryFiles.Length != 0) throw new InvalidDataException("The import ledger and an interrupted replacement both exist; neither was changed.");
+            return await ReadLedgerAsync(path, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (temporaryFiles.Length == 0) return MediaImportLedger.Empty;
+        if (temporaryFiles.Length != 1) throw new InvalidDataException("Multiple interrupted import-ledger writes were found; recovery is ambiguous.");
+        var recovered = await ReadLedgerAsync(temporaryFiles[0], cancellationToken).ConfigureAwait(false);
         try
         {
-            var document = JsonSerializer.Deserialize<LedgerDocument>(await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false), Options);
-            return document is null
-                ? MediaImportLedger.Empty
-                : new MediaImportLedger((document.ManifestHashes ?? Array.Empty<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase), (document.SegmentHashes ?? Array.Empty<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase), (document.BranchHashes ?? Array.Empty<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase));
+            File.Move(temporaryFiles[0], path, false);
+            return recovered;
         }
-        catch (JsonException)
+        catch (IOException exception)
         {
-            // A corrupt PC-side ledger must not stop media monitoring. Confirmed manifests and
-            // CRC/SHA validation remain authoritative; the next save atomically replaces the ledger.
-            return MediaImportLedger.Empty;
-        }
-        catch (IOException)
-        {
-            return MediaImportLedger.Empty;
+            throw new IOException("The interrupted import ledger could not be recovered without overwriting another file.", exception);
         }
     }
 
@@ -112,10 +116,116 @@ public sealed class MediaImportLedgerStore
     {
         ArgumentNullException.ThrowIfNull(ledger);
         var directory = Path.GetDirectoryName(path);
-        if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
-        var temporary = path + ".tmp";
-        var document = new LedgerDocument(ledger.ManifestHashes.Order(StringComparer.OrdinalIgnoreCase).ToArray(), ledger.SegmentHashes.Order(StringComparer.OrdinalIgnoreCase).ToArray(), ledger.BranchHashes.Order(StringComparer.OrdinalIgnoreCase).ToArray());
-        await File.WriteAllBytesAsync(temporary, JsonSerializer.SerializeToUtf8Bytes(document, Options), cancellationToken).ConfigureAwait(false);
-        File.Move(temporary, path, true);
+        if (string.IsNullOrWhiteSpace(directory)) throw new InvalidOperationException("The import ledger must have a parent directory.");
+        Directory.CreateDirectory(directory);
+        await ValidateLedgerLeavesAsync(directory, cancellationToken).ConfigureAwait(false);
+        var temporaryFiles = FindTemporaryFiles(directory);
+        if (temporaryFiles.Length != 0) throw new InvalidDataException("An interrupted import-ledger write must be recovered before saving; no file was changed.");
+        if (File.Exists(path)) _ = await ReadLedgerAsync(path, cancellationToken).ConfigureAwait(false);
+        ValidateLedger(ledger);
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var document = new LedgerDocument(CurrentSchemaVersion, ledger.ManifestHashes.Order(StringComparer.OrdinalIgnoreCase).ToArray(), ledger.SegmentHashes.Order(StringComparer.OrdinalIgnoreCase).ToArray(), ledger.BranchHashes.Order(StringComparer.OrdinalIgnoreCase).ToArray());
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(document, Options);
+        try
+        {
+            await using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough | FileOptions.Asynchronous))
+            {
+                await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            File.Move(temporary, path, true);
+        }
+        catch
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+            throw;
+        }
+    }
+
+    private string[] FindTemporaryFiles(string directory)
+    {
+        if (!Directory.Exists(directory)) return Array.Empty<string>();
+        var prefix = Path.GetFileName(path) + ".";
+        return Directory.EnumerateFiles(directory, Path.GetFileName(path) + ".*.tmp", SearchOption.TopDirectoryOnly)
+            .Where(candidate => Path.GetFileName(candidate).StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+    }
+
+    private static async ValueTask ValidateLedgerLeavesAsync(string directory, CancellationToken cancellationToken)
+    {
+        foreach (var candidate in Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _ = await ReadLedgerAsync(candidate, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static async ValueTask<MediaImportLedger> ReadLedgerAsync(string filePath, CancellationToken cancellationToken)
+    {
+        if ((File.GetAttributes(filePath) & FileAttributes.ReparsePoint) != 0) throw new InvalidDataException("A reparse-point import ledger is not accepted.");
+        JsonDocument document;
+        try { document = JsonDocument.Parse(await File.ReadAllBytesAsync(filePath, cancellationToken).ConfigureAwait(false)); }
+        catch (JsonException exception) { throw new InvalidDataException("The import ledger contains malformed JSON.", exception); }
+        using (document)
+        {
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) throw new InvalidDataException("The import ledger root must be an object.");
+            var fields = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            foreach (var property in root.EnumerateObject())
+            {
+                if (!fields.TryAdd(property.Name, property.Value)) throw new InvalidDataException("The import ledger contains duplicate fields.");
+            }
+
+            var allowed = new HashSet<string>(["schemaVersion", "manifestHashes", "segmentHashes", "branchHashes"], StringComparer.Ordinal);
+            if (fields.Keys.Any(field => !allowed.Contains(field)) ||
+                !fields.TryGetValue("manifestHashes", out var manifestField) ||
+                !fields.TryGetValue("segmentHashes", out var segmentField) ||
+                !fields.TryGetValue("branchHashes", out var branchField))
+                throw new InvalidDataException("The import ledger has an unrecognized schema or missing required fields.");
+            if (fields.TryGetValue("schemaVersion", out var versionField) && (!versionField.TryGetInt32(out var version) || version != CurrentSchemaVersion))
+                throw new InvalidDataException("The import ledger schema version is unsupported.");
+
+            var ledger = new MediaImportLedger(ParseArray(manifestField, requireSha256: true), ParseArray(segmentField, requireSha256: true), ParseArray(branchField, requireSha256: false));
+            ValidateLedger(ledger);
+            return ledger;
+        }
+    }
+
+    private static IReadOnlySet<string> ParseArray(JsonElement value, bool requireSha256)
+    {
+        if (value.ValueKind != JsonValueKind.Array) throw new InvalidDataException("An import ledger field is not an array.");
+        var values = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var element in value.EnumerateArray())
+        {
+            if (element.ValueKind != JsonValueKind.String) throw new InvalidDataException("An import ledger array contains a non-string value.");
+            var item = element.GetString();
+            if (string.IsNullOrWhiteSpace(item) || item.Length > 128 || item.Any(char.IsControl) ||
+                (requireSha256 && (item.Length != 64 || !item.All(Uri.IsHexDigit))))
+                throw new InvalidDataException("An import ledger contains a malformed identity value.");
+            values.Add(item);
+        }
+
+        return values;
+    }
+
+    private static void ValidateLedger(MediaImportLedger ledger)
+    {
+        ValidateHashes(ledger.ManifestHashes);
+        ValidateHashes(ledger.SegmentHashes);
+        foreach (var branch in ledger.BranchHashes)
+        {
+            if (string.IsNullOrWhiteSpace(branch) || branch.Length > 128 || branch.Any(char.IsControl))
+                throw new InvalidDataException("The import ledger contains a malformed branch identity.");
+        }
+    }
+
+    private static void ValidateHashes(IEnumerable<string> hashes)
+    {
+        foreach (var hash in hashes)
+        {
+            if (string.IsNullOrWhiteSpace(hash) || hash.Length != 64 || !hash.All(Uri.IsHexDigit))
+                throw new InvalidDataException("The import ledger contains a malformed SHA-256 identity.");
+        }
     }
 }

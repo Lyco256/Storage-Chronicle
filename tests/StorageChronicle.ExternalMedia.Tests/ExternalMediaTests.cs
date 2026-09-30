@@ -86,7 +86,7 @@ public sealed class ExternalMediaTests
     }
 
     [Fact]
-    public async Task CorruptImportLedgerRecoversAsEmptyAndCanBeReplaced()
+    public async Task CorruptImportLedgerFailsClosedAndSavePreservesOriginalBytes()
     {
         var root = TestRoot();
         var ledgerPath = Path.Combine(root, "ledger", "ledger.json");
@@ -95,9 +95,111 @@ public sealed class ExternalMediaTests
             Directory.CreateDirectory(Path.GetDirectoryName(ledgerPath)!);
             await WriteFixtureBytesAsync(root, ledgerPath, [0xFF, 0x00, 0x01], TestContext.Current.CancellationToken);
             var store = new MediaImportLedgerStore(ledgerPath);
-            Assert.Equal(MediaImportLedger.Empty.ManifestHashes, (await store.LoadAsync(TestContext.Current.CancellationToken)).ManifestHashes);
-            await store.SaveAsync(MediaImportLedger.Empty, TestContext.Current.CancellationToken);
-            Assert.NotEqual(new byte[] { 0xFF, 0x00, 0x01 }, await File.ReadAllBytesAsync(ledgerPath, TestContext.Current.CancellationToken));
+            var original = await File.ReadAllBytesAsync(ledgerPath, TestContext.Current.CancellationToken);
+
+            await Assert.ThrowsAsync<InvalidDataException>(async () => await store.LoadAsync(TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<InvalidDataException>(async () => await store.SaveAsync(MediaImportLedger.Empty, TestContext.Current.CancellationToken));
+
+            Assert.Equal(original, await File.ReadAllBytesAsync(ledgerPath, TestContext.Current.CancellationToken));
+            Assert.Empty(Directory.EnumerateFiles(Path.GetDirectoryName(ledgerPath)!, "*.tmp"));
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Fact]
+    public async Task ImportLedgerRejectsMissingArraysUnknownFieldsUnsupportedSchemaAndMalformedLeaves()
+    {
+        var invalidLedgers = new[]
+        {
+            "{\"manifestHashes\":[]}",
+            "{\"schemaVersion\":99,\"manifestHashes\":[],\"segmentHashes\":[],\"branchHashes\":[]}",
+            "{\"manifestHashes\":[],\"segmentHashes\":[],\"branchHashes\":[],\"unexpected\":true}",
+            "{\"manifestHashes\":[],\"manifestHashes\":[],\"segmentHashes\":[],\"branchHashes\":[]}",
+            "{\"schemaVersion\":1,\"manifestHashes\":null,\"segmentHashes\":[],\"branchHashes\":[]}",
+            "not-json"
+        };
+
+        foreach (var invalid in invalidLedgers)
+        {
+            var root = TestRoot();
+            var ledgerPath = Path.Combine(root, "ledger", "ledger.json");
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(ledgerPath)!);
+                await WriteFixtureTextAsync(root, ledgerPath, invalid, TestContext.Current.CancellationToken);
+                var before = await File.ReadAllBytesAsync(ledgerPath, TestContext.Current.CancellationToken);
+                var store = new MediaImportLedgerStore(ledgerPath);
+
+                await Assert.ThrowsAsync<InvalidDataException>(async () => await store.LoadAsync(TestContext.Current.CancellationToken));
+                await Assert.ThrowsAsync<InvalidDataException>(async () => await store.SaveAsync(MediaImportLedger.Empty, TestContext.Current.CancellationToken));
+
+                Assert.Equal(before, await File.ReadAllBytesAsync(ledgerPath, TestContext.Current.CancellationToken));
+            }
+            finally { DeleteRoot(root); }
+        }
+    }
+
+    [Fact]
+    public async Task ImportLedgerRecoversOneValidInterruptedWriteWithoutOverwriting()
+    {
+        var root = TestRoot();
+        var ledgerPath = Path.Combine(root, "ledger", "ledger.json");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(ledgerPath)!);
+            var manifestHash = new string('a', 64);
+            var temporary = ledgerPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            await WriteFixtureTextAsync(root, temporary, "{\"schemaVersion\":1,\"manifestHashes\":[\"" + manifestHash + "\"],\"segmentHashes\":[],\"branchHashes\":[\"linear\"]}", TestContext.Current.CancellationToken);
+
+            var recovered = await new MediaImportLedgerStore(ledgerPath).LoadAsync(TestContext.Current.CancellationToken);
+
+            Assert.Contains(manifestHash, recovered.ManifestHashes);
+            Assert.Contains("linear", recovered.BranchHashes);
+            Assert.True(File.Exists(ledgerPath));
+            Assert.False(File.Exists(temporary));
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Fact]
+    public async Task ImportLedgerRecoveryCollisionPreservesDestinationAndTemporaryBytes()
+    {
+        var root = TestRoot();
+        var ledgerPath = Path.Combine(root, "ledger", "ledger.json");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(ledgerPath)!);
+            const string validLedger = "{\"schemaVersion\":1,\"manifestHashes\":[],\"segmentHashes\":[],\"branchHashes\":[]}";
+            var temporary = ledgerPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            await WriteFixtureTextAsync(root, ledgerPath, validLedger, TestContext.Current.CancellationToken);
+            await WriteFixtureTextAsync(root, temporary, validLedger, TestContext.Current.CancellationToken);
+            var destinationBefore = await File.ReadAllBytesAsync(ledgerPath, TestContext.Current.CancellationToken);
+            var temporaryBefore = await File.ReadAllBytesAsync(temporary, TestContext.Current.CancellationToken);
+
+            await Assert.ThrowsAsync<InvalidDataException>(async () => await new MediaImportLedgerStore(ledgerPath).LoadAsync(TestContext.Current.CancellationToken));
+
+            Assert.Equal(destinationBefore, await File.ReadAllBytesAsync(ledgerPath, TestContext.Current.CancellationToken));
+            Assert.Equal(temporaryBefore, await File.ReadAllBytesAsync(temporary, TestContext.Current.CancellationToken));
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Fact]
+    public async Task UnrecognizedLedgerDirectoryLeafBlocksSaveAndRemainsUntouched()
+    {
+        var root = TestRoot();
+        var ledgerPath = Path.Combine(root, "ledger", "aabb.json");
+        var unknownPath = Path.Combine(root, "ledger", "notes.json");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(ledgerPath)!);
+            const string unknownContents = "{\"notALedger\":true}";
+            await WriteFixtureTextAsync(root, unknownPath, unknownContents, TestContext.Current.CancellationToken);
+
+            await Assert.ThrowsAsync<InvalidDataException>(async () => await new MediaImportLedgerStore(ledgerPath).SaveAsync(MediaImportLedger.Empty, TestContext.Current.CancellationToken));
+
+            Assert.False(File.Exists(ledgerPath));
+            Assert.Equal(unknownContents, await File.ReadAllTextAsync(unknownPath, TestContext.Current.CancellationToken));
         }
         finally { DeleteRoot(root); }
     }
@@ -309,6 +411,28 @@ public sealed class ExternalMediaTests
         Assert.Single(MediaEventFilter.Apply([logical, system], filter));
         Assert.True(MediaEventFilter.IsRelated(logical, filter));
         Assert.False(MediaEventFilter.IsRelated(system, filter));
+    }
+
+    [Fact]
+    public async Task AppendBoundaryRejectsUnrelatedSystemEventAndPersistsOnlyValidMediaEvents()
+    {
+        var root = TestRoot();
+        try
+        {
+            var store = new ExternalMediaStore(root, "pc-a");
+            var media = TestEvent("media-1", "volume-media", "mount-media");
+            var system = TestEvent("system", "volume-system", "mount-system");
+
+            await Assert.ThrowsAsync<InvalidDataException>(async () => await store.AppendSegmentAsync([media, system], TestContext.Current.CancellationToken));
+            Assert.Empty(Directory.EnumerateFiles(store.WriterDirectory, "*.seg"));
+            Assert.Empty(Directory.EnumerateFiles(store.WriterDirectory, "*.tmp"));
+
+            var segment = await store.AppendSegmentAsync([media], TestContext.Current.CancellationToken);
+
+            Assert.Equal(1, segment.RecordCount);
+            Assert.Equal(media.EventId, Assert.Single(await store.ReadSegmentAsync(segment, TestContext.Current.CancellationToken)).EventId);
+        }
+        finally { DeleteRoot(root); }
     }
 
     [Fact]

@@ -39,3 +39,51 @@ The tests cover PC-A to PC-B handoff, same-event/segment deduplication, branch a
 ## Known limitations
 
 Simultaneous independent writers are outside the supported write protocol: they are detected and surfaced as `ConcurrentWritersDetected`; valid histories remain importable and are treated as branches when they share a parent. Recovery does not fabricate missing events: non-USN or interrupted continuity remains reconciliation/unverified quality. Existing `.StorageChronicle` roots without the new ownership marker are intentionally read-only and require an explicit, separately designed user-approved migration before mirroring can resume there. Mirror reads and writes require the configured root to resolve beneath an authoritative mount point of the currently enumerated media volume; missing or mismatched mount identity fails closed. Full solution validation and final integration into `devenv`/`main` remain the top agent's responsibility.
+
+## Bounded Requirement 18 hardening follow-up
+
+### Changes
+
+- Enforced the existing `MediaEventFilter` at `ExternalMediaStore.AppendSegmentAsync` before creating a segment file. The first event establishes the batch's volume, mount-session, and optional logical-media identity; every event must match. A mixed batch containing a foreign/system-volume event fails with `InvalidDataException` and leaves no `.tmp`/`.seg` output. A valid media-only batch still appends and reads back.
+- Made import-ledger parsing strict and fail-closed. Required manifest/segment/branch arrays must exist with the expected types; unknown/duplicate fields, unsupported schema versions, invalid JSON, malformed hashes, and invalid branch identities are rejected. Legacy ledgers without `schemaVersion` remain readable if all three recognized fields are valid.
+- Before saves, validate every `.json` ledger leaf in the dedicated directory and validate any existing destination before replacement. Corrupt/unrecognized content is not converted to an empty ledger and is never overwritten.
+- Saves now use unique temporary names. Loading can recover exactly one valid interrupted temporary write only when the destination is absent. Ambiguous, malformed, or colliding recovery state is preserved and rejected.
+- Added contract tests for valid and mixed-media appends, missing arrays, unsupported versions, unknown fields and sibling leaves, malformed JSON, valid temporary recovery, and preservation/no-overwrite behavior.
+- Updated both source mirrors. No requirements, shared contracts, Agent callers, or files outside the assigned ownership paths were changed.
+
+### Validation
+
+The checkout pins .NET SDK `10.0.302`, which is not installed on this machine; available SDKs were `9.0.203` and `10.0.401`. Validation therefore used a temporary directory outside the repository containing a `global.json` selecting SDK `10.0.401` and the `Microsoft.Testing.Platform` runner, leaving the repository's SDK configuration unchanged.
+
+```text
+dotnet test <worktree>\tests\StorageChronicle.ExternalMedia.Tests\StorageChronicle.ExternalMedia.Tests.csproj --verbosity minimal
+```
+
+Result: 25 passed, 0 failed, 0 skipped.
+
+```text
+dotnet build <worktree>\tests\StorageChronicle.ExternalMedia.Tests\StorageChronicle.ExternalMedia.Tests.csproj --no-restore --verbosity minimal
+```
+
+Result: build succeeded, 0 warnings, 0 errors.
+
+```text
+<worktree>\build\Test-Fast.ps1
+```
+
+Invoked from the temporary SDK/MTP validation directory. Result: all 184 fast-suite tests passed, 0 failed, 0 skipped.
+
+```text
+dotnet build <worktree>\tools\StorageChronicle.DocMirrorValidator\StorageChronicle.DocMirrorValidator.csproj --verbosity minimal
+<worktree>\tools\StorageChronicle.DocMirrorValidator\bin\Debug\net10.0\StorageChronicle.DocMirrorValidator.exe <worktree>
+```
+
+Result: validator build succeeded with 0 warnings/errors; `Doc mirror validation passed`. The final fast-suite rerun after the last code/test edits passed 185 tests (0 failed, 0 skipped); this is the authoritative final fast-suite total.
+
+The repository-local `dotnet test` invocation under SDK 10.0.401 without MTP runner selection and `build/Test-Fast.ps1` from that default context fail because MTP 2.3 no longer supports the VSTest target with .NET 10; this is an environment/runner-selection limitation, not a test failure. With MTP selected in the temporary context, both the focused project and required fast validation pass.
+
+No product process, installer, physical drive, privileged runner, or hardware workload was run. Test fixtures were temporary, run-owned paths used by the external-media unit tests.
+
+### Commit
+
+Pending commit in this handoff snapshot; record the resulting commit ID after the assigned worktree is committed.
