@@ -13,10 +13,11 @@ internal static class WindowsSourceEventFactory
         return new SourceEvent(EventId.New(), EventSchemaVersion.Current, EventOrigin.InitialSnapshot, volume.Id, entry.FileId, entry.ParentFileId, entry.Name, null, entry.Kind == FileKind.Directory ? CanonicalOperation.DirectoryCreate : CanonicalOperation.Create, metadata, new EventTime(now, TimeSpan.Zero, null, now, new SourceSequence(sequence), new MountSequence(sequence)), entry.Quality, null, ProcessAttributionQuality.Unknown, null, null, ImmutableDictionary<string, string>.Empty);
     }
 
-    public static SourceEvent Gap(VolumeId volumeId, string reason, long sequence)
+    public static SourceEvent Gap(VolumeId volumeId, string reason, long sequence, string? fileSystem = null)
     {
         var now = DateTimeOffset.UtcNow;
         var properties = ImmutableDictionary<string, string>.Empty.Add("reason", reason);
+        if (!string.IsNullOrWhiteSpace(fileSystem)) properties = properties.Add("fileSystem", fileSystem);
         return new SourceEvent(EventId.New(), EventSchemaVersion.Current, EventOrigin.InitialSnapshot, volumeId, null, null, null, null, CanonicalOperation.UnverifiedGap, null, new EventTime(now, TimeSpan.Zero, null, now, new SourceSequence(sequence), new MountSequence(sequence)), EventQuality.UnverifiedGap, null, ProcessAttributionQuality.Unknown, null, null, properties);
     }
 }

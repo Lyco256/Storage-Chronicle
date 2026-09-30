@@ -114,21 +114,90 @@ public enum EventQuality
 }
 
 /// <summary>Describes process attribution confidence.</summary>
-public enum ProcessAttributionQuality { Exact, Correlated, Unknown }
+public enum ProcessAttributionQuality
+{
+    /// <summary>The process identity is exact.</summary>
+    Exact,
+    /// <summary>The process identity is correlated from bounded metadata.</summary>
+    Correlated,
+    /// <summary>The process identity is unavailable.</summary>
+    Unknown
+}
 
 /// <summary>Describes the operation represented by a canonical event.</summary>
 public enum CanonicalOperation
 {
-    Create, DirectoryCreate, DataWrite, Extend, Truncate, MetadataChanged, SecurityMetadataChanged,
-    Rename, Move, Delete, Recycle, Restore, ShareChanged, CloudStateChanged,
-    ReconciliationDiscovered, UnverifiedGap, RecordingStopped, SettingsChanged, MountSession
+    /// <summary>Creates a file.</summary>
+    Create,
+    /// <summary>Creates a directory.</summary>
+    DirectoryCreate,
+    /// <summary>Writes file data.</summary>
+    DataWrite,
+    /// <summary>Extends file data.</summary>
+    Extend,
+    /// <summary>Truncates file data.</summary>
+    Truncate,
+    /// <summary>Changes non-security metadata.</summary>
+    MetadataChanged,
+    /// <summary>Changes security metadata.</summary>
+    SecurityMetadataChanged,
+    /// <summary>Renames an object.</summary>
+    Rename,
+    /// <summary>Moves an object.</summary>
+    Move,
+    /// <summary>Deletes an object.</summary>
+    Delete,
+    /// <summary>Moves an object to the recycle bin.</summary>
+    Recycle,
+    /// <summary>Restores an object.</summary>
+    Restore,
+    /// <summary>Changes share metadata.</summary>
+    ShareChanged,
+    /// <summary>Changes cloud-state metadata.</summary>
+    CloudStateChanged,
+    /// <summary>Discovers a reconciliation condition.</summary>
+    ReconciliationDiscovered,
+    /// <summary>Records an unverified continuity gap.</summary>
+    UnverifiedGap,
+    /// <summary>Records that recording stopped.</summary>
+    RecordingStopped,
+    /// <summary>Records a settings change.</summary>
+    SettingsChanged,
+    /// <summary>Records a mount-session event.</summary>
+    MountSession
 }
 
 /// <summary>Describes the type of file-system object.</summary>
-public enum FileKind { File, Directory, SymbolicLink, Junction, ReparsePoint, Unknown }
+public enum FileKind
+{
+    /// <summary>Regular file.</summary>
+    File,
+    /// <summary>Directory.</summary>
+    Directory,
+    /// <summary>Symbolic link.</summary>
+    SymbolicLink,
+    /// <summary>Junction.</summary>
+    Junction,
+    /// <summary>Other reparse point.</summary>
+    ReparsePoint,
+    /// <summary>Unknown object kind.</summary>
+    Unknown
+}
 
 /// <summary>Describes monitoring continuity for a volume or mount.</summary>
-public enum MonitoringContinuity { Continuous, JournalRecovered, MirroredFromAnotherPc, ReconciledState, UnverifiedGap }
+public enum MonitoringContinuity
+{
+    /// <summary>Events were observed continuously.</summary>
+    Continuous,
+    /// <summary>Continuity was recovered from a journal.</summary>
+    JournalRecovered,
+    /// <summary>Continuity was supplied by another PC's mirror.</summary>
+    MirroredFromAnotherPc,
+    /// <summary>Continuity was reconstructed from state.</summary>
+    ReconciledState,
+    /// <summary>Continuity remains unverified.</summary>
+    UnverifiedGap
+}
 
 /// <summary>Records all clocks and source ordering values without correcting the machine clock.</summary>
 public sealed record EventTime(
@@ -216,4 +285,26 @@ public sealed record ReconciliationGap(VolumeId VolumeId, DateTimeOffset Started
 public sealed record MountSession(MountSessionId Id, VolumeId VolumeId, string PcId, DateTimeOffset ConnectedUtc, DateTimeOffset? DisconnectedUtc, MountSessionId? PreviousSession, MonitoringContinuity Continuity, ImmutableArray<string> SegmentReferences);
 
 /// <summary>Describes the semantic operation icon selected by the UI.</summary>
-public enum OperationIconMeaning { Created, Edited, Moved, Renamed, Deleted, Recycled, Restored, Shared, Reconciled, Unknown }
+public enum OperationIconMeaning
+{
+    /// <summary>Created operation.</summary>
+    Created,
+    /// <summary>Edited operation.</summary>
+    Edited,
+    /// <summary>Moved operation.</summary>
+    Moved,
+    /// <summary>Renamed operation.</summary>
+    Renamed,
+    /// <summary>Deleted operation.</summary>
+    Deleted,
+    /// <summary>Recycled operation.</summary>
+    Recycled,
+    /// <summary>Restored operation.</summary>
+    Restored,
+    /// <summary>Shared operation.</summary>
+    Shared,
+    /// <summary>Reconciled operation.</summary>
+    Reconciled,
+    /// <summary>Unknown operation.</summary>
+    Unknown
+}

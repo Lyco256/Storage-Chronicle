@@ -44,4 +44,83 @@ public sealed class AgentHealthStateTests
 
         Assert.Equal(MonitoringContinuity.ReconciledState, Assert.Single(state.Snapshot(new RecordingStatus(RecordingState.Running, 1, 1, null)).Volumes).Continuity);
     }
+
+    [Fact]
+    public void PipelineFailureIsExposedAsQualityStateWithoutChangingRecordingStatus()
+    {
+        var state = new AgentHealthState();
+
+        state.RecordPipelineFailure(new IOException("SQLite is temporarily locked."));
+
+        var snapshot = state.Snapshot(new RecordingStatus(RecordingState.Running, 3, 3, null));
+        Assert.Equal("Running", snapshot.State);
+        Assert.Contains("Pipeline:", snapshot.Reason, StringComparison.Ordinal);
+        Assert.Contains("temporarily locked", snapshot.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RestartRehydratesAnUnresolvedGapFromCanonicalHistory()
+    {
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.AgentHealth", out var runId);
+        var root = Path.Combine(fixtureRoot, "history");
+        try
+        {
+            var volume = VolumeId.Create("\\\\?\\Volume{health-history}\\");
+            var now = DateTimeOffset.UtcNow;
+            var source = new SourceEvent(EventId.New(), EventSchemaVersion.Current, EventOrigin.LiveUsn, volume, null, null, null, null,
+                CanonicalOperation.UnverifiedGap, null,
+                new EventTime(now, now.Offset, null, now, new SourceSequence(11), new MountSequence(11)),
+                EventQuality.UnverifiedGap, null, ProcessAttributionQuality.Unknown, null, null,
+                ImmutableDictionary<string, string>.Empty.Add("reconciliationReason", "journal gap"));
+            var canonical = new StorageChronicle.Normalization.EventNormalizer().Normalize(source)!;
+            await using (var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(root) { FlushInterval = TimeSpan.FromMinutes(1) }))
+            {
+                await storage.AppendCanonicalAsync(canonical);
+                await storage.ApplyAsync(canonical);
+                var state = new AgentHealthState();
+
+                await state.RestoreFromHistoryAsync(storage);
+
+                var request = Assert.Single(state.Snapshot(new RecordingStatus(RecordingState.Running, 1, 11, null)).PendingReconciliations!);
+                Assert.Equal(volume, request.VolumeId);
+                Assert.Equal("journal gap", request.Reason);
+            }
+        }
+        finally
+        {
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.AgentHealth", runId);
+        }
+    }
+
+    [Fact]
+    public async Task RestartDoesNotRecreateAUserDeclinedGap()
+    {
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.AgentHealth", out var runId);
+        var root = Path.Combine(fixtureRoot, "history");
+        try
+        {
+            var volume = VolumeId.Create("\\\\?\\Volume{health-declined}\\");
+            var now = DateTimeOffset.UtcNow;
+            var source = new SourceEvent(EventId.New(), EventSchemaVersion.Current, EventOrigin.DirectoryReconciliation, volume, null, null, null, null,
+                CanonicalOperation.UnverifiedGap, null,
+                new EventTime(now, now.Offset, null, now, new SourceSequence(12), new MountSequence(12)),
+                EventQuality.UnverifiedGap, null, ProcessAttributionQuality.Unknown, null, null,
+                ImmutableDictionary<string, string>.Empty.Add("reconciliationReason", "declined").Add("userDeclined", "true"));
+            var canonical = new StorageChronicle.Normalization.EventNormalizer().Normalize(source)!;
+            await using (var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(root) { FlushInterval = TimeSpan.FromMinutes(1) }))
+            {
+                await storage.AppendCanonicalAsync(canonical);
+                await storage.ApplyAsync(canonical);
+                var state = new AgentHealthState();
+
+                await state.RestoreFromHistoryAsync(storage);
+
+                Assert.Empty(state.Snapshot(new RecordingStatus(RecordingState.Running, 1, 12, null)).PendingReconciliations!);
+            }
+        }
+        finally
+        {
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.AgentHealth", runId);
+        }
+    }
 }

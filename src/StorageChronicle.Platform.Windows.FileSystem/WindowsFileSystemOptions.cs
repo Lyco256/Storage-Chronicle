@@ -92,11 +92,13 @@ public enum ExternalMediaChangeKind
     /// <summary>A device interface arrived.</summary>
     Connected,
     /// <summary>A device interface was removed.</summary>
-    Disconnected
+    Disconnected,
+    /// <summary>A bounded notification queue overflowed and continuity must be reconciled.</summary>
+    ContinuityGap
 }
 
 /// <summary>Describes an external-media connection change.</summary>
-public sealed record ExternalMediaChange(ExternalMediaChangeKind Kind, DateTimeOffset OccurredUtc, string? DevicePath);
+public sealed record ExternalMediaChange(ExternalMediaChangeKind Kind, DateTimeOffset OccurredUtc, string? DevicePath, string? GapReason = null);
 
 /// <summary>Describes the result of a directory reconciliation requested by the user.</summary>
 public sealed record DirectoryReconciliationResult(

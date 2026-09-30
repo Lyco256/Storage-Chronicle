@@ -17,21 +17,29 @@ public sealed class WindowsDirectoryChangeMonitor
     private readonly IWindowsFileMetadataNative fileNative;
     private readonly IWindowsDirectoryChangeNative changeNative;
     private readonly int bufferSize;
+    private readonly int readQueueCapacity;
 
     /// <summary>Initializes a ReadDirectoryChangesW monitor.</summary>
-    public WindowsDirectoryChangeMonitor(VolumeId volumeId, string directoryPath, IWindowsFileMetadataNative fileNative, IWindowsDirectoryChangeNative changeNative, int bufferSize = 64 * 1024)
+    public WindowsDirectoryChangeMonitor(VolumeId volumeId, string directoryPath, IWindowsFileMetadataNative fileNative, IWindowsDirectoryChangeNative changeNative, int bufferSize = 64 * 1024, int readQueueCapacity = 16)
     {
         this.volumeId = volumeId;
         this.directoryPath = directoryPath;
         this.fileNative = fileNative;
         this.changeNative = changeNative;
-        this.bufferSize = bufferSize;
+        this.bufferSize = bufferSize > 0 ? bufferSize : throw new ArgumentOutOfRangeException(nameof(bufferSize));
+        this.readQueueCapacity = readQueueCapacity > 0 ? readQueueCapacity : throw new ArgumentOutOfRangeException(nameof(readQueueCapacity));
     }
 
     /// <summary>Reads notifications until cancellation, handle loss, or a continuity gap.</summary>
     public async IAsyncEnumerable<DirectoryChangeRead> ReadChangesAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var channel = System.Threading.Channels.Channel.CreateUnbounded<DirectoryChangeRead>(new System.Threading.Channels.UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
+        var channel = System.Threading.Channels.Channel.CreateBounded<DirectoryChangeRead>(new System.Threading.Channels.BoundedChannelOptions(readQueueCapacity)
+        {
+            FullMode = System.Threading.Channels.BoundedChannelFullMode.Wait,
+            SingleReader = true,
+            SingleWriter = true,
+            AllowSynchronousContinuations = false
+        });
         var producer = ProduceChangesAsync(channel.Writer, cancellationToken);
         await foreach (var read in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
         {

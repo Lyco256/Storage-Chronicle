@@ -7,6 +7,9 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="StorageChronicle.Platform.Windows.FileSystem.Tests" />
+    <InternalsVisibleTo Include="StorageChronicle.Benchmarks" />
     <ProjectReference Include="..\StorageChronicle.Platform.Abstractions\StorageChronicle.Platform.Abstractions.csproj" />
+    <PackageReference Include="System.Management" />
   </ItemGroup>
 </Project>

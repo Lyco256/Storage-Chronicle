@@ -1,12 +1,19 @@
 <Project>
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
-    <LangVersion>preview</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsTestLikeProject Condition="$([System.String]::Copy('$(MSBuildProjectName)').EndsWith('.Tests'))">true</IsTestLikeProject>
+    <GenerateDocumentationFile Condition="'$(IsTestLikeProject)' != 'true'">true</GenerateDocumentationFile>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <Deterministic>true</Deterministic>
     <DebugType>portable</DebugType>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(StorageChronicleAotCompatibility)' == 'true' and ('$(MSBuildProjectName)' == 'StorageChronicle.Agent' or '$(MSBuildProjectName)' == 'StorageChronicle.SessionAgent')">
+    <PublishAot>true</PublishAot>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
 </Project>

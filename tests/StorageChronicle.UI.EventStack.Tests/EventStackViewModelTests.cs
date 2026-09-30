@@ -4,7 +4,9 @@ using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using StorageChronicle.Domain.Contracts;
+using StorageChronicle.Settings;
 using StorageChronicle.UI.EventStack;
+using StorageChronicle.UI.Shared;
 using Xunit;
 
 [assembly: AvaloniaTestApplication(typeof(StorageChronicle.UI.EventStack.Tests.EventStackTestApp))]
@@ -46,6 +48,31 @@ public sealed class EventStackViewModelTests
         Assert.True(view.Rows[0].IsExpanded);
         Assert.Single(view.Rows[0].Children);
         Assert.Equal(25, source.Queries[^1].PageSize);
+    }
+
+    [Fact]
+    public async Task GroupFileNormalizedAndSourceChildrenExpandIndependently()
+    {
+        var source = new FakeProjection { HasChildren = true, HasNestedChildren = true };
+        var view = new EventStackViewModel(source);
+        await view.LoadPageAsync(1, 25);
+
+        var group = view.Rows[0];
+        Assert.True(group.HasChildren);
+        view.ToggleExpansion(group);
+        var file = group.Children[0];
+        Assert.True(file.HasChildren);
+        Assert.False(file.IsExpanded);
+
+        file.ToggleExpansionCommand.Execute(null);
+        var normalized = file.Children[0];
+        Assert.True(file.IsExpanded);
+        Assert.True(normalized.HasChildren);
+        Assert.False(normalized.IsExpanded);
+
+        normalized.ToggleExpansionCommand.Execute(null);
+        Assert.True(normalized.IsExpanded);
+        Assert.Single(normalized.Children);
     }
 
     [Fact]
@@ -97,6 +124,66 @@ public sealed class EventStackViewModelTests
     }
 
     [Fact]
+    public async Task PageSizeAndNamedFiltersRoundTripThroughUserSettingsClient()
+    {
+        var source = new FakeProjection();
+        var settings = new FakeUserSettingsClient(new UserSettings
+        {
+            EventStackPageSize = 876,
+            EventStackSort = EventStackSortOrder.OldestFirst,
+            InitialEventStackMode = EventStackInitialMode.Normalized,
+            PaneTimeoutSeconds = 9,
+            SavedFilters = ["legacy search"]
+        });
+        var view = new EventStackViewModel(source, settingsClient: settings);
+
+        await view.InitializeAsync();
+        Assert.Equal(876, source.Queries[^1].PageSize);
+        Assert.Equal(EventStackSortDirection.Ascending, source.Queries[^1].SortDirection);
+        Assert.Equal(EventStackMode.Normalized, view.Mode);
+        Assert.Equal("legacy search", Assert.Single(view.SavedFilters).Name);
+
+        await view.SetPageSizeAsync(137);
+        Assert.NotNull(settings.Saved);
+        Assert.Equal(137, settings.Saved!.EventStackPageSize);
+        Assert.Equal(EventStackSortOrder.OldestFirst, settings.Saved.EventStackSort);
+        Assert.Equal(9, settings.Saved.PaneTimeoutSeconds);
+        Assert.StartsWith("StorageChronicle.EventStackFilter.v1:", settings.Saved.SavedFilters[0], StringComparison.Ordinal);
+
+        await view.SetModeAsync(EventStackMode.Source);
+        Assert.Equal(EventStackInitialMode.Source, settings.Saved!.InitialEventStackMode);
+
+        view.SearchText = "report";
+        view.SavedFilterName = "Reports";
+        await view.SaveFilterCommand.ExecuteAsync(null);
+        Assert.StartsWith("StorageChronicle.EventStackFilter.v1:", settings.Saved!.SavedFilters[1], StringComparison.Ordinal);
+
+        var restored = new EventStackViewModel(new FakeProjection(), settingsClient: new FakeUserSettingsClient(settings.Saved));
+        await restored.InitializeAsync();
+        Assert.Collection(restored.SavedFilters,
+            legacy => Assert.Equal("legacy search", legacy.Name),
+            report =>
+            {
+                Assert.Equal("Reports", report.Name);
+                Assert.Equal("report", report.Filter.SearchText);
+            });
+    }
+
+    [Fact]
+    public async Task PageSizeEntryAcceptsEveryIntegerInRangeAndRejectsOutOfRangeInput()
+    {
+        var view = new EventStackViewModel(new FakeProjection());
+        await view.SetPageSizeAsync(5000);
+        Assert.Equal(5000, view.PageSize);
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () => await view.SetPageSizeAsync(49));
+
+        view.PageSizeInput = "5001";
+        await view.ApplyPageSizeCommand.ExecuteAsync(null);
+        Assert.Equal("Page size must be an integer from 50 through 5000.", view.StatusMessage);
+        Assert.Equal(5000, view.PageSize);
+    }
+
+    [Fact]
     public async Task LargeProjectionMaterializesOnlyRequestedPage()
     {
         var source = new FakeProjection { TotalCount = 100_000, PageCount = 10_000, PageItemCount = 50 };
@@ -122,6 +209,8 @@ public sealed class EventStackViewModelTests
         var rows = view.FindControl<ListBox>("RowsList");
         Assert.NotNull(rows);
         Assert.Same(viewModel.Rows, rows!.ItemsSource);
+        Assert.NotNull(view.FindControl<TextBox>("PageSizeInputBox"));
+        Assert.NotNull(view.FindControl<TextBox>("SavedFilterNameBox"));
         Assert.Equal("Event Stack", view.GetValue(Avalonia.Automation.AutomationProperties.NameProperty));
     }
 
@@ -145,6 +234,7 @@ public sealed class EventStackViewModelTests
     {
         public List<EventStackQuery> Queries { get; } = [];
         public bool HasChildren { get; init; }
+        public bool HasNestedChildren { get; init; }
         public int PageCount { get; init; } = 1;
         public int PageItemCount { get; init; } = 1;
         public int TotalCount { get; init; } = 1;
@@ -158,7 +248,18 @@ public sealed class EventStackViewModelTests
             Queries.Add(query);
             var rows = Enumerable.Range(0, PageItemCount).Select(index => CreateRow(index, query.Page)).ToArray();
             LastMaterializedCount = rows.Length;
-            return ValueTask.FromResult(new EventStackPage(rows.Select(row => new EventStackItem(row, HasChildren ? [CreateRow(999, query.Page)] : Array.Empty<EventStackRow>(), row.Summary, ProcessName, query.Mode == EventStackMode.Grouped, query.ExpandedGroups.Contains(row.Id))).ToArray(), query.Page, query.PageSize, TotalCount, query.Page < PageCount));
+            return ValueTask.FromResult(new EventStackPage(rows.Select(row => CreateItem(row, query)).ToArray(), query.Page, query.PageSize, TotalCount, query.Page < PageCount));
+        }
+
+        private EventStackItem CreateItem(EventStackRow row, EventStackQuery query)
+        {
+            if (!HasChildren) return new EventStackItem(row, Array.Empty<EventStackRow>(), row.Summary, ProcessName, query.Mode == EventStackMode.Grouped, query.ExpandedGroups.Contains(row.Id));
+            if (!HasNestedChildren) return new EventStackItem(row, [CreateRow(999, query.Page)], row.Summary, ProcessName, query.Mode == EventStackMode.Grouped, query.ExpandedGroups.Contains(row.Id));
+
+            var source = new EventStackItem(CreateRow(1001, query.Page), Array.Empty<EventStackRow>(), "source", ProcessName, false, false);
+            var normalized = new EventStackItem(CreateRow(1000, query.Page), [source.Row], "normalized", ProcessName, false, false, [source]);
+            var file = new EventStackItem(CreateRow(999, query.Page), [normalized.Row], "file", ProcessName, false, false, [normalized]);
+            return new EventStackItem(row, [file.Row], row.Summary, ProcessName, query.Mode == EventStackMode.Grouped, query.ExpandedGroups.Contains(row.Id), [file]);
         }
 
         public ValueTask<EventStackDetails?> GetDetailsAsync(EventId eventId, CancellationToken cancellationToken = default)
@@ -168,6 +269,20 @@ public sealed class EventStackViewModelTests
         }
 
         private EventStackRow CreateRow(int index, int page) => new(new EventId(Guid.Parse($"00000000-0000-0000-0000-{index + 1:D12}")), DateTimeOffset.UtcNow.AddMinutes(-(page * 10 + index)), "root", CanonicalOperation.DataWrite, $"row-{index}", Quality, null, ProcessAttributionQuality.Unknown, EventOrigin.LiveUsn, ImmutableArray<EventId>.Empty);
+    }
+
+    private sealed class FakeUserSettingsClient(UserSettings initial) : IUserSettingsClient
+    {
+        public UserSettings? Saved { get; private set; }
+
+        public ValueTask<UserSettings> LoadUserSettingsAsync(CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(Saved ?? initial);
+
+        public ValueTask<SettingsApplyResult> ApplyUserSettingsAsync(UserSettings settings, CancellationToken cancellationToken = default)
+        {
+            Saved = settings;
+            return ValueTask.FromResult(new SettingsApplyResult(true, false, false, null));
+        }
     }
 }
 

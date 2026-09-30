@@ -101,7 +101,49 @@ public sealed class EventStackProjectionTests
 
         Assert.Equal(3, groups.Count);
         Assert.True(groups[0].IsClosedByCompetingActivity);
+        Assert.Equal(groups[1].StartedUtc, groups[0].CloseBoundaryUtc);
         Assert.Equal("p1", groups[2].Process?.Id?.Value);
+    }
+
+    [Fact]
+    public void IndependentLocationsRemainConcurrentAndInterleavedEventsReturnToTheirActivity()
+    {
+        var first = ProjectionFixture.Event(0, CanonicalOperation.DataWrite, "/root/a/one.txt", "a", "p1");
+        var otherLocation = ProjectionFixture.Event(1, CanonicalOperation.Create, "/root/b/two.txt", "b", "p2");
+        var resumed = ProjectionFixture.Event(2, CanonicalOperation.DataWrite, "/root/a/one.txt", "a", "p1");
+
+        var groups = new ActivityGrouper().Group([first, otherLocation, resumed], TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, groups.Count);
+        Assert.Equal(2, groups[0].Metrics.OperationCount);
+        Assert.Null(groups[0].CloseBoundaryUtc);
+        Assert.Null(groups[1].CloseBoundaryUtc);
+    }
+
+    [Fact]
+    public void TimedOutActivityClosesAtItsConfiguredInactivityBoundary()
+    {
+        var first = ProjectionFixture.Event(0, CanonicalOperation.Create, "/root/a.txt", "a", "p1");
+        var afterTimeout = ProjectionFixture.Event(7, CanonicalOperation.DataWrite, "/root/a.txt", "a", "p1");
+
+        var groups = new ActivityGrouper().Group([first, afterTimeout], TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, groups.Count);
+        Assert.Equal(first.Time.RecordedUtc.AddSeconds(5), groups[0].CloseBoundaryUtc);
+        Assert.Null(groups[1].CloseBoundaryUtc);
+    }
+
+    [Fact]
+    public void UnknownAttributionNeverJoinsAnExactProcessActivity()
+    {
+        var exact = ProjectionFixture.Event(0, CanonicalOperation.Create, "/root/a.txt", "a", "p1");
+        var unknown = ProjectionFixture.Event(1, CanonicalOperation.DataWrite, "/root/a.txt", "a", null, ProcessAttributionQuality.Unknown);
+
+        var groups = new ActivityGrouper().Group([exact, unknown], TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, groups.Count);
+        Assert.Equal(ProcessAttributionQuality.Exact, groups[0].ProcessQuality);
+        Assert.Equal(ProcessAttributionQuality.Unknown, groups[1].ProcessQuality);
     }
 
     [Fact]

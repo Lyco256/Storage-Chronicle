@@ -87,3 +87,24 @@ No product process, installer, physical drive, privileged runner, or hardware wo
 ### Commit
 
 Implementation and validation changes are committed on `feat/external-media` as `b3779a5a63298b524b4816a8784e02f6b28c02b6`. This handoff update is committed immediately afterward; the final branch HEAD is reported with the handoff.
+
+## Current top-agent sync-merge hardening
+
+This section supersedes the older bounded-follow-up recovery and ledger claims above for the current `devenv` sync merge.
+
+### Integrated source behavior
+
+- Preserved `IVolumeBoundMediaFileSystem` and pinned-volume identity for removable-media I/O; no path fallback was introduced.
+- Ported the media-only append-batch guard: all records must match the first event's volume, mount session, and optional logical-media identity before a temporary segment is created.
+- The public `ExternalMediaStore` constructor selects the fixed PC-local intent store under `CommonApplicationData/Storage Chronicle/history/media-recovery-intents`; the interface and injected constructor are internal test seams only. CommonApplicationData is checked for normalized absolute local fixed-drive identity, UNC/network paths are refused, and existing path components are checked before creation and rechecked afterward.
+- The exact framed segment length and SHA-256 are calculated incrementally while writing. The durable PC-local intent binds volume ID, writer ID, GUID temp name, length, and SHA-256 and is saved before the pinned-handle move. Recovery validates that intent and record CRC/boundaries, refuses an existing final name, and preserves unproven or corrupt temps. No post-commit media read occurs to create the append result. Intent cleanup after a successful move is best-effort; a stale intent cannot authorize a rename after the temp is gone.
+- The intent store uses create-new and non-replacing publication. Save failure/cancellation removes only a temp created by that Save call; unknown names and existing intent files are preserved. Internal tests cover cancellation cleanup, restart readback, malformed/missing intents, failed intent save/removal, and a junction escape preflight where supported.
+- `MediaImportLedgerStore` now rejects caller paths outside the fixed PC product directory and requires the encoded logical-media ID leaf. Marker files do not authorize paths. Only the expected base-ledger name and its GUID generation names are read; all other entries, including marker-shaped or valid-looking unrelated JSON, are preserved and block access. Ledger writes append unique immutable generations, never replacing a base ledger or prior generation. Reparse paths are checked before and after directory creation. Corrupt recognized ledgers and interrupted ledger temps are retained and fail closed; the parser validates schema fields, duplicate/unknown keys, hash shapes, and branch identities.
+
+### Top-owned integration request
+
+The Agent integration removes the public caller-selected `ledgerRoot`. Production imports always construct the ledger beneath the canonical CommonApplicationData product-history directory. An internal factory is available only to the Agent test assembly and redirects the collector integration test to a run-owned fixture; the test asserts an append-only generation is persisted. `MediaMirrorCoordinator` needs no explicit intent-store argument because the public `ExternalMediaStore` constructor supplies the fixed implementation.
+
+### Validation for this sync merge
+
+Focused `StorageChronicle.ExternalMedia.Tests`: 34 passed, 0 failed, 0 skipped. The full `build/Test-Fast.ps1` run completed with exit code 0; every listed project passed, including Agent (47 passed, 3 privileged acceptance tests skipped) and ExternalMedia (34 passed). `DocMirrorValidator` passed and `git diff --check` passed. No product process, physical media, VHDX, service, MSI, privileged runner, or real-media write was run. The five sync-merge conflicts remain intentionally unresolved in the index pending top-agent final review.

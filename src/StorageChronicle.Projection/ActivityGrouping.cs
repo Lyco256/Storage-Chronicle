@@ -20,97 +20,68 @@ public sealed class ActivityGrouper
         var paths = pathResolver.ResolvePaths(ordered);
         var processCatalog = ProcessCatalog.Create(ordered);
         var groups = new List<ActivityBuilder>();
-        ActivityBuilder? current = null;
+        var active = new List<ActivityBuilder>();
 
         foreach (var value in ordered)
         {
             var route = pathResolver.ResolveAnchor(value, paths);
             var isRead = ProjectionOperationRules.IsRead(value);
-
-            // Unknown attribution is keyed by source, volume, mount session and route,
-            // rather than by the immediately preceding event. This keeps an activity
-            // intact when another mount interleaves events in the ordered stream.
-            if (IsUnknownAttribution(value))
+            foreach (var expired in active.Where(candidate => value.Time.RecordedUtc - candidate.LastTime > timeout).ToArray())
             {
-                var existing = FindUnknownActivity(groups, current, value, route, paths, timeout);
-                if (existing is not null && !existing.IsGap)
-                {
-                    existing.Add(value, route);
-                    continue;
-                }
+                expired.CloseAt(expired.LastTime + timeout, closedByCompetingActivity: false);
+                active.Remove(expired);
             }
 
-            var sameActor = current is not null && current.MatchesActor(value);
-            var withinTimeout = current is not null && value.Time.RecordedUtc - current.LastTime <= timeout;
-            var compatibleRoute = current is not null && current.CanAcceptRoute(value, route, paths);
-
-            if (current is null)
-            {
-                current = new ActivityBuilder(value, route);
-                continue;
-            }
-
-            if (isRead && withinTimeout)
-            {
-                current.Add(value, route);
-                continue;
-            }
-
-            var shouldJoin = sameActor && withinTimeout && compatibleRoute &&
-                             value.Operation != CanonicalOperation.UnverifiedGap;
-            if (shouldJoin && !current.IsGap)
-            {
-                current.Add(value, route);
-                continue;
-            }
-
-            var closedByCompetingActivity = !isRead &&
-                                            value.ProcessInstanceId != current.ProcessId &&
-                                            current.IsCompetingRoute(route);
-            current.ClosedByCompetingActivity = current.ClosedByCompetingActivity || closedByCompetingActivity;
-            groups.Add(current);
-            current = new ActivityBuilder(value, route);
-        }
-
-        if (current is not null) groups.Add(current);
-        return groups.Select(builder => builder.Build(processCatalog)).ToArray();
-    }
-
-    private static bool IsUnknownAttribution(CanonicalEvent value) =>
-        value.ProcessQuality == ProcessAttributionQuality.Unknown || value.ProcessInstanceId is null;
-
-    private static ActivityBuilder? FindUnknownActivity(
-        IReadOnlyList<ActivityBuilder> groups,
-        ActivityBuilder? current,
-        CanonicalEvent value,
-        string? route,
-        IReadOnlyDictionary<EventId, string?> paths,
-        TimeSpan timeout)
-    {
-        if (current is not null && current.MatchesActor(value) &&
-            value.Time.RecordedUtc - current.LastTime <= timeout && current.CanAcceptRoute(value, route, paths))
-        {
-            return current;
-        }
-
-        for (var index = groups.Count - 1; index >= 0; index--)
-        {
-            var candidate = groups[index];
-            if (candidate.MatchesActor(value) &&
+            var sameActivity = active.LastOrDefault(candidate =>
+                !candidate.IsGap &&
+                candidate.MatchesActor(value) &&
                 value.Time.RecordedUtc - candidate.LastTime <= timeout &&
-                candidate.CanAcceptRoute(value, route, paths))
+                candidate.CanAcceptRoute(value, route, paths));
+            if (isRead)
             {
-                return candidate;
+                // Read observations may enrich a live activity but never create or
+                // terminate one. They are transient and are filtered before durable history.
+                sameActivity?.Add(value, route);
+                continue;
             }
+
+            var isGap = value.Operation == CanonicalOperation.UnverifiedGap || value.Quality == EventQuality.UnverifiedGap;
+            if (sameActivity is not null && !isGap)
+            {
+                sameActivity.Add(value, route);
+                continue;
+            }
+
+            if (isGap && sameActivity is not null)
+            {
+                sameActivity.CloseAt(value.Time.RecordedUtc, closedByCompetingActivity: false);
+                active.Remove(sameActivity);
+            }
+
+            // Independent locations remain independently active. Only a different
+            // actor touching the same/ancestor/descendant route closes an existing pane.
+            foreach (var competing in active.Where(candidate =>
+                         candidate.IsDifferentKnownActor(value) && candidate.IsCompetingRoute(route)).ToArray())
+            {
+                competing.CloseAt(value.Time.RecordedUtc, closedByCompetingActivity: true);
+                active.Remove(competing);
+            }
+
+            var created = new ActivityBuilder(value, route);
+            groups.Add(created);
+            active.Add(created);
         }
 
-        return null;
+        return groups.Select(builder => builder.Build(processCatalog)).ToArray();
     }
 
     private sealed class ActivityBuilder
     {
         private readonly List<CanonicalEvent> values = [];
         private readonly List<string?> anchors = [];
+        private bool hasGap;
+        private bool folderPathResolved;
+        private string? descendantFolderPath;
 
         public ActivityBuilder(CanonicalEvent first, string? route)
         {
@@ -121,6 +92,7 @@ public sealed class ActivityGrouper
             Source = first.Origin;
             Volume = first.VolumeId;
             MountSession = first.MountSessionId;
+            hasGap = IsGapEvent(first);
         }
 
         public ProcessInstanceId? ProcessId { get; }
@@ -129,18 +101,17 @@ public sealed class ActivityGrouper
         public VolumeId? Volume { get; }
         public MountSessionId? MountSession { get; }
         public bool ClosedByCompetingActivity { get; set; }
+        public DateTimeOffset? CloseBoundaryUtc { get; private set; }
         public DateTimeOffset LastTime => values[^1].Time.RecordedUtc;
-        public bool IsGap => values.Any(value => value.Operation == CanonicalOperation.UnverifiedGap || value.Quality == EventQuality.UnverifiedGap);
+        public bool IsGap => hasGap;
 
         public bool MatchesActor(CanonicalEvent value)
         {
-            var unknownActor = ProcessQuality == ProcessAttributionQuality.Unknown ||
-                               ProcessId is null ||
-                               value.ProcessQuality == ProcessAttributionQuality.Unknown ||
-                               value.ProcessInstanceId is null;
-            if (unknownActor)
+            var currentUnknown = ProcessQuality == ProcessAttributionQuality.Unknown || ProcessId is null;
+            var incomingUnknown = value.ProcessQuality == ProcessAttributionQuality.Unknown || value.ProcessInstanceId is null;
+            if (currentUnknown || incomingUnknown)
             {
-                return Source == value.Origin &&
+                return currentUnknown && incomingUnknown && Source == value.Origin &&
                        string.Equals(Volume?.Value, value.VolumeId?.Value, StringComparison.Ordinal) &&
                        string.Equals(MountSession?.Value, value.MountSessionId?.Value, StringComparison.Ordinal);
             }
@@ -148,14 +119,24 @@ public sealed class ActivityGrouper
             return ProcessId == value.ProcessInstanceId;
         }
 
+        public bool IsDifferentKnownActor(CanonicalEvent value) =>
+            ProcessQuality != ProcessAttributionQuality.Unknown && ProcessId is not null &&
+            value.ProcessQuality != ProcessAttributionQuality.Unknown && value.ProcessInstanceId is not null &&
+            ProcessId != value.ProcessInstanceId;
+
         public bool CanAcceptRoute(CanonicalEvent value, string? route, IReadOnlyDictionary<EventId, string?> paths)
         {
             if (string.Equals(EffectiveRoute(), route, StringComparison.OrdinalIgnoreCase)) return true;
-            var newFolderPath = values
-                .Where(item => item.Operation == CanonicalOperation.DirectoryCreate || (item.Operation == CanonicalOperation.Create && item.Metadata?.Kind == FileKind.Directory))
-                .Select(item => paths.TryGetValue(item.EventId, out var path) ? path : null)
-                .FirstOrDefault(path => path is not null);
-            return newFolderPath is not null && ProjectionPathResolver.IsSameOrDescendant(newFolderPath, route);
+            if (!folderPathResolved)
+            {
+                folderPathResolved = true;
+                descendantFolderPath = values
+                    .Where(IsDirectoryCreate)
+                    .Select(item => paths.TryGetValue(item.EventId, out var path) ? path : null)
+                    .FirstOrDefault(path => path is not null);
+            }
+
+            return descendantFolderPath is not null && ProjectionPathResolver.IsSameOrDescendant(descendantFolderPath, route);
         }
 
         public bool IsCompetingRoute(string? route) =>
@@ -166,7 +147,22 @@ public sealed class ActivityGrouper
         {
             values.Add(value);
             anchors.Add(route);
+            hasGap |= IsGapEvent(value);
+            if (IsDirectoryCreate(value)) folderPathResolved = false;
         }
+
+        public void CloseAt(DateTimeOffset boundaryUtc, bool closedByCompetingActivity)
+        {
+            CloseBoundaryUtc = boundaryUtc;
+            ClosedByCompetingActivity |= closedByCompetingActivity;
+        }
+
+        private static bool IsGapEvent(CanonicalEvent value) =>
+            value.Operation == CanonicalOperation.UnverifiedGap || value.Quality == EventQuality.UnverifiedGap;
+
+        private static bool IsDirectoryCreate(CanonicalEvent value) =>
+            value.Operation == CanonicalOperation.DirectoryCreate ||
+            (value.Operation == CanonicalOperation.Create && value.Metadata?.Kind == FileKind.Directory);
 
         public ActivityGroupProjection Build(ProcessCatalog processCatalog)
         {
@@ -211,7 +207,8 @@ public sealed class ActivityGrouper
                 ClosedByCompetingActivity,
                 metrics,
                 groupedFiles,
-                ordered);
+                ordered,
+                CloseBoundaryUtc);
         }
 
         private string? EffectiveRoute() => anchors.LastOrDefault(anchor => anchor is not null);
@@ -254,9 +251,9 @@ internal sealed class ProcessCatalog
             .GroupBy(value => value.ProcessInstanceId!.Value)
             .ToDictionary(group => group.Key, group => group.First());
         var ids = firstByProcess.Keys.ToArray();
-        var parentMap = events.Where(value => value.ProcessInstanceId is not null && value.Properties.ContainsKey(ProjectionPropertyNames.ParentProcessInstanceId))
+        var parentMap = events.Where(value => value.ProcessInstanceId is not null && TryGetProperty(value.Properties, ProjectionPropertyNames.ParentProcessInstanceId, out _))
             .GroupBy(value => value.ProcessInstanceId!.Value)
-            .ToDictionary(group => group.Key, group => ParseProcessId(group.First().Properties[ProjectionPropertyNames.ParentProcessInstanceId]));
+            .ToDictionary(group => group.Key, group => ParseProcessId(GetProperty(group.First().Properties, ProjectionPropertyNames.ParentProcessInstanceId)));
         var children = ids.ToDictionary(id => id, _ => new List<ProcessInstanceId>());
         foreach (var pair in parentMap)
         {
@@ -269,9 +266,9 @@ internal sealed class ProcessCatalog
             var value = firstByProcess[id];
             var name = value.ProcessQuality == ProcessAttributionQuality.Unknown
                 ? "不明なプロセス"
-                : value.Properties.TryGetValue(ProjectionPropertyNames.ProcessName, out var processName) ? processName : id.Value;
+                : TryGetProperty(value.Properties, ProjectionPropertyNames.ProcessName, out var processName) ? processName : id.Value;
             if (value.ProcessQuality != ProcessAttributionQuality.Unknown && name.EndsWith("explorer.exe", StringComparison.OrdinalIgnoreCase)) name = "Explorer操作";
-            var executable = value.Properties.TryGetValue(ProjectionPropertyNames.ExecutablePath, out var path) ? path : null;
+            var executable = TryGetProperty(value.Properties, ProjectionPropertyNames.ExecutablePath, out var path) ? path : null;
             var ancestors = new List<ProcessInstanceId>();
             var parent = parentMap.GetValueOrDefault(id);
             var seen = new HashSet<ProcessInstanceId>();
@@ -290,6 +287,25 @@ internal sealed class ProcessCatalog
     public ProcessProjection? For(CanonicalEvent value) => value.ProcessInstanceId is { } id && processes.TryGetValue(id, out var process) ? process : null;
 
     public string? PathFor(CanonicalEvent value) => paths.TryGetValue(value.EventId, out var path) ? path : null;
+
+    private static bool TryGetProperty(IReadOnlyDictionary<string, string> properties, string key, out string value)
+    {
+        if (properties.TryGetValue(key, out value!)) return true;
+        foreach (var pair in properties)
+        {
+            if (string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase))
+            {
+                value = pair.Value;
+                return true;
+            }
+        }
+
+        value = string.Empty;
+        return false;
+    }
+
+    private static string GetProperty(IReadOnlyDictionary<string, string> properties, string key) =>
+        TryGetProperty(properties, key, out var value) ? value : string.Empty;
 
     private static ProcessInstanceId? ParseProcessId(string value) => string.IsNullOrWhiteSpace(value) ? null : ProcessInstanceId.Create(value);
 }

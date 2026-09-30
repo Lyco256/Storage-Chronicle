@@ -1,0 +1,3 @@
+# ConfirmedReconciliationRunnerTests.cs
+
+Tests the Agent-owned confirmed reconciliation execution seam with a real temporary directory snapshot boundary and injectable metadata/volume/native ports. The success case verifies that current non-NTFS differences become durable `DirectoryReconciliation` facts with `ReconciliationDiscovered`, reconciled quality, and unknown process attribution. The cancellation case verifies that an already-cancelled request is not reported as completed. The tests never use file contents as product data; temporary file creation is only test setup for the metadata boundary.

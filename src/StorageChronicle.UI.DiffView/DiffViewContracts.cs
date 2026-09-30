@@ -1,4 +1,5 @@
 using StorageChronicle.Contracts;
+using StorageChronicle.Contracts.Runtime;
 using StorageChronicle.Domain.Contracts;
 using StorageChronicle.Projection;
 
@@ -78,13 +79,22 @@ public sealed record DiffExplorerRow(
     string? OpenDisabledReason);
 
 /// <summary>Represents a query sent to the common projection.</summary>
-public sealed record DiffProjectionQuery(DateTimeOffset? FromUtc, DateTimeOffset ToUtc, DiffMode Mode, ProjectionFilter Filter);
+public sealed record DiffProjectionQuery(DateTimeOffset? FromUtc, DateTimeOffset ToUtc, DiffMode Mode, ProjectionFilter Filter, int ActivityFramesPage = 1, int ActivityFramesPageSize = 100, bool ActivityFramesAscending = false);
+
+/// <summary>Bundles one shared Diff projection with independently paged Activity Frame summaries.</summary>
+public sealed record DiffProjectionBundle(
+    DiffProjection Projection,
+    IReadOnlyList<DiffActivityFrameSnapshot> ActivityFrames,
+    int ActivityFramesPage = 1,
+    int ActivityFramesPageSize = 100,
+    int ActivityFramesTotalCount = 0,
+    bool HasMoreActivityFrames = false);
 
 /// <summary>Supplies the rich, OS-neutral diff projection used by both UI renderers.</summary>
 public interface IDiffProjectionSource
 {
     /// <summary>Loads a diff projection without reading the operating-system file system.</summary>
-    ValueTask<DiffProjection> GetDiffProjectionAsync(DiffProjectionQuery query, CancellationToken cancellationToken = default);
+    ValueTask<DiffProjectionBundle> GetDiffProjectionAsync(DiffProjectionQuery query, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Adapts the concrete common Projection service to the UI source boundary.</summary>
@@ -96,10 +106,11 @@ public sealed class ProjectionServiceDiffSource : IDiffProjectionSource
     public ProjectionServiceDiffSource(ProjectionService projection) => this.projection = projection ?? throw new ArgumentNullException(nameof(projection));
 
     /// <inheritdoc />
-    public ValueTask<DiffProjection> GetDiffProjectionAsync(DiffProjectionQuery query, CancellationToken cancellationToken = default)
+    public async ValueTask<DiffProjectionBundle> GetDiffProjectionAsync(DiffProjectionQuery query, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
-        return projection.GetDiffProjectionAsync(query.FromUtc, query.ToUtc, query.Mode, query.Filter, cancellationToken);
+        var result = await projection.GetDiffProjectionAsync(query.FromUtc, query.ToUtc, query.Mode, query.Filter, cancellationToken).ConfigureAwait(false);
+        return new(result, Array.Empty<DiffActivityFrameSnapshot>());
     }
 }
 
@@ -112,12 +123,12 @@ public sealed class ContractDiffProjectionSource : IDiffProjectionSource
     public ContractDiffProjectionSource(IProjectionService projection) => this.projection = projection ?? throw new ArgumentNullException(nameof(projection));
 
     /// <inheritdoc />
-    public async ValueTask<DiffProjection> GetDiffProjectionAsync(DiffProjectionQuery query, CancellationToken cancellationToken = default)
+    public async ValueTask<DiffProjectionBundle> GetDiffProjectionAsync(DiffProjectionQuery query, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
         var entries = await projection.GetDiffAsync(query.FromUtc, query.ToUtc, query.Mode, cancellationToken).ConfigureAwait(false);
         var rows = entries.Select(Convert).ToArray();
-        return new(query.Mode, query.ToUtc, rows.Where(row => !row.IsVirtual).ToArray(), rows.Where(row => row.IsVirtual).ToArray(), entries);
+        return new(new DiffProjection(query.Mode, query.ToUtc, rows.Where(row => !row.IsVirtual).ToArray(), rows.Where(row => row.IsVirtual).ToArray(), entries), Array.Empty<DiffActivityFrameSnapshot>());
     }
 
     private static FileDiffProjection Convert(DiffEntry entry)

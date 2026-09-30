@@ -1,7 +1,10 @@
 using System.ComponentModel;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
+using System.Management;
 using StorageChronicle.Domain.Contracts;
+using StorageChronicle.Platform.Windows.FileSystem.Volumes;
 
 namespace StorageChronicle.Platform.Windows.FileSystem.Interop;
 
@@ -39,6 +42,7 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
         }
 
         var result = new List<NativeVolumeRecord>();
+        var partitionQuerySucceeded = TryEnumeratePartitionRoles(out var partitionRoles);
         var volumeName = new string('\0', 1024);
         var findHandle = FindFirstVolume(volumeName, (uint)volumeName.Length);
         if (findHandle == new IntPtr(-1))
@@ -51,7 +55,7 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
             while (true)
             {
                 var guidPath = volumeName.TrimEnd('\0');
-                result.Add(ReadVolume(guidPath));
+                result.Add(ReadVolume(guidPath, partitionRoles, partitionQuerySucceeded));
                 volumeName = new string('\0', 1024);
                 if (!FindNextVolume(findHandle, volumeName, (uint)volumeName.Length))
                 {
@@ -110,18 +114,29 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
 
     public SafeFileHandle OpenDirectory(string path)
     {
+        return OpenMetadata(path, directory: true, FileListDirectory);
+    }
+
+    public SafeFileHandle OpenMetadata(string path, bool directory)
+    {
+        return OpenMetadata(path, directory, FileReadAttributes);
+    }
+
+    private static SafeFileHandle OpenMetadata(string path, bool directory, uint desiredAccess)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         if (!OperatingSystem.IsWindows())
         {
-            throw new PlatformNotSupportedException("Windows directory handles are unavailable on this operating system.");
+            throw new PlatformNotSupportedException("Windows metadata handles are unavailable on this operating system.");
         }
 
-        var handle = CreateFile(path, FileListDirectory, FileShareRead | FileShareWrite | FileShareDelete, IntPtr.Zero, OpenExisting, FileFlagBackupSemantics, IntPtr.Zero);
+        var flags = directory ? FileFlagBackupSemantics : 0u;
+        var handle = CreateFile(path, desiredAccess, FileShareRead | FileShareWrite | FileShareDelete, IntPtr.Zero, OpenExisting, flags, IntPtr.Zero);
         if (handle.IsInvalid)
         {
             var error = Marshal.GetLastWin32Error();
             handle.Dispose();
-            throw new Win32Exception(error, $"The directory could not be opened: {path}");
+            throw new Win32Exception(error, $"The metadata entry could not be opened: {path}");
         }
 
         return handle;
@@ -173,7 +188,7 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
         return registration;
     }
 
-    private NativeVolumeRecord ReadVolume(string guidPath)
+    private NativeVolumeRecord ReadVolume(string guidPath, IReadOnlyList<NativePartitionRoleRecord> partitionRoles, bool partitionQuerySucceeded)
     {
         var mountPoints = GetMountPoints(guidPath);
         var root = mountPoints.Length == 0 ? guidPath : mountPoints[0];
@@ -190,8 +205,42 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
 
         var readable = CanEnumerateDirectory(root);
         var driveType = GetDriveType(root);
-        return new NativeVolumeRecord(guidPath, fileSystem.TrimEnd('\0'), mountPoints, driveType, (flags & 0x00080000) != 0, readable, string.Equals(fileSystem.TrimEnd('\0'), "NTFS", StringComparison.OrdinalIgnoreCase));
+        var classification = WindowsVolumeRoleClassifier.Classify(guidPath, mountPoints, partitionRoles, partitionQuerySucceeded);
+        return new NativeVolumeRecord(guidPath, fileSystem.TrimEnd('\0'), mountPoints, driveType, (flags & 0x00080000) != 0, readable, string.Equals(fileSystem.TrimEnd('\0'), "NTFS", StringComparison.OrdinalIgnoreCase), classification.Roles, classification.IsComplete);
     }
+
+    private static bool TryEnumeratePartitionRoles(out IReadOnlyList<NativePartitionRoleRecord> partitionRoles)
+    {
+        var records = new List<NativePartitionRoleRecord>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher("root\\Microsoft\\Windows\\Storage", "SELECT AccessPaths, IsSystem, IsBoot, GptType, MbrType FROM MSFT_Partition");
+            using var results = searcher.Get();
+            foreach (ManagementObject item in results)
+            {
+                using (item)
+                {
+                    var accessPaths = item.GetPropertyValue("AccessPaths") as string[];
+                    var isSystem = ReadNullableBoolean(item.GetPropertyValue("IsSystem"));
+                    var isBoot = ReadNullableBoolean(item.GetPropertyValue("IsBoot"));
+                    var gptType = item.GetPropertyValue("GptType") as string;
+                    var mbrTypeValue = item.GetPropertyValue("MbrType");
+                    ushort? mbrType = mbrTypeValue is null ? null : Convert.ToUInt16(mbrTypeValue, CultureInfo.InvariantCulture);
+                    records.Add(new NativePartitionRoleRecord(accessPaths ?? Array.Empty<string>(), isSystem, isBoot, gptType, mbrType));
+                }
+            }
+
+            partitionRoles = records;
+            return true;
+        }
+        catch (Exception exception) when (exception is ManagementException or COMException or UnauthorizedAccessException or InvalidOperationException or FormatException or OverflowException)
+        {
+            partitionRoles = Array.Empty<NativePartitionRoleRecord>();
+            return false;
+        }
+    }
+
+    private static bool? ReadNullableBoolean(object? value) => value is bool result ? result : null;
 
     private static string[] GetMountPoints(string guidPath)
     {

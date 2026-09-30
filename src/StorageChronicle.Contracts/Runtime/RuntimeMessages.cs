@@ -27,7 +27,9 @@ public sealed record PendingReconciliationRequest(
     string Reason,
     long? SourceSequence,
     DateTimeOffset DiscoveredUtc,
-    bool Presented = false);
+    bool Presented = false,
+    string FileSystem = "Unknown",
+    DateTimeOffset? GapStartUtc = null);
 
 /// <summary>Reports non-user-editable agent health state.</summary>
 public sealed record AgentHealth(
@@ -51,7 +53,10 @@ public sealed record DiffProjectionRequest(
     int PageSize = 500,
     IReadOnlyList<string>? AllFilters = null,
     IReadOnlyList<string>? AnyFilters = null,
-    IReadOnlyList<string>? ExcludeFilters = null);
+    IReadOnlyList<string>? ExcludeFilters = null,
+    int ActivityFramesPage = 1,
+    int ActivityFramesPageSize = 100,
+    bool ActivityFramesAscending = false);
 
 /// <summary>Returns one bounded Event Stack page.</summary>
 public sealed record ProjectionPageResponse(
@@ -78,7 +83,58 @@ public sealed record DiffProjectionResponse(
     int Page = 1,
     int PageSize = 500,
     int TotalCount = 0,
-    bool HasMore = false);
+    bool HasMore = false,
+    IReadOnlyList<DiffActivityFrameSnapshot>? ActivityFrames = null,
+    int ActivityFramesPage = 1,
+    int ActivityFramesPageSize = 100,
+    int ActivityFramesTotalCount = 0,
+    bool HasMoreActivityFrames = false);
+
+/// <summary>Metadata-only Activity Group projection used to render one Diff View frame, including an optional observed process-exit boundary.</summary>
+public sealed record DiffActivityFrameSnapshot(
+    string FrameId,
+    ProcessInstanceId? ProcessId,
+    string ProcessDisplayName,
+    ProcessAttributionQuality ProcessQuality,
+    EventOrigin Source,
+    VolumeId? VolumeId,
+    MountSessionId? MountSessionId,
+    string DisplayRoute,
+    DateTimeOffset StartedUtc,
+    DateTimeOffset LastEventUtc,
+    DateTimeOffset CloseBoundaryUtc,
+    bool IsClosedByCompetingActivity,
+    int OperationCount,
+    int FileCount,
+    long SizeDelta,
+    IReadOnlyDictionary<string, int> OperationBreakdown,
+    int EventCount,
+    bool IsClosedByProcessExit = false);
+
+/// <summary>Requests one bounded metadata-only timeline page for an Activity Frame.</summary>
+public sealed record DiffActivityFrameTimelineRequest(
+    string FrameId,
+    DateTimeOffset? FromUtc,
+    DateTimeOffset ToUtc,
+    int Page = 1,
+    int PageSize = 250);
+
+/// <summary>Returns a bounded metadata-only event timeline page for one Activity Frame.</summary>
+public sealed record DiffActivityFrameTimelineResponse(
+    string FrameId,
+    IReadOnlyList<DiffActivityFrameEventSnapshot> Events,
+    int Page,
+    int PageSize,
+    int TotalCount,
+    bool HasMore);
+
+/// <summary>One metadata-only event used to replay a Diff View frame.</summary>
+public sealed record DiffActivityFrameEventSnapshot(
+    EventId EventId,
+    DateTimeOffset TimeUtc,
+    string DisplayPath,
+    CanonicalOperation Operation,
+    EventQuality Quality);
 
 /// <summary>Serializable Tree/Explorer diff row returned by the Agent.</summary>
 public sealed record DiffProjectionItemSnapshot(
@@ -119,7 +175,13 @@ public sealed record EventDetailsResponse(EventDetailsSnapshot? Details);
 public sealed record SettingsSnapshotRequest;
 
 /// <summary>Identifies a settings scope in an IPC request.</summary>
-public enum SettingsScope { Machine, User }
+public enum SettingsScope
+{
+    /// <summary>Machine-wide Agent-owned settings.</summary>
+    Machine,
+    /// <summary>Interactive-user settings.</summary>
+    User
+}
 
 /// <summary>Requests a validated settings update. The Agent maps this DTO to its internal settings model.</summary>
 public sealed record SettingsUpdateRequest(SettingsScope Scope, JsonElement Settings);

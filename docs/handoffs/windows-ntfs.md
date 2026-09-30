@@ -11,3 +11,12 @@
 - Privileged validation: `WindowsPrivilegedTests.QueriesExistingJournalWithoutCreatingOrResizing` is opt-in with `STORAGE_CHRONICLE_RUN_PRIVILEGED_NTFS=1` and optional `STORAGE_CHRONICLE_NTFS_DEVICE`; it only queries the existing journal and tolerates expected access-denied/media-locality conditions. Synthetic tests remain the default.
 - Shared-contract request: none. The existing `ISourceEventCollector` contract is sufficient; `IUsnJournalReader`, `INtfsApi`, and `IMftEnumerator` remain local replaceable boundaries.
 - Known integration follow-up: the top agent must retain existing solution references and rerun Windows privileged, integration, and full-solution tests after this branch is merged.
+
+## Top-agent ETW follow-up (devenv, 2026-09-30)
+
+- Added an internal ETW session/factory boundary so unit tests inject a fake session and never start a host kernel ETW session.
+- Added deterministic coverage for process/file-event translation, correlated and unknown attribution, read-observation tagging, transient process-exit delivery, bounded-queue overflow and gap reporting, cancellation/disposal, unsupported-platform behavior, and startup/processing failures.
+- `dotnet test tests/StorageChronicle.Platform.Windows.Ntfs.Tests/StorageChronicle.Platform.Windows.Ntfs.Tests.csproj --no-restore -v:minimal`: 23/23 passed, 0 warnings/errors.
+- `./build/Test-Fast.ps1`: exit 0; Agent 47 passed with 3 expected physical-environment skips; all other included suites passed. The physical ETW capability was not run.
+- `dotnet run --project tools/StorageChronicle.DocMirrorValidator --no-restore -- .`: passed.
+- The current-commit physical source-to-sink audit is still incomplete and must be refreshed after this production ETW change. This test seam does not certify live ETW behavior or authorize a physical run.

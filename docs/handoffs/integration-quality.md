@@ -1,43 +1,35 @@
-# Integration-quality handoff
+# Integration and quality handoff
 
-## Scope completed
+## Scope
 
-This branch changes only the assigned integration-quality paths: ArchUnitNET/xUnit v3 architecture gates, Avalonia.Headless.XUnit UI coverage, Golden/E2E fixtures against the real append log and SQLite rebuild, BenchmarkDotNet workloads, metadata-only test-data/log tools, quality scripts, and their documentation.
-
-No product source or shared contract was changed by this branch. Existing unrelated worktree changes remain unstaged.
+Architecture tests, headless UI tests, golden and end-to-end fixtures, CodeCoverage, documentation validation, resource-budget tooling, benchmarks, and test orchestration.
 
 ## Implemented gates
 
-- ArchUnitNET checks domain/contracts dependency direction and UI isolation.
-- Headless Avalonia opens the real desktop `MainWindow` and verifies its navigation surface.
-- Golden/E2E covers create/delete replay, restart, SQLite index deletion/rebuild, final canonical operation, and explicit capacity-stop behavior.
-- Benchmarks cover 1M identity import/path reconstruction and 100K grouping, Event Stack, diff, append serialization, real Zstandard preparation, SQLite-shaped indexing, and media manifest reconciliation with `MemoryDiagnoser`.
-- Test-data generation is deterministic, bounded, metadata-only, and supports NDJSON/Golden output. Log inspection is bounded and content-free.
-- `StorageChronicle.ResourceMonitor` records measured private bytes and normalized CPU and returns nonzero when the 50 MiB/0.5% defaults are exceeded. It explicitly does not fabricate disk-write results.
-- Windows privileged execution is isolated to `Category=WindowsPrivileged`; non-Windows hosts skip that acceptance-only lane.
-- CodeCoverage references `Microsoft.Testing.Extensions.CodeCoverage` and emits Cobertura artifacts for the three owned test projects.
+- `Directory.Build.props` enables Microsoft Testing Platform and XML documentation for non-test source projects.
+- `Directory.Build.targets` supplies the MTP CodeCoverage extension to test projects without duplicating package references.
+- `StorageChronicle.DocMirrorValidator` checks mirrors, required file-role sections, test paths, project READMEs, and orphan source mirrors.
+- `build/Test-Fast.ps1` builds and runs all 22 non-privileged test modules synchronously; `StorageChronicle.Platform.Windows.Integration.Tests` is a separate explicit acceptance lane.
+- `build/quality/Test-Coverage.ps1` aggregates the critical matrix and enforces Domain/State/Projection/Storage at 80% and each UI ViewModel at 70%.
+- `build/Test-Privileged.ps1` and `build/Test-WindowsPrivileged.ps1` fail closed when VHDX/media/SMB/service/session prerequisites are absent.
+- `build/quality/Test-FullBenchmarkMatrix.ps1` supplements the focused performance script with separately logged, fail-closed lanes for every R-03 benchmark method and requires an explicitly configured MFT capability volume for acceptance eligibility.
+- `build/quality/Test-ResourceBudgetAcceptance.ps1` supervises the existing resource script, proves target PID lifecycle stability and evidence span, and requires the passed schema from the independent `build/quality/New-ResourceQuietWitness.ps1` final-five-minute witness.
 
-## Verification run
+## Current verification
 
-Successful on this worktree with zero build warnings/errors:
+- `dotnet build StorageChronicle.slnx --no-restore -v:minimal`: passed, 0 warnings, 0 errors.
+- `dotnet run --project tools/StorageChronicle.DocMirrorValidator --no-restore -- .`: passed.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/Test-Fast.ps1 -NoRestore`: passed for all 22 non-privileged test projects.
+- `build/Test-WindowsPrivileged.ps1 -Configuration Release -AcceptanceRoot artifacts/acceptance/safe-root`: the latest manifest is `artifacts/acceptance/windows-privileged-20260803-230134.json`; ReadDirectoryChangesW and Session passed, while VHDX/USN/MFT/ETW/SMB/Service/RemovableMedia remained explicitly `NOT_EXECUTED`; the fail-closed overall result was `NOT_EXECUTED` (exit code 2) on this non-administrator Windows 11 host.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1`: passed on the fresh 2026-08-03 run. Its coverage phase completed under `artifacts/quality/coverage/runs-20260803-225051`. Domain 80.81%, State 94.13%, Projection 89.4%, Storage 84.51%; EventStack/Diff/Settings ViewModels 73.11%/94.2%/93.41%. The same run completed the full non-privileged Build/Fast/Quality/UI sequence with zero warnings and zero errors in the build phase.
+- The supplemental resource supervisor received syntax/prerequisite and deliberate failure-path validation. Its Agent health client now uses cancellable asynchronous named-pipe I/O, and diagnostic mode correctly reports a healthy shortened run as non-acceptance rather than as a harness failure. The actual Release Agent/Session Agent completed a 600-second diagnostic at `artifacts/quality/resources/acceptance-10248-65328-20260803T132953422Z.json`, backed by `process-10248-65328-20260803T132954597Z.json`, with 569 resource samples over 599.8615949 seconds, 596 queue samples, zero missed samples, maximum queue depth 0, stable process identities, peak combined private working set 23.66015625 MiB, and average normalized CPU 0.1997875688%; it remains diagnostic-only because no independent final-five-minute quiet-period evidence was supplied. Benchmark declarations were corrected and bounded storage/rebuild batching was added without reducing the workload. The current bounded-batch matrix completed all six non-MFT suites and 12/12 methods at `artifacts/benchmarks/portable-matrix-current/full-matrix-20260803T122827484Z`; it remains diagnostic because the manifest is `PortableOnly=true` and `AcceptanceEligible=false` until configured MFT evidence exists.
 
-- `dotnet restore` for Architecture, UI Headless, EndToEnd, Benchmarks, and ResourceMonitor projects with `--ignore-failed-sources`.
-- `dotnet build` for those projects with `--no-restore --nologo`.
-- Direct xUnit v3 executable: Architecture, UI Headless, and EndToEnd; all passed (5, 2, and 3 tests respectively).
+## Open acceptance work
 
-The standard `dotnet test` command is currently blocked by the pre-existing repository `global.json`, which does not select the .NET 10 `Microsoft.Testing.Platform` runner while MTP 2.3.0 is referenced. The CodeCoverage script therefore fails loudly until the integration owner adds the required runner selection; no coverage or performance acceptance result is claimed here. This branch does not edit `global.json` because it is outside the assigned edit paths.
+- The privileged Windows lane has only a partial capability run on this workstation; the full external capability manifest remains pending.
+- The formal 600-second Agent/Session-Agent acceptance run still requires a non-diagnostic boundary plus independent final-five-minute quiet-period evidence; the current 600-second diagnostic is recorded above. The configured MFT BenchmarkDotNet case is still required after the current integration changes.
+- Windows 10 22H2, removable-media insertion, SMB, ETW, service recovery, interactive session, and clean installer update/rollback remain environment-bound.
 
-## Commands for the integration owner
+## Shared-contract requests
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File build/quality/Test-Quality.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File build/quality/Test-Privileged.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File build/quality/Test-Performance.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File build/quality/Test-ResourceBudget.ps1 -ProcessId <agent-or-session-agent-pid>
-```
-
-Expected artifacts are under `artifacts/quality/`, `artifacts/benchmarks/`, and `artifacts/quality/resources/`; generated artifacts are not committed.
-
-## Known limitations
-
-Physical Windows volume/media, USN/MFT/ETW/service privilege, release-hardware CPU/memory, and disk-write acceptance remain acceptance-host measurements. The benchmark suite provides reproducible workloads but does not substitute for those measurements.
+None. All current changes use existing platform-neutral contracts or top-agent-owned integration seams.

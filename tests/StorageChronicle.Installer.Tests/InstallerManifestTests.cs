@@ -13,16 +13,224 @@ public sealed class InstallerManifestTests
         Assert.Contains("Account=\"LocalSystem\"", wix, StringComparison.Ordinal);
         Assert.Contains("ServiceConfig", wix, StringComparison.Ordinal);
         Assert.Contains("RestartServiceDelayInSeconds=\"5\"", wix, StringComparison.Ordinal);
-        Assert.Contains("distinct 5/15/60-second delays", wix, StringComparison.Ordinal);
+        Assert.Contains("ConfigureAgentServiceRecovery", wix, StringComparison.Ordinal);
+        Assert.Contains("After=\"StartServices\"", wix, StringComparison.Ordinal);
         var recovery = File.ReadAllText(Path.Combine(root, "src", "StorageChronicle.Agent", "WindowsServiceRecoveryConfigurator.cs"));
         Assert.Contains("5_000", recovery, StringComparison.Ordinal);
         Assert.Contains("15_000", recovery, StringComparison.Ordinal);
         Assert.Contains("60_000", recovery, StringComparison.Ordinal);
-        Assert.Contains("ChangeServiceConfig2", recovery, StringComparison.Ordinal);
+        Assert.Contains("GetExecutablePath", recovery, StringComparison.Ordinal);
+        var program = File.ReadAllText(Path.Combine(root, "src", "StorageChronicle.Agent", "Program.cs"));
+        Assert.Contains("--configure-service-recovery", program, StringComparison.Ordinal);
         Assert.Contains("CurrentVersion\\Run", wix, StringComparison.Ordinal);
         Assert.Contains("CommonAppDataFolder", wix, StringComparison.Ordinal);
         Assert.Contains("Permanent=\"yes\"", wix, StringComparison.Ordinal);
         Assert.DoesNotContain("Driver", wix, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void VirtualBoxInstallerDriverExistsButPhysicalPolicyDisablesHarnessVmExecution()
+    {
+        var root = FindRoot();
+        var genericHarness = File.ReadAllText(Path.Combine(root, "build", "package", "Test-Installer.ps1"));
+        var driver = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Invoke-VirtualBoxInstallerCase.ps1"));
+        var orchestrator = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Run-VirtualBoxInstallerAcceptance.ps1"));
+
+        Assert.Contains("GuestCredentialReference", genericHarness, StringComparison.Ordinal);
+        Assert.Contains("$validTargetKind = $TargetKind -eq 'PhysicalMachine'", genericHarness, StringComparison.Ordinal);
+        Assert.Contains("$validMode = $ExecutionMode -eq 'Local'", genericHarness, StringComparison.Ordinal);
+        Assert.Contains("VM and non-physical installer execution are disabled", genericHarness, StringComparison.Ordinal);
+        Assert.Contains("Invoke-VBoxGuestControl", driver, StringComparison.Ordinal);
+        Assert.Contains("Copy-TestArtifactToVm", driver, StringComparison.Ordinal);
+        Assert.Contains("Copy-TestArtifactFromVm", driver, StringComparison.Ordinal);
+        Assert.Contains("Status = 'FAILED'", driver, StringComparison.Ordinal);
+        Assert.Contains("SC-CLEAN-BASELINE", orchestrator, StringComparison.Ordinal);
+        Assert.Contains("-Apply", orchestrator, StringComparison.Ordinal);
+        Assert.Contains("AcceptanceEligible", orchestrator, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Windows10AcceptanceComposersRequireRealEvidence()
+    {
+        var root = FindRoot();
+        var stageA = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Compose-Windows10StageA.ps1"));
+        var physical = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Finalize-Windows10PhysicalAcceptance.ps1"));
+
+        Assert.Contains("StorageChronicle.Windows10StageAAcceptance.v1", stageA, StringComparison.Ordinal);
+        Assert.Contains("COMPLETED_REAL_IO_ACCEPTANCE", stageA, StringComparison.Ordinal);
+        Assert.Contains("StorageChronicle.Windows10StageACheck.v1", stageA, StringComparison.Ordinal);
+        Assert.Contains("EvidenceOrigin -ne 'real'", stageA, StringComparison.Ordinal);
+        Assert.Contains("StorageChronicle.Windows10PhysicalAcceptance.v1", physical, StringComparison.Ordinal);
+        Assert.Contains("Status = 'NOT_EXECUTED'", physical, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Windows10CapabilityChecksAreGuestRealAndFailClosed()
+    {
+        var root = FindRoot();
+        var guest = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Test-Windows10StageACapability.ps1"));
+        var host = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Invoke-Windows10StageACapabilityChecks.ps1"));
+
+        Assert.Contains("StorageChronicle.Windows10StageACheck.v1", guest, StringComparison.Ordinal);
+        Assert.Contains("LoadLibrary/GetProcAddress", guest, StringComparison.Ordinal);
+        Assert.Contains("cldapi.dll", guest, StringComparison.Ordinal);
+        Assert.Contains("pnputil.exe", guest, StringComparison.Ordinal);
+        Assert.Contains("DriverPresent", guest, StringComparison.Ordinal);
+        Assert.Contains("ApiCalled = $false", guest, StringComparison.Ordinal);
+        Assert.Contains("SC-Test-W10-VBox", host, StringComparison.Ordinal);
+        Assert.Contains("Assert-VirtualBoxHostPrerequisites", host, StringComparison.Ordinal);
+        Assert.Contains("if (-not $Apply)", host, StringComparison.Ordinal);
+        Assert.Contains("AcceptanceEligible = $false", host, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PrivilegedAcceptanceUsesOneFixedCapabilityContract()
+    {
+        var root = FindRoot();
+        var contract = File.ReadAllText(Path.Combine(root, "build", "quality", "AcceptanceContracts.ps1"));
+        var producer = File.ReadAllText(Path.Combine(root, "build", "Test-Privileged.ps1"));
+        var wrapper = File.ReadAllText(Path.Combine(root, "build", "Test-WindowsPrivileged.ps1"));
+        var stageA = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Compose-Windows10StageA.ps1"));
+        var finalGate = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-FinalAcceptance.ps1"));
+
+        foreach (var capability in new[] { "Vhdx", "UsnQuery", "UsnRead", "Mft", "Reconciliation", "Etw", "ReadDirectoryChangesW", "BufferGap", "Smb", "Service", "SessionAgent", "Clipboard", "VolumeGuid", "HotAttachDetach", "AclDeniedMetadata", "NonNtfs" })
+        {
+            Assert.Contains($"'{capability}'", contract, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("AcceptanceContracts.ps1", producer, StringComparison.Ordinal);
+        Assert.Contains("Get-RequiredWindowsPrivilegedCapabilities", producer, StringComparison.Ordinal);
+        Assert.Contains("Get-RequiredWindowsPrivilegedCapabilities", stageA, StringComparison.Ordinal);
+        Assert.Contains("Get-RequiredWindowsPrivilegedCapabilities", finalGate, StringComparison.Ordinal);
+        Assert.Contains("WorkloadOraclePath", wrapper, StringComparison.Ordinal);
+        Assert.Contains("AgentHistoryPath", wrapper, StringComparison.Ordinal);
+        Assert.Contains("Windows 11", finalGate, StringComparison.Ordinal);
+        Assert.Contains("IsAdministrator", finalGate, StringComparison.Ordinal);
+        Assert.Contains("AcceptanceEligible=true", finalGate, StringComparison.Ordinal);
+        Assert.Contains("placeholder, failed, or ineligible result", finalGate, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PhysicalVhdxRunnerRevalidatesDiskRolesAndNeverDeletesItsFixture()
+    {
+        var root = FindRoot();
+        var producer = File.ReadAllText(Path.Combine(root, "build", "Test-Privileged.ps1"));
+        var beforeInitialize = producer.Split("Initialize-Disk -UniqueId $diskUniqueId", StringSplitOptions.None)[0];
+
+        Assert.Contains("Get-Disk -UniqueId $uniqueId", producer, StringComparison.Ordinal);
+        Assert.Contains("$resolvedImageDisks[0].Number -ne [uint32]$disk.Number", producer, StringComparison.Ordinal);
+        Assert.Contains("Assert-VhdxDiskHasNoPagingOrCrashDumpRole $diskUniqueId", beforeInitialize, StringComparison.Ordinal);
+        Assert.Contains("Dismount-DiskImage -ImagePath $VhdxPath -ErrorAction Stop", producer, StringComparison.Ordinal);
+        Assert.Contains("DETACHED_VERIFIED", producer, StringComparison.Ordinal);
+        Assert.Contains("VhdxDetachStatus = 'FAILED'", producer, StringComparison.Ordinal);
+        Assert.DoesNotContain("Remove-Item -LiteralPath $VhdxPath", producer, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PhysicalInstallerMutationRequiresFreshRunOwnershipAndCannotFallBackToVmOrOverwriteEvidence()
+    {
+        var root = FindRoot();
+        var launcher = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Run-RealMachineInstallerAcceptance.ps1"));
+        var harness = File.ReadAllText(Path.Combine(root, "build", "package", "Test-Installer.ps1"));
+        var driver = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Invoke-RealInstallerCase.ps1"));
+        var probe = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Probe-WriteAccess.ps1"));
+
+        Assert.DoesNotContain("SkipConfirmation", launcher, StringComparison.Ordinal);
+        Assert.Contains("ExpectedHashManifestSha256", launcher, StringComparison.Ordinal);
+        Assert.Contains("EvidenceRoot must be a new path", launcher, StringComparison.Ordinal);
+        Assert.Contains("I CONFIRM DEDICATED PC", harness, StringComparison.Ordinal);
+        Assert.Contains("StorageChronicle.PhysicalInstallerOwnerReceipt.v1", harness, StringComparison.Ordinal);
+        Assert.Contains("VM and non-physical installer execution are disabled", harness, StringComparison.Ordinal);
+        Assert.Contains("Bundle hash entry is unsafe or malformed", harness, StringComparison.Ordinal);
+        Assert.Contains("$relativePath -match '(^|[\\\\/])\\.\\.([\\\\/]|$)'", harness, StringComparison.Ordinal);
+        Assert.Contains("Physical installer input must be the exact fingerprinted bundle payload", harness, StringComparison.Ordinal);
+        Assert.Contains("Bundle hash manifest contains a duplicate payload path", harness, StringComparison.Ordinal);
+        Assert.Contains("The volume marker schema, role, label, filesystem, or TestId", launcher, StringComparison.Ordinal);
+        Assert.Contains("must be the canonical Storage Chronicle directory under Program Files", harness, StringComparison.Ordinal);
+        Assert.Contains("must be the canonical Storage Chronicle history directory under ProgramData", harness, StringComparison.Ordinal);
+        Assert.Contains("outside system/application roots, repository, bundle, OneDrive, and Documents", harness, StringComparison.Ordinal);
+        Assert.Contains("Installer driver paths must be the canonical product install/history paths", driver, StringComparison.Ordinal);
+        Assert.Contains("NTFS fixed-volume role", driver, StringComparison.Ordinal);
+        Assert.Contains("Write-NewUtf8File $manifestPath $json", harness, StringComparison.Ordinal);
+        Assert.DoesNotContain("Set-Content -LiteralPath $manifestPath", harness, StringComparison.Ordinal);
+        Assert.Contains("AuthorizationNonce", driver, StringComparison.Ordinal);
+        Assert.Contains("HumanConfirmation", driver, StringComparison.Ordinal);
+        Assert.Contains("FileMode]::CreateNew", driver, StringComparison.Ordinal);
+        Assert.DoesNotContain("New-Item -ItemType Directory -Force -Path $permissionRoot", driver, StringComparison.Ordinal);
+        Assert.DoesNotContain("Remove-Item -LiteralPath $permissionRoot -Recurse", driver, StringComparison.Ordinal);
+        Assert.DoesNotContain("catch { exit 0 }", probe, StringComparison.Ordinal);
+        Assert.Contains("$probeExitCode = 2", probe, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RetiredTestLabAndAgentModeFailClosedBeforeSideEffects()
+    {
+        var root = FindRoot();
+        var agent = File.ReadAllText(Path.Combine(root, "src", "StorageChronicle.Agent", "Program.cs"));
+        var testLab = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Invoke-WindowsTestLab.ps1"));
+
+        Assert.Contains("--testlab is retired", agent, StringComparison.Ordinal);
+        Assert.Contains("return 2;", agent, StringComparison.Ordinal);
+        Assert.Contains("This VM/guest TestLab runner is retired", testLab, StringComparison.Ordinal);
+        Assert.Contains("exit 2", testLab, StringComparison.Ordinal);
+        Assert.Contains("[Console]::Error.WriteLine", testLab, StringComparison.Ordinal);
+        Assert.True(testLab.IndexOf("exit 2", StringComparison.Ordinal) < testLab.IndexOf("TestLab.Common.ps1", StringComparison.Ordinal));
+        Assert.True(testLab.IndexOf("exit 2", StringComparison.Ordinal) < testLab.IndexOf("Invoke-GuestCommand", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void FinalAcceptanceCorrelationRequiresLivePhysicalRowsAndArtifacts()
+    {
+        var root = FindRoot();
+        var finalGate = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-FinalAcceptance.ps1"));
+        var wrapper = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-CorrelationMetrics.ps1"));
+
+        Assert.Contains("TargetKind -ne 'PhysicalMachine'", finalGate, StringComparison.Ordinal);
+        Assert.Contains("ExecutionMode -ne 'Local'", finalGate, StringComparison.Ordinal);
+        Assert.Contains("AgentHostMode -ne 'Service'", finalGate, StringComparison.Ordinal);
+        Assert.Contains("AgentHistoryPath", finalGate, StringComparison.Ordinal);
+        Assert.Contains("WorkloadExecutablePath", finalGate, StringComparison.Ordinal);
+        Assert.Contains("FalseAttributionCount", finalGate, StringComparison.Ordinal);
+        Assert.Contains("DroppedEventCount", finalGate, StringComparison.Ordinal);
+        Assert.Contains("ProcessAttribution.Rows", finalGate, StringComparison.Ordinal);
+        Assert.Contains("ExplorerSourceCorrelation.Rows", finalGate, StringComparison.Ordinal);
+        Assert.Contains("AgentHistoryPath", wrapper, StringComparison.Ordinal);
+        Assert.Contains("SourceCorrelatedCount", wrapper, StringComparison.Ordinal);
+        Assert.Contains("FileStateCorrectness", wrapper, StringComparison.Ordinal);
+        Assert.Contains("SourceEventCount", finalGate, StringComparison.Ordinal);
+        Assert.Contains("FailureReasons", finalGate, StringComparison.Ordinal);
+        Assert.DoesNotContain("VirtualBoxInstallerAcceptance", finalGate, StringComparison.Ordinal);
+        Assert.DoesNotContain("WindowsTestLabExecution", finalGate, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FinalAcceptanceRequiresCurrentPhysicalSafetyAuditAndRejectsVmEvidence()
+    {
+        var root = FindRoot();
+        var finalGate = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-FinalAcceptance.ps1"));
+
+        Assert.Contains("PhysicalReadOnlyAuditManifest", finalGate, StringComparison.Ordinal);
+        Assert.Contains("Name = 'PhysicalSafety'", finalGate, StringComparison.Ordinal);
+        Assert.Contains("rev-parse HEAD", finalGate, StringComparison.Ordinal);
+        Assert.Contains("status --porcelain", finalGate, StringComparison.Ordinal);
+        Assert.Contains("independentWriteMonitoring", finalGate, StringComparison.Ordinal);
+        Assert.Contains("overallStatus -ne 'PASS'", finalGate, StringComparison.Ordinal);
+        Assert.Contains("Physical safety audit does not declare AcceptanceEligible=true", finalGate, StringComparison.Ordinal);
+        Assert.Contains("Validation failed: $($_.Exception.Message)", finalGate, StringComparison.Ordinal);
+        Assert.DoesNotContain("Windows11VirtualBoxInstallerManifest", finalGate, StringComparison.Ordinal);
+        Assert.DoesNotContain("TestLabAndRealIo", finalGate, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Windows10ManualBundleCarriesSharedAcceptanceContract()
+    {
+        var root = FindRoot();
+        var bundleGenerator = File.ReadAllText(Path.Combine(root, "build", "package", "New-ManualAcceptanceBundle.ps1"));
+        var finalizer = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Finalize-Windows10PhysicalAcceptance.ps1"));
+
+        Assert.Contains("AcceptanceContracts.ps1", bundleGenerator, StringComparison.Ordinal);
+        Assert.Contains("payloadFiles.Add('AcceptanceContracts.ps1')", bundleGenerator, StringComparison.Ordinal);
+        Assert.Contains("Join-Path $PSScriptRoot 'AcceptanceContracts.ps1'", finalizer, StringComparison.Ordinal);
     }
 
     private static string FindRoot()

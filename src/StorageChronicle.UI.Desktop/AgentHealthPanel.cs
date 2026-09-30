@@ -19,16 +19,14 @@ public sealed class AgentHealthPanel : UserControl
         this.client = client ?? throw new ArgumentNullException(nameof(client));
         var refresh = new Button { Content = "Refresh health", [AutomationProperties.NameProperty] = "Refresh Agent health" };
         refresh.Click += async (_, _) => await RefreshAsync().ConfigureAwait(true);
-        var execute = new Button { Content = "Reconcile selected", [AutomationProperties.NameProperty] = "Execute selected reconciliation" };
-        execute.Click += async (_, _) => await DecideAsync(execute: true).ConfigureAwait(true);
-        var decline = new Button { Content = "Keep gap", [AutomationProperties.NameProperty] = "Decline selected reconciliation" };
-        decline.Click += async (_, _) => await DecideAsync(execute: false).ConfigureAwait(true);
+        var review = new Button { Content = "Review selected gap", [AutomationProperties.NameProperty] = "Review selected reconciliation" };
+        review.Click += async (_, _) => await ReviewAsync().ConfigureAwait(true);
         Content = new DockPanel
         {
             Margin = new Avalonia.Thickness(8),
             Children =
             {
-                new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { status, refresh, execute, decline } },
+                new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { status, refresh, review } },
                 pending
             }
         };
@@ -50,11 +48,20 @@ public sealed class AgentHealthPanel : UserControl
         }
     }
 
-    private async Task DecideAsync(bool execute)
+    private async Task ReviewAsync()
     {
         if (pending.SelectedItem is not PendingReconciliationRequest request) return;
         try
         {
+            if (TopLevel.GetTopLevel(this) is not Window owner)
+            {
+                status.Text = "Reconciliation unavailable: the confirmation owner is not available.";
+                return;
+            }
+
+            var confirmation = new ReconciliationConfirmationWindow(request);
+            var decision = await confirmation.ShowDialogAsync(owner).ConfigureAwait(true);
+            if (decision is not bool execute) return;
             var health = await client.DecideReconciliationAsync(request.RequestId, execute).ConfigureAwait(true);
             status.Text = $"Agent: {health.State}  Volumes: {health.Volumes.Count}  Pending: {health.PendingReconciliations?.Count ?? 0}";
             pending.ItemsSource = health.PendingReconciliations ?? Array.Empty<PendingReconciliationRequest>();

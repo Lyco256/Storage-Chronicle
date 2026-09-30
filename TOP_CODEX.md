@@ -100,7 +100,7 @@ Wave 2統合済み`devenv`から作る。
 | 19 | `feat/integration-quality` |
 | 20 | `feat/installer-packaging` |
 
-統合品質ブランチを先にマージし、インストーラーを後にマージする。その後、Windows管理者権限テスト、外付け媒体テスト、性能測定、障害復旧テストを実行する。
+統合品質ブランチを先にマージし、インストーラーを後にマージする。実機上で製品や特権テストを起動する前に `Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md` の静的監査、隔離領域検査、通常権限preflightを完了する。その後、同要件の段階順にWindows特権、外付け媒体、性能、障害復旧を検証する。OS全体をゲスト化する仮想マシンは構築しない。軽量な隔離試験には、要件37の安全ゲートを通した専用fixture、file-backed VHDX等を積極的に利用してよい。
 
 ## 4. サブエージェントの完了条件
 
@@ -156,6 +156,7 @@ Phase 0で作成した次のパスはトップCodex所有である。
 - 定義済み測定条件でAgentとSession AgentのPrivate Working Set合計が50MiB未満、CPU平均が0.5%以下である。未達の場合はユーザーが例外を明示承認しない限り完了扱いにしない。
 - Windows 10互換テスト定義が存在し、Windows 11専用APIは能力検出で隔離されている。Windows 10実機がない場合は`docs/release/windows10-compatibility.md`へ未実行項目を明示し、検証済みとは報告しない。
 - `Requirements/98_REQUIREMENTS_COVERAGE.md`の全項目を実装結果へ再照合し、未達がない。
+- 実機読取り専用監査と独立した実行時書込み監査が、製品専用履歴・設定領域以外の既存データ変更ゼロを示す。
 - 受け入れ結果を`docs/release/main-readiness.md`へ記録している。
 
 `main`へのマージは`--no-ff`を使用し、タグはユーザーの明示指示があるまで作成しない。

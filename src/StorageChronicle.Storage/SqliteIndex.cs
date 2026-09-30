@@ -4,6 +4,17 @@ using StorageChronicle.Domain.Contracts;
 
 namespace StorageChronicle.Storage;
 
+internal readonly record struct EventIndexRecord(
+    StorageRecordKind Kind,
+    long Sequence,
+    EventId EventId,
+    EventSchemaVersion SchemaVersion,
+    EventTime Time,
+    FileId? FileId,
+    FileId? ParentFileId,
+    string? Name,
+    byte[] Payload);
+
 internal sealed class SqliteIndex : IAsyncDisposable
 {
     private const int CurrentSchemaVersion = 2;
@@ -55,6 +66,97 @@ internal sealed class SqliteIndex : IAsyncDisposable
         }
     }
 
+    internal async ValueTask<HashSet<string>> FindExistingEventIdsAsync(StorageRecordKind kind, IReadOnlyCollection<EventId> eventIds, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(eventIds);
+        var values = eventIds.Select(value => value.ToString()).Distinct(StringComparer.Ordinal).ToArray();
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        if (values.Length == 0) return result;
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            foreach (var chunk in values.Chunk(500))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                using var command = _connection.CreateCommand();
+                var parameters = new List<string>(chunk.Length);
+                for (var index = 0; index < chunk.Length; index++)
+                {
+                    var parameter = "$event_id" + index.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    parameters.Add(parameter);
+                    AddParameter(command, parameter, chunk[index]);
+                }
+
+                command.CommandText = $"SELECT event_id FROM event_index WHERE kind = $kind AND event_id IN ({string.Join(",", parameters)});";
+                AddParameter(command, "$kind", (int)kind);
+                using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) result.Add(reader.GetString(0));
+            }
+
+            return result;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    internal async ValueTask AppendEventsAsync(IReadOnlyList<EventIndexRecord> records, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(records);
+        if (records.Count == 0) return;
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var transaction = _connection.BeginTransaction();
+            using var command = _connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT OR IGNORE INTO event_index
+                    (sequence, event_id, kind, schema_major, schema_minor, recorded_utc, source_sequence, file_id, parent_file_id, name, payload)
+                VALUES ($sequence, $event_id, $kind, $schema_major, $schema_minor, $recorded_utc, $source_sequence, $file_id, $parent_file_id, $name, $payload);
+                INSERT OR IGNORE INTO path_search (file_id, parent_file_id, name, sequence)
+                    VALUES ($file_id, $parent_file_id, $name, $sequence);
+                """;
+            AddParameter(command, "$sequence", 0L);
+            AddParameter(command, "$event_id", string.Empty);
+            AddParameter(command, "$kind", 0);
+            AddParameter(command, "$schema_major", 0);
+            AddParameter(command, "$schema_minor", 0);
+            AddParameter(command, "$recorded_utc", string.Empty);
+            AddParameter(command, "$source_sequence", 0L);
+            AddParameter(command, "$file_id", null);
+            AddParameter(command, "$parent_file_id", null);
+            AddParameter(command, "$name", null);
+            AddParameter(command, "$payload", Array.Empty<byte>());
+
+            foreach (var record in records)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                command.Parameters["$sequence"].Value = record.Sequence;
+                command.Parameters["$event_id"].Value = record.EventId.ToString();
+                command.Parameters["$kind"].Value = (int)record.Kind;
+                command.Parameters["$schema_major"].Value = record.SchemaVersion.Major;
+                command.Parameters["$schema_minor"].Value = record.SchemaVersion.Minor;
+                command.Parameters["$recorded_utc"].Value = record.Time.RecordedUtc.ToUniversalTime().ToString("O");
+                command.Parameters["$source_sequence"].Value = record.Time.SourceSequence.Value;
+                command.Parameters["$file_id"].Value = record.FileId is { } fileId ? fileId.ToString() : DBNull.Value;
+                command.Parameters["$parent_file_id"].Value = record.ParentFileId is { } parentFileId ? parentFileId.ToString() : DBNull.Value;
+                command.Parameters["$name"].Value = record.Name is { } name ? name : DBNull.Value;
+                command.Parameters["$payload"].Value = record.Payload;
+                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            transaction.Commit();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     internal async ValueTask ApplyCanonicalAsync(CanonicalEvent value, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -98,6 +200,79 @@ internal sealed class SqliteIndex : IAsyncDisposable
                 AddParameter(projection, "$key", $"canonical:{value.EventId}");
                 AddParameter(projection, "$payload", JsonSerializer.SerializeToUtf8Bytes(value));
                 AddParameter(projection, "$updated_utc", DateTimeOffset.UtcNow.ToString("O"));
+                await projection.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            transaction.Commit();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    internal async ValueTask ApplyCanonicalBatchAsync(IReadOnlyList<CanonicalEvent> values, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        if (values.Count == 0) return;
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var transaction = _connection.BeginTransaction();
+            using var state = _connection.CreateCommand();
+            state.Transaction = transaction;
+            state.CommandText = """
+                INSERT INTO current_state
+                    (file_id, volume_id, parent_file_id, name, kind, metadata_json, exists_flag, quality, event_time_utc)
+                VALUES ($file_id, $volume_id, $parent_file_id, $name, $kind, $metadata_json, $exists_flag, $quality, $event_time_utc)
+                ON CONFLICT(file_id) DO UPDATE SET
+                    volume_id = excluded.volume_id,
+                    parent_file_id = excluded.parent_file_id,
+                    name = excluded.name,
+                    kind = excluded.kind,
+                    metadata_json = excluded.metadata_json,
+                    exists_flag = excluded.exists_flag,
+                    quality = excluded.quality,
+                    event_time_utc = excluded.event_time_utc;
+                """;
+            AddParameter(state, "$file_id", string.Empty);
+            AddParameter(state, "$volume_id", DBNull.Value);
+            AddParameter(state, "$parent_file_id", DBNull.Value);
+            AddParameter(state, "$name", DBNull.Value);
+            AddParameter(state, "$kind", string.Empty);
+            AddParameter(state, "$metadata_json", DBNull.Value);
+            AddParameter(state, "$exists_flag", false);
+            AddParameter(state, "$quality", 0);
+            AddParameter(state, "$event_time_utc", string.Empty);
+
+            using var projection = _connection.CreateCommand();
+            projection.Transaction = transaction;
+            projection.CommandText = "INSERT OR REPLACE INTO projection_cache (cache_key, payload, updated_utc) VALUES ($key, $payload, $updated_utc);";
+            AddParameter(projection, "$key", string.Empty);
+            AddParameter(projection, "$payload", Array.Empty<byte>());
+            AddParameter(projection, "$updated_utc", string.Empty);
+
+            foreach (var value in values)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (value.FileId is { } fileId)
+                {
+                    state.Parameters["$file_id"].Value = fileId.ToString();
+                    state.Parameters["$volume_id"].Value = value.VolumeId is { } volumeId ? volumeId.ToString() : DBNull.Value;
+                    state.Parameters["$parent_file_id"].Value = value.ParentFileId is { } parentFileId ? parentFileId.ToString() : DBNull.Value;
+                    state.Parameters["$name"].Value = value.Name is { } name ? name : DBNull.Value;
+                    state.Parameters["$kind"].Value = value.Metadata?.Kind.ToString() ?? FileKind.Unknown.ToString();
+                    state.Parameters["$metadata_json"].Value = value.Metadata is null ? DBNull.Value : JsonSerializer.Serialize(value.Metadata);
+                    state.Parameters["$exists_flag"].Value = value.Metadata?.Exists ?? value.Operation is not (CanonicalOperation.Delete or CanonicalOperation.Recycle);
+                    state.Parameters["$quality"].Value = (int)value.Quality;
+                    state.Parameters["$event_time_utc"].Value = value.Time.RecordedUtc.ToUniversalTime().ToString("O");
+                    await state.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                }
+
+                projection.Parameters["$key"].Value = $"canonical:{value.EventId}";
+                projection.Parameters["$payload"].Value = JsonSerializer.SerializeToUtf8Bytes(value);
+                projection.Parameters["$updated_utc"].Value = DateTimeOffset.UtcNow.ToString("O");
                 await projection.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
 

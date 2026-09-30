@@ -7,11 +7,14 @@ namespace StorageChronicle.UI.EventStack;
 /// <summary>Compiled-binding Avalonia view for the Event Stack.</summary>
 public partial class EventStackView : UserControl
 {
+    private bool initialized;
+
     /// <summary>Creates a view whose DataContext can be assigned by the shell.</summary>
     public EventStackView()
     {
         InitializeComponent();
         AddHandler(InputElement.KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel);
+        Loaded += OnLoaded;
     }
 
     /// <summary>Creates a view for a supplied UI-only view model.</summary>
@@ -37,5 +40,19 @@ public partial class EventStackView : UserControl
         if (key is null) return;
         args.Handled = true;
         await viewModel.HandleKeyAsync(key.Value).ConfigureAwait(true);
+    }
+
+    private async void OnLoaded(object? sender, Avalonia.Interactivity.RoutedEventArgs args)
+    {
+        if (initialized || DataContext is not EventStackViewModel viewModel) return;
+        initialized = true;
+        try
+        {
+            await viewModel.InitializeAsync().ConfigureAwait(true);
+        }
+        catch (Exception exception) when (exception is IOException or TimeoutException or UnauthorizedAccessException or InvalidDataException)
+        {
+            viewModel.SetStatusMessage($"Event Stack could not load: {exception.Message}");
+        }
     }
 }

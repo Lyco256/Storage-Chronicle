@@ -15,3 +15,33 @@ Projection の path resolver と FileDiffProjection に依存する。空の chi
 ## 関連テスト
 
 Headless テストが root、lazy expansion、virtual unknown/deleted row、gutter icon を検証する。
+
+## Role
+Projects shared Diff View state into a lazy tree presentation.
+
+## Public types and responsibilities
+`DiffTreeView` provides tree roots and on-demand child expansion/collapse while retaining the relationship to projected paths.
+
+## Inputs and outputs
+Inputs are projected rows and explicit expansion requests; outputs are tree nodes and visible descendants. File contents and content hashes are not inspected.
+
+## Dependencies
+Depends on platform-neutral Diff View contracts and the shared projection model; desktop controls consume its results.
+
+## Invariants
+Descendants are materialized on expansion only. Grouping nodes are presentation constructs and do not create canonical events or alter recorded state.
+
+## Threading and lifetime
+Tree operations are caller-driven; child loading observes caller cancellation and retains no OS resource.
+
+## Failure behavior
+Unavailable descendants remain absent or unknown rather than being queried from the host filesystem; cancellation propagates to the caller.
+
+## Tests
+See `tests/StorageChronicle.UI.Headless.Tests` for roots, lazy expansion, virtual rows, and gutter rendering.
+
+## OS constraints
+Tree construction is platform-neutral and makes no operating-system filesystem calls.
+
+## Change-sensitive contracts
+Root selection, lazy expansion, and separation of grouping rows from source records are compatibility-sensitive.

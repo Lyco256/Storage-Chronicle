@@ -1,3 +1,4 @@
+using System.Text.Json;
 using StorageChronicle.Contracts.Runtime;
 using StorageChronicle.Domain.Contracts;
 using Xunit;
@@ -31,7 +32,7 @@ public sealed class IpcProtocolTests
     {
         var id = EventId.New();
         var child = new EventStackNodeSnapshot("child", "Source", new EventStackRow(id, DateTimeOffset.UtcNow, "C:/x", CanonicalOperation.Create, "x", EventQuality.Exact, null, ProcessAttributionQuality.Unknown, EventOrigin.LiveUsn, Array.Empty<EventId>()), "Unknown process", Array.Empty<EventStackNodeSnapshot>());
-        var request = new DiffProjectionRequest(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow, DiffMode.Period, Page: 2, PageSize: 50, AllFilters: ["report"], AnyFilters: ["txt", "doc"], ExcludeFilters: ["temporary"]);
+        var request = new DiffProjectionRequest(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow, DiffMode.Period, Page: 2, PageSize: 50, AllFilters: ["report"], AnyFilters: ["txt", "doc"], ExcludeFilters: ["temporary"], ActivityFramesAscending: true);
         var nodeEnvelope = IpcProtocol.Create("ProjectionPageResponse", new ProjectionPageResponse([child.Row], 1, 50, 1, false, [child]));
         var requestEnvelope = IpcProtocol.Create("DiffProjectionRequest", request);
 
@@ -41,5 +42,80 @@ public sealed class IpcProtocolTests
         Assert.Equal(["report"], decoded.AllFilters);
         Assert.Equal(["txt", "doc"], decoded.AnyFilters);
         Assert.Equal(["temporary"], decoded.ExcludeFilters);
+        Assert.True(decoded.ActivityFramesAscending);
+    }
+
+    [Fact]
+    public void LegacyDiffProjectionRequestDefaultsNewActivityFramePagingFields()
+    {
+        using var payload = JsonDocument.Parse("""{"FromUtc":null,"ToUtc":"2026-09-29T00:00:00+00:00","Mode":0,"Page":1,"PageSize":500}""");
+        var request = payload.RootElement.Deserialize<DiffProjectionRequest>(IpcJsonContext.Default.Options);
+
+        Assert.NotNull(request);
+        Assert.Equal(1, request.ActivityFramesPage);
+        Assert.Equal(100, request.ActivityFramesPageSize);
+        Assert.False(request.ActivityFramesAscending);
+    }
+
+    [Fact]
+    public void DiffActivityFramesAndBoundedTimelineRoundTrip()
+    {
+        var eventId = EventId.New();
+        var now = DateTimeOffset.UtcNow;
+        var frame = new DiffActivityFrameSnapshot(
+            "activity-1",
+            ProcessInstanceId.Create("42:638000000000000000"),
+            "editor.exe",
+            ProcessAttributionQuality.Correlated,
+            EventOrigin.LiveUsn,
+            null,
+            null,
+            "C:/work",
+            now.AddSeconds(-1),
+            now,
+            now.AddSeconds(5),
+            false,
+            1,
+            1,
+            0,
+            new Dictionary<string, int> { [CanonicalOperation.Create.ToString()] = 1 },
+            1,
+            IsClosedByProcessExit: true);
+        var response = new DiffProjectionResponse(Array.Empty<DiffEntry>(), ActivityFrames: [frame], ActivityFramesTotalCount: 1);
+        var detailRequest = new DiffActivityFrameTimelineRequest(frame.FrameId, now.AddMinutes(-1), now, PageSize: 20);
+        var envelope = IpcProtocol.Create("DiffProjectionResponse", response);
+        var detailEnvelope = IpcProtocol.Create("DiffActivityFrameTimelineRequest", detailRequest);
+        var decoded = IpcProtocol.Read<DiffProjectionResponse>(envelope);
+        var decodedRequest = IpcProtocol.Read<DiffActivityFrameTimelineRequest>(detailEnvelope);
+        var detailResponse = new DiffActivityFrameTimelineResponse(
+            frame.FrameId,
+            [new DiffActivityFrameEventSnapshot(eventId, now, "C:/work/file.txt", CanonicalOperation.Create, EventQuality.Exact)],
+            1,
+            20,
+            1,
+            false);
+        var decodedDetail = IpcProtocol.Read<DiffActivityFrameTimelineResponse>(IpcProtocol.Create("DiffActivityFrameTimelineResponse", detailResponse));
+
+        var actual = Assert.Single(decoded.ActivityFrames!);
+        Assert.Equal(frame.FrameId, actual.FrameId);
+        Assert.Equal(frame.ProcessId, actual.ProcessId);
+        Assert.Equal(frame.CloseBoundaryUtc, actual.CloseBoundaryUtc);
+        Assert.True(actual.IsClosedByProcessExit);
+        Assert.Equal(1, actual.EventCount);
+        Assert.Equal(frame.FrameId, decodedRequest.FrameId);
+        Assert.Equal("C:/work/file.txt", Assert.Single(decodedDetail.Events).DisplayPath);
+        Assert.Equal(1, actual.OperationBreakdown[CanonicalOperation.Create.ToString()]);
+    }
+
+    [Fact]
+    public void ClientHelloRoundTripsItsRoleAndSession()
+    {
+        var codec = new LengthPrefixedJsonCodec();
+        var frame = codec.Encode(IpcProtocol.Create("ClientHello", new IpcClientHello(IpcClientRole.SessionAgent, 42)), IpcProtocol.Major, IpcProtocol.Minor);
+        var envelope = codec.Decode<IpcEnvelope>(frame, IpcProtocol.Major);
+        var hello = IpcProtocol.Read<IpcClientHello>(envelope);
+
+        Assert.Equal(IpcClientRole.SessionAgent, hello.Role);
+        Assert.Equal(42, hello.SessionId);
     }
 }

@@ -1,5 +1,7 @@
 # Requirements verification
 
+> Historical status note (2026-09-29): entries below that describe VirtualBox, VM, guest, or TestLab execution are superseded as acceptance procedures by `Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md`. The legacy TestLab launcher and Agent `--testlab` mode now fail closed, but the final aggregator and Windows 10 Stage A composer have not yet been migrated to physical-only evidence. Do not interpret historical VM wiring as current acceptance or readiness evidence.
+
 `Requirements/98_REQUIREMENTS_COVERAGE.md` remains authoritative. The table below assigns one verification ID to every row in that coverage document; it records executable evidence and does not weaken any product requirement.
 
 ## Family summary
@@ -8,26 +10,26 @@
 |---|---|---|---|
 | V-01 | architecture and stable contracts | `tests/StorageChronicle.Architecture.Tests`, `StorageChronicle.slnx`, `docs/decisions` | verified |
 | V-02 | source/normalization/state/storage | normalization, state, storage, and integration test projects | verified |
-| V-03 | Windows filesystem/NTFS/session | platform test projects and `build/Test-WindowsPrivileged.ps1` | boundary verified; one existing-journal privileged test passed; VHDX/physical-media and Windows 10 runs pending |
+| V-03 | Windows filesystem/NTFS/session | platform test projects, confirmed runner tests, and `build/Test-WindowsPrivileged.ps1` | Notification/session boundaries and confirmed-runner implementation are tested; real NTFS/non-NTFS reconciliation and the full privileged capability matrix remain pending |
 | V-04 | external media and mount history | `StorageChronicle.ExternalMedia.Tests` and filesystem tests | verified |
-| V-05 | Event Stack and Diff View | projection, Event Stack, Diff View, and headless tests | verified |
+| V-05 | Event Stack and Diff View | projection, Event Stack, Diff View, and headless tests | Event Stack and core Diff View verified; Activity Frame integration has in-session Live/Replay grouping, metadata timeline, paging, pin/sort controls, and transient Live process-exit closure; Replay after Agent restart cannot reconstruct process-exit boundaries, so requirement 16.3 is partial |
 | V-06 | IPC and bounded Agent pipeline | Agent tests, production named-pipe client/server test, and end-to-end smoke test | verified |
 | V-07 | recovery, corruption, cancellation, capacity | Storage, State, Agent, and Normalization failure-path tests | verified |
 | V-08 | documentation synchronization | `build/quality/Test-DocMirror.ps1` and DocMirrorValidator | verified |
-| V-09 | packaging | WiX 6.0.2 project, manifest tests, `build/package/Build-Installer.ps1` | MSI built; physical install/update/rollback matrix remains release-environment verification |
-| V-10 | performance acceptance | BenchmarkDotNet and exact private-working-set resource run | measured on current Windows 11 host |
+| V-09 | packaging | WiX 6.0.2 project, manifest tests, `build/package/Build-Installer.ps1` | MSI build verified; physical install/update/rollback matrix pending |
+| V-10 | performance acceptance | BenchmarkDotNet, `build/quality/Test-FullBenchmarkMatrix.ps1`, and exact private-working-set resource run | current bounded-batch portable matrix passed six non-MFT suites; the MFT 10K/100K/1M/candidate harness is expanded, but the dedicated volume and formal resource acceptance remain pending |
 
 ## Per-row verification of `Requirements/98_REQUIREMENTS_COVERAGE.md`
 
 | ID | Coverage row | Verification evidence | Status |
 |---|---|---|---|
 | V-101 | Product name Storage Chronicle | installer manifest, project names, `Test-All` | verified |
-| V-102 | Windows 10/11 x64, future Ubuntu, upstream Win10 support boundary | `docs/release/windows10-compatibility.md`, architecture tests | boundary verified; Win10 hardware run pending |
+| V-102 | Windows 10/11 x64, future Ubuntu, upstream Win10 support boundary | `docs/release/windows10-compatibility.md`, architecture tests, `Test-Windows10StageACapability.ps1` | boundary and fail-closed Windows 10 capability probe verified; Win10 Stage A/physical hardware run pending |
 | V-103 | Avalonia; MVVM limited to UI | UI project references and architecture tests | verified |
 | V-104 | UI, Service Agent, Session Agent separation | `src/StorageChronicle.Agent`, `src/StorageChronicle.SessionAgent`, UI projects, architecture tests | verified |
 | V-105 | No MVP driver and future replacement seam | collector contracts, installer manifest test, architecture tests | verified |
-| V-106 | NTFS USN and public-API MFT reconciliation | NTFS collector tests and privileged existing-journal test | verified at API boundary |
-| V-107 | Non-NTFS notification monitoring and directory reconciliation | filesystem collector tests | verified |
+| V-106 | NTFS USN and public-API MFT reconciliation | NTFS collector tests, confirmed runner tests, and privileged existing-journal test | USN/public-MFT boundary, initial pre-scan cursor/metadata route, candidate-only metadata, scoped backup privilege, and low-priority I/O implementation are verified by code/tests; real capability execution remains pending |
+| V-107 | Non-NTFS notification monitoring and directory reconciliation | filesystem collector tests and confirmed runner tests | notification, initial-scan boundary, and diff-only Directory Reconciliation implementation are tested; real TestLab execution remains pending |
 | V-108 | Non-NTFS initial-scan boundary and gap handling | `PolicyAndReconciliationTests`, `VolumeAndMediaTests` | verified |
 | V-109 | Deterministic Source-to-Canonical normalization | `EventNormalizerTests`, normalization project | verified |
 | V-110 | Settings persistence, UI, and settings history | settings tests and headless settings tests | verified |
@@ -51,7 +53,7 @@
 | V-128 | External media, PC primary history, and optional mirror | external-media tests and agent collector tests | verified |
 | V-129 | Cross-PC import, Mount Session, and history branching | external-media manifest/import/recovery tests | verified |
 | V-130 | Log exclusion and no system-area mirror | exclusion policy, media policy, and installer tests | verified |
-| V-131 | Reconciliation only after detected gap; no manual command | health/reconciliation tests and IPC contract | verified |
+| V-131 | Reconciliation only after detected gap; no manual command | health/reconciliation tests, confirmed runner tests, and IPC contract | prompt/decline contract and selected-volume Execute delegation are implemented/tested; real volume execution remains pending |
 | V-132 | Defined reconciliation prompt and Yes/No decision | health panel, IPC, and headless tests | verified |
 | V-133 | Source/Normalized/Grouped Event Stack | projection, Event Stack, and end-to-end tests | verified |
 | V-134 | Group expansion, row process data, and paging | Event Stack tests and recursive IPC snapshots | verified |
@@ -60,24 +62,53 @@
 | V-137 | Move endpoints and OS Explorer opening | Diff View model tests | verified |
 | V-138 | Fixed left Tree icon gutter | Diff View headless/contract tests | verified |
 | V-139 | Eight Explorer modes, zoom, and no side tree | Diff View model and headless tests | verified |
-| V-140 | Multiple split panes, ordering, and timeout | Diff View model tests | verified |
+| V-140 | Multiple split panes, ordering, and timeout | Diff View model/Agent tests and named-pipe round-trip | Live/Replay frames, independent metadata paging, sort/pin, pane timeout and in-session ETW ProcessStop closure implemented; historical process-exit closure after Agent restart and full acceptance remain pending |
 | V-141 | Colors, primary operation, and secondary icons | Diff projection and UI tests | verified |
 | V-142 | Complete primary-operation priority | projection unit tests | verified |
 | V-143 | Literal search, AND/OR/exclude, saved filters | projection, IPC, and settings tests | verified |
 | V-144 | Append log, Zstandard, SQLite rebuild | storage tests, golden fixture, and integration tests | verified |
 | V-145 | No history deletion feature | storage API review, architecture tests, installer retention test | verified |
 | V-146 | Capacity stop and USN/reconciliation recovery | capacity, health, and lifecycle tests | verified |
-| V-147 | 50 MiB and 0.5% background gate | exact `Test-ResourceBudget.ps1` run and `docs/release/performance-baseline.md` | measured: 14.53125 MiB private WS, 0.0110659393% CPU |
-| V-148 | xUnit, Headless, ArchUnit, Benchmark | solution test projects, quality scripts, BenchmarkDotNet run | verified |
+| V-147 | 50 MiB and 0.5% background gate | `Test-ResourceBudget.ps1`, `Test-ResourceBudgetAcceptance.ps1`, `New-ResourceQuietWitness.ps1`, and `docs/release/performance-baseline.md` | wrapper enforces a 600-second dual-process run, fixed thresholds, lifecycle identity, queue gaps, and a schema-validated independent final-five-minute quiet witness; the formal run remains pending |
+| V-148 | xUnit, Headless, ArchUnit, Benchmark | solution test projects, quality scripts, BenchmarkDotNet harness | frameworks/harness present; current bounded-batch BenchmarkDotNet matrix passed six non-MFT suites and 12/12 methods; configured MFT acceptance remains pending |
 | V-149 | Mirrored source documentation | `Test-DocMirror.ps1` | verified |
-| V-150 | main/devenv/feat and worktree separation | `TOP_CODEX.md`, `AGENTS.md`, `git worktree list`, handoffs | verified |
-| V-151 | Staged top-agent foundation and delegated waves | branch/worktree history and handoff documents | verified |
+| V-150 | main/devenv/feat and worktree separation | `TOP_CODEX.md`, `AGENTS.md`, `git worktree list`, handoffs | policy verified; feature branch is clean at the latest reviewed commit, while the required `devenv`/`main` integration sequence remains pending |
+| V-151 | Staged top-agent foundation and delegated waves | branch/worktree history and handoff documents | delegation evidence exists; final top-agent merge sequence pending |
 | V-152 | Ownership matrix and shared-contract synchronization | `Requirements/06_AGENT_OWNERSHIP_MATRIX.md`, handoffs, architecture tests | verified |
 | V-153 | Normal installer, one product, retained data | WiX manifest test and successful MSI build | MSI build verified; physical install matrix pending |
 | V-154 | Read-only I/O is not durable history | normalization tests, storage guard, architecture/source review | verified |
 
+## Supplemental audit rows
+
+| ID | Technical requirement | Verification evidence | Status |
+|---|---|---|---|
+| V-155 | C# language version uses the .NET 10 SDK default | `Directory.Build.props`, Release build | fixed in the current feature branch; `LangVersion=preview` was removed |
+| V-156 | Native AOT compatibility publication configuration exists for Agent and Session Agent | `build/Test-AotCompatibility.ps1`, conditional common properties | configuration present; publication is opt-in and not an MVP acceptance gate |
+| V-157 | Unsigned development and signed release procedures are separate without SmartScreen weakening | `docs/installer/signing-procedure.md` | documented; actual release signing remains an external release operation |
+| V-158 | Scoped backup privilege and OS low-priority reconciliation I/O | `WindowsReconciliationInfrastructure`, `ConfirmedReconciliationRunner`, confirmed runner tests, and requirement 24 artifact gate | implemented with a dedicated reconciliation task, synchronous candidate-only thread scope, explicit privilege/ACL fallback and low-priority/I/O-hint/elapsed telemetry, and no event dropping; real privileged matrix evidence remains pending |
+| V-159 | Agent diagnostic mode and Session Agent Clipboard-only IPC role | Agent entry point, named-pipe server identity, `NamedPipeServerTests`, and requirement 17 | verified in current feature branch; diagnostic mode is explicit, role/session hello is source-generated and validated, Session Agent is ClipboardCandidate-only, and an unpublished Session Agent process is rejected |
+
 ## Explicit measured or environment-bound items
 
-The current machine supplies measured evidence for the background resource gate and the 10万-row Event Stack benchmark. Process-correlation rate, Explorer source-correlation rate, 2 TB-scale scan speed, physical Avalonia rendering at scale, Windows 10 22H2 execution, physical-media insertion, and clean install/update/rollback are environment acceptance measurements rather than hidden implementation stubs. The repository contains the required harnesses and records these as pending until the corresponding hardware/OS matrix is run; they must not be reported as Windows 10 or physical-install verified.
+The dedicated deterministic R-00 fixture now supplies fixed metadata-only evidence: process `Exact=1/3`, `Correlated=1/3`, `Unknown=1/3`, and Explorer source-correlation `1/3`. The pending process/Explorer items in the paragraph below refer to live Agent and interactive Session Agent capture, not this fixture result.
+
+The repository contains a previous measured baseline for the background resource gate and the 10万-row Event Stack benchmark. The current portable matrix now supplies diagnostic evidence for all six non-MFT suites and 12/12 methods, and the current Release Agent/Session Agent has completed a 600-second diagnostic resource run; configured MFT capability and the formal resource acceptance run (non-diagnostic boundary plus independent final-five-minute quiet-period evidence) remain pending. Process-correlation rate, Explorer source-correlation rate, 2 TB-scale scan speed, physical Avalonia rendering at scale, Windows 10 22H2 execution, physical-media insertion, and clean install/update/rollback are environment acceptance measurements rather than hidden implementation stubs. The repository contains the required harnesses and records these as pending until the corresponding hardware/OS matrix is run; they must not be reported as Windows 10 or physical-install verified.
 
 No row grants permission to weaken source quality, retain contents/hashes, delete history, or synthesize descendant events.
+
+## Requirements 21–31 supplemental rows
+
+| ID | Requirement | Evidence | Status |
+|---|---|---|---|
+| V-160 | Final acceptance orchestration and evidence order | `Requirements/21_FINAL_ACCEPTANCE_ORCHESTRATION.md`, `tools/TestEnvironment/Invoke-WindowsTestLab.ps1`, `tools/TestEnvironment/Compose-Windows10StageA.ps1` | harness and Stage A composition contract present; all environment groups not yet eligible |
+| V-161 | Safe VirtualBox TestLab and disposable data VHDX | `tools/TestEnvironment/*.ps1`, read-only preflight, Requirements 32–36 | fail-closed VBoxManage/Guest Additions scripts present; current host lacks VBoxManage, has 3 GiB available RAM, and remains blocking |
+| V-162 | Confirmed reconciliation execution | `ConfirmedReconciliationRunner`, IPC Execute path, enforced NTFS pre/post journal boundaries, bounded post-commit live-event overlap accounting, candidate metadata handles, dedicated non-diagnostic TestLab Agent mode, 32 non-privileged Agent tests plus environment-gated NTFS/ACL-denied/non-NTFS acceptance tests | implementation and privileged test wiring verified; real NTFS/non-NTFS run pending |
+| V-163 | NTFS candidate metadata, scoped privilege, low I/O | `WindowsReconciliationInfrastructure`, runner telemetry, targeted Agent reconciliation tests | ordinary metadata is attempted first, scoped `SeBackupPrivilege` is retried only after access denial, denied retry quality/fallback remains explicit, and low-I/O telemetry is retained; elevated Windows execution pending |
+| V-164 | Windows privileged capability matrix | `build/Test-Privileged.ps1`, `build/Test-WindowsPrivileged.ps1`, `build/quality/AcceptanceContracts.ps1` | NOT_EXECUTED on current host; the producer and wrapper require the real workload oracle and Agent history inputs, while the final gates require the fixed sixteen-capability Windows 11 x64/elevated Release contract and reject placeholder oracle/source/canonical/state/reconciliation/service payloads or non-empty error artifacts |
+| V-165 | Windows 10 22H2 compatibility | `Requirements/26_WINDOWS10_22H2_ACCEPTANCE.md`, `tools/TestEnvironment/Compose-Windows10StageA.ps1`, and TestLab definitions | NOT_EXECUTED; Stage A composer is fail-closed and no Stage A/Stage B run exists |
+| V-166 | Formal idle resource gate | `build/quality/Test-ResourceBudgetAcceptance.ps1`, `build/quality/New-ResourceQuietWitness.ps1` | diagnostic evidence exists; the independent witness and strict schema gate are implemented, formal mode now rejects non-Windows 11 x64/known-VM environments, but the formal 600-second quiet-period artifact is pending |
+| V-167 | MFT performance matrix | `MftBenchmarks`, `Test-FullBenchmarkMatrix.ps1` | real public-MFT enumeration/comparer methods and candidate-only production metadata/normalizer path emit the required per-run dataset/candidate/detail-query/generated-canonical/drop/time/allocation/environment oracle; the script and final gate now require Windows 11, all portable/MFT suites, and dedicated labeled-volume evidence; connected evidence and dedicated-volume run remain pending |
+| V-168 | Physical installer acceptance | `build/package/New-ManualAcceptanceBundle.ps1`, `tools/PhysicalAcceptance/*`, `tools/TestEnvironment/Run-VirtualBoxInstallerAcceptance.ps1`, installer build/test scripts and requirement 29 | physical install/repair/update/rollback not executed; explicit VirtualBox guest driver and host matrix orchestrator now exist and remain fail-closed, exact eleven case IDs/statuses are validated, the Windows 10 bundle carries and hashes the shared finalizer contract, while the VirtualBox VM prerequisite, VM/physical matrices still require approved Windows 11/Windows 10 targets, credentials, MSI inputs, a marked guest test root, and real execution evidence |
+| V-169 | Real Agent/Explorer correlation | `tools/StorageChronicle.LiveCorrelationValidator`, `tools/TestEnvironment/Invoke-WindowsTestLab.ps1`, `tools/TestEnvironment/New-ExplorerCorrelationScenario.ps1`, `build/quality/Test-CorrelationMetrics.ps1`, TestLab evidence contract | real producer and strict ingestion gate are wired, including process collection, exact source-file-id matching when supplied, durable source/canonical/final-state counts, and Explorer/file-state rows; the manual helper prepares a marker-verified ten-operation plan, deterministic fixture and validator tests pass, but live correlation has not been executed |
+| V-170 | Safe `devenv`/`main` integration | `Requirements/31_DEVENV_MAIN_INTEGRATION.md`, branch audit | pending all acceptance artifacts and remote branch/default-branch confirmation |
+| V-171 | Final fail-closed acceptance aggregation | `build/quality/Test-FinalAcceptance.ps1`, `docs/build/quality/Test-FinalAcceptance.ps1.md`, `Compose-Windows10StageA.ps1`, `Invoke-Windows10StageACapabilityChecks.ps1` | partial: gate now requires an exact-current-commit physical safety audit and rejects TestLab/VirtualBox installer evidence; Windows 10 Stage A composition and evidence producers remain VM-shaped, and no complete physical audit/runtime evidence exists |

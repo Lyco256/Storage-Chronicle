@@ -1,4 +1,5 @@
 using StorageChronicle.Domain.Contracts;
+using StorageChronicle.Contracts.Runtime;
 using StorageChronicle.Projection;
 using StorageChronicle.UI.DiffView;
 using Xunit;
@@ -7,6 +8,10 @@ namespace StorageChronicle.UI.DiffView.Tests;
 
 public sealed class DiffViewModelTests
 {
+    private static readonly string[] BreadcrumbLabels = ["/", "virtual", "deleted", "archive"];
+    private static readonly string[] DriveBreadcrumbLabels = ["C:\\", "folder", "child"];
+    private static readonly double[] ReplaySpeeds = [1d, 2d, 10d];
+    private static readonly string[] RootFolderChildren = ["current.txt", "deleted.txt", "nested"];
     [Fact]
     public async Task TreeAndExplorerUseOneProjectionAndExposeAllEightModes()
     {
@@ -23,6 +28,25 @@ public sealed class DiffViewModelTests
             Assert.Equal(mode, view.ViewMode);
             Assert.NotEmpty(view.Explorer.GetPage(1, 50));
         }
+    }
+
+    [Fact]
+    public async Task ExplorerZoomIsContinuousAndBoundedAcrossPresentationModes()
+    {
+        var view = await Fixture.CreateViewAsync();
+        Assert.Equal(100, view.Explorer.ZoomPercent);
+        view.Explorer.SetZoomPercent(173);
+        Assert.Equal(173, view.Explorer.ZoomPercent);
+        view.Explorer.SetZoomPercent(DiffExplorerView.MinimumZoomPercent);
+        view.Explorer.AdjustZoom(-1);
+        Assert.Equal(50, view.Explorer.ZoomPercent);
+        view.Explorer.SetZoomPercent(DiffExplorerView.MaximumZoomPercent);
+        view.Explorer.AdjustZoom(1);
+        Assert.Equal(300, view.Explorer.ZoomPercent);
+        Assert.Throws<ArgumentOutOfRangeException>(() => view.Explorer.SetZoomPercent(49));
+        Assert.Throws<ArgumentOutOfRangeException>(() => view.Explorer.SetZoomPercent(301));
+        view.SetViewMode(ExplorerViewMode.List);
+        Assert.Equal(300, view.Explorer.ZoomPercent);
     }
 
     [Fact]
@@ -81,6 +105,51 @@ public sealed class DiffViewModelTests
     }
 
     [Fact]
+    public async Task DirectPathBreadcrumbUpAndHistoryWorkWithoutProjectionLookup()
+    {
+        var source = new FakeProjectionSource();
+        var view = new DiffViewModel(source);
+        await view.RefreshAsync(null, Fixture.ToUtc, DiffMode.Period, TestContext.Current.CancellationToken);
+
+        Assert.False(view.NavigateToLocation("relative/path"));
+        Assert.False(view.NavigateToLocation("/root/../secret"));
+        Assert.False(DiffPathNavigation.TryNormalizeDirectPath("/bad\0path", out _));
+        Assert.Equal(DriveBreadcrumbLabels, DiffPathNavigation.BuildBreadcrumbs("C:\\folder\\child").Select(crumb => crumb.Label));
+        Assert.Equal("C:\\", DiffPathNavigation.GetParent("C:\\folder"));
+        Assert.Equal("\\\\server\\share\\", DiffPathNavigation.GetParent("\\\\server\\share\\folder"));
+        Assert.Equal("\\\\server\\share\\", Assert.Single(DiffPathNavigation.BuildBreadcrumbs("\\\\server\\share")).Path);
+        Assert.True(view.NavigateToLocation("/virtual/deleted/archive"));
+        Assert.Equal(BreadcrumbLabels, view.Breadcrumbs.Select(crumb => crumb.Label));
+        Assert.True(view.NavigateToBreadcrumb(1));
+        Assert.Equal("/virtual", view.CurrentPath);
+        Assert.True(view.NavigateToLocation("/virtual/deleted/archive"));
+        Assert.True(view.NavigateUp());
+        Assert.Equal("/virtual/deleted", view.CurrentPath);
+        Assert.True(view.NavigateBack());
+        Assert.Equal("/virtual/deleted/archive", view.CurrentPath);
+        Assert.True(view.NavigateForward());
+        Assert.Equal("/virtual/deleted", view.CurrentPath);
+        Assert.Equal(1, source.Calls);
+
+        var deleted = view.ExplorerRows.Single(row => row.Projection.IsDeleted);
+        Assert.True(view.NavigateToLocation(deleted.Projection.DisplayPath));
+        Assert.Equal(deleted.Projection.DisplayPath, view.CurrentPath);
+        Assert.NotEmpty(view.Breadcrumbs);
+    }
+
+    [Fact]
+    public async Task NavigationHistoryDropsForwardEntriesAfterNewLocation()
+    {
+        var view = await Fixture.CreateViewAsync();
+        Assert.True(view.NavigateToLocation("/one"));
+        Assert.True(view.NavigateToLocation("/two"));
+        Assert.True(view.NavigateBack());
+        Assert.True(view.NavigateToLocation("/three"));
+        Assert.False(view.CanNavigateForward);
+        Assert.Equal("/three", view.CurrentPath);
+    }
+
+    [Fact]
     public async Task MoveEndpointsNavigateToOneAnother()
     {
         var view = await Fixture.CreateViewAsync();
@@ -105,13 +174,26 @@ public sealed class DiffViewModelTests
         Assert.True(view.NavigateToPath(replayRow.Projection.DisplayPath));
         Assert.True(view.SetReplayPoint(1));
         Assert.Equal(Fixture.ToUtc, view.Replay.CursorUtc);
-        view.Replay.SetSpeed(4);
+        Assert.Equal(ReplaySpeeds, DiffReplayState.SupportedSpeeds);
+        Assert.Throws<ArgumentOutOfRangeException>(() => view.Replay.SetSpeed(4));
+        view.Replay.SetSpeed(2);
         view.Replay.Play();
         Assert.True(view.Replay.IsPlaying);
         view.Replay.Pause();
         Assert.False(view.Replay.IsPlaying);
+        Assert.False(view.StepReplay(1));
+        Assert.True(view.SetReplayPoint(0));
+        Assert.True(view.StepReplay(1));
+        Assert.Equal(Fixture.ToUtc, view.Replay.CursorUtc);
+        Assert.False(view.StepReplay(1));
+        Assert.True(view.StepReplay(-1));
+        Assert.Equal(Fixture.FromUtc, view.Replay.CursorUtc);
+        Assert.False(view.StepReplay(-1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => view.StepReplay(0));
         view.ReturnReplayToPresent();
         Assert.Equal(Fixture.ToUtc, view.Replay.CursorUtc);
+        Assert.True(view.Replay.IsAtPresent);
+        Assert.False(view.Replay.IsPlaying);
 
         await view.RefreshAsync(null, Fixture.ToUtc, DiffMode.Live, TestContext.Current.CancellationToken);
         var callsBeforePause = source.Calls;
@@ -124,14 +206,138 @@ public sealed class DiffViewModelTests
         Assert.Equal(callsBeforePause + 1, source.Calls);
     }
 
+    [Fact]
+    public async Task ActivityFramesSortNewestFirstAndPinnedFramesSurviveLiveExpiry()
+    {
+        var source = new FakeProjectionSource();
+        var older = Frame("older", Fixture.FromUtc.AddMinutes(1));
+        var newer = Frame("newer", Fixture.FromUtc.AddMinutes(2));
+        source.Frames = [newer, older];
+        var view = new DiffViewModel(source);
+        await view.RefreshAsync(new DiffProjectionQuery(Fixture.FromUtc, Fixture.ToUtc, DiffMode.Live, ProjectionFilter.Empty, ActivityFramesPageSize: 1), TestContext.Current.CancellationToken);
+
+        Assert.Equal("newer", Assert.Single(view.ActivityFrames).FrameId);
+        Assert.True(view.HasMoreActivityFrames);
+        Assert.True(await view.LoadMoreActivityFramesAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("newer", view.ActivityFrames[0].FrameId);
+        Assert.Equal("older", view.ActivityFrames[1].FrameId);
+        view.SelectActivityFrame(older);
+        Assert.True(view.ToggleSelectedActivityFramePin());
+        source.Frames = [newer];
+        await view.RefreshAsync(new DiffProjectionQuery(Fixture.FromUtc, Fixture.ToUtc, DiffMode.Live, ProjectionFilter.Empty, ActivityFramesPageSize: 1), TestContext.Current.CancellationToken);
+        Assert.Equal("newer", view.ActivityFrames[0].FrameId);
+        Assert.Equal("older", view.ActivityFrames[1].FrameId);
+
+        await view.SetActivityFrameSortAsync(ascending: true, TestContext.Current.CancellationToken);
+        Assert.Equal("older", view.ActivityFrames[0].FrameId);
+        Assert.Equal("newer", view.ActivityFrames[1].FrameId);
+        Assert.False(view.ToggleSelectedActivityFramePin());
+        Assert.Single(view.ActivityFrames);
+        Assert.Equal("newer", Assert.Single(view.ActivityFrames).FrameId);
+    }
+
+    [Fact]
+    public async Task ReplayFrameAppearsAndDisappearsAtItsLifecycleBoundariesUnlessPinned()
+    {
+        var source = new FakeProjectionSource();
+        var frame = Frame("replay-frame", Fixture.FromUtc);
+        source.Frames = [frame];
+        var view = new DiffViewModel(source);
+        await view.RefreshAsync(new DiffProjectionQuery(Fixture.FromUtc, Fixture.ToUtc, DiffMode.Replay, ProjectionFilter.Empty), TestContext.Current.CancellationToken);
+        Assert.Single(view.ActivityFrames);
+        view.SelectActivityFrame(frame);
+        view.SetActivityFrameEvents([
+            new DiffActivityFrameEventSnapshot(EventId.New(), Fixture.FromUtc.AddSeconds(1), "C:/data/a.txt", CanonicalOperation.DataWrite, EventQuality.Exact),
+            new DiffActivityFrameEventSnapshot(EventId.New(), Fixture.FromUtc.AddSeconds(7), "C:/data/a.txt", CanonicalOperation.DataWrite, EventQuality.Exact)
+        ]);
+        Assert.True(view.ToggleSelectedActivityFramePin());
+        Assert.True(view.SetReplayPoint(1));
+        Assert.Single(view.ActivityFrames);
+        Assert.False(view.ToggleSelectedActivityFramePin());
+        Assert.Empty(view.ActivityFrames);
+    }
+
+    [Fact]
+    public async Task ProjectionCancellationPropagatesAndMissingReplayTimelineIsAbsent()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var canceledView = new DiffViewModel(new CancelingProjectionSource());
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await canceledView.RefreshAsync(null, Fixture.ToUtc, DiffMode.Live, cancellation.Token));
+
+        var view = await Fixture.CreateViewAsync();
+        Assert.True(view.NavigateToPath("/root/deleted.txt"));
+        Assert.False(view.StepReplay(1));
+        Assert.False(view.SetReplayPoint(0));
+    }
+
+    [Fact]
+    public async Task ExplorerFolderPageReturnsDirectItemsAndVirtualGroupingFoldersOnly()
+    {
+        var original = Fixture.Projection(DiffMode.Period);
+        var nested = original.Items[0] with
+        {
+            FileId = FileId.Create("deep-nested"),
+            DisplayName = "deep.txt",
+            OldPath = "/root/nested/deep.txt",
+            NewPath = "/root/nested/deep.txt",
+            DisplayPath = "/root/nested/deep.txt"
+        };
+        var projection = original with { Items = original.Items.Append(nested).ToArray() };
+        var view = new DiffViewModel(new FixedProjectionSource(projection));
+        await view.RefreshAsync(null, Fixture.ToUtc, DiffMode.Period, TestContext.Current.CancellationToken);
+
+        var children = view.Explorer.GetChildrenPage("/root", 1, 10);
+        Assert.Equal(RootFolderChildren, children.Select(row => row.Projection.DisplayName).Order(StringComparer.OrdinalIgnoreCase));
+        var nestedFolder = Assert.Single(children, row => row.Projection.DisplayName == "nested");
+        Assert.Equal(FileKind.Directory, nestedFolder.Projection.Kind);
+        Assert.True(nestedFolder.Projection.IsVirtual);
+        Assert.Equal("deep.txt", Assert.Single(view.Explorer.GetChildrenPage(nestedFolder.Projection.DisplayPath, 1, 10)).Projection.DisplayName);
+        Assert.Empty(view.Explorer.GetChildrenPage("/root/current.txt", 1, 10));
+    }
+
     private sealed class FakeProjectionSource : IDiffProjectionSource
     {
         public int Calls { get; private set; }
-        public ValueTask<DiffProjection> GetDiffProjectionAsync(DiffProjectionQuery query, CancellationToken cancellationToken = default)
+        public IReadOnlyList<DiffActivityFrameSnapshot> Frames { get; set; } = Array.Empty<DiffActivityFrameSnapshot>();
+        public ValueTask<DiffProjectionBundle> GetDiffProjectionAsync(DiffProjectionQuery query, CancellationToken cancellationToken = default)
         {
             Calls++;
-            return ValueTask.FromResult(Fixture.Projection(query.Mode));
+            var sortedFrames = query.ActivityFramesAscending ? Frames.OrderBy(frame => frame.StartedUtc).ToArray() : Frames.OrderByDescending(frame => frame.StartedUtc).ToArray();
+            var page = sortedFrames.Skip((query.ActivityFramesPage - 1) * query.ActivityFramesPageSize).Take(query.ActivityFramesPageSize).ToArray();
+            return ValueTask.FromResult(new DiffProjectionBundle(Fixture.Projection(query.Mode), page, query.ActivityFramesPage, query.ActivityFramesPageSize, sortedFrames.Length, query.ActivityFramesPage * query.ActivityFramesPageSize < sortedFrames.Length));
         }
+    }
+
+    private static DiffActivityFrameSnapshot Frame(string frameId, DateTimeOffset startedUtc) => new(
+        frameId,
+        ProcessInstanceId.Create("process-" + frameId),
+        "Editor.exe",
+        ProcessAttributionQuality.Exact,
+        EventOrigin.LiveUsn,
+        null,
+        null,
+        "C:/data",
+        startedUtc,
+        startedUtc.AddSeconds(1),
+        startedUtc.AddSeconds(6),
+        false,
+        2,
+        1,
+        100,
+        new Dictionary<string, int> { ["DataWrite"] = 2 },
+        2);
+
+    private sealed class CancelingProjectionSource : IDiffProjectionSource
+    {
+        public ValueTask<DiffProjectionBundle> GetDiffProjectionAsync(DiffProjectionQuery query, CancellationToken cancellationToken = default) =>
+            ValueTask.FromCanceled<DiffProjectionBundle>(cancellationToken);
+    }
+
+    private sealed class FixedProjectionSource(DiffProjection projection) : IDiffProjectionSource
+    {
+        public ValueTask<DiffProjectionBundle> GetDiffProjectionAsync(DiffProjectionQuery query, CancellationToken cancellationToken = default) => ValueTask.FromResult(new DiffProjectionBundle(projection, Array.Empty<DiffActivityFrameSnapshot>()));
     }
 
     private sealed class RecordingLauncher : IExplorerLauncher

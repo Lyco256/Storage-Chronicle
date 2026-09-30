@@ -1,4 +1,5 @@
 using Microsoft.Win32.SafeHandles;
+using StorageChronicle.Contracts;
 using StorageChronicle.Domain.Contracts;
 
 namespace StorageChronicle.Platform.Windows.FileSystem.Interop;
@@ -11,7 +12,15 @@ public sealed record NativeVolumeRecord(
     DriveType DriveType,
     bool IsReadOnly,
     bool IsDirectoryReadable,
-    bool SupportsUsn);
+    bool SupportsUsn,
+    ProtectedVolumeRoles ProtectedRoles = ProtectedVolumeRoles.Unknown,
+    bool IsProtectedRoleClassificationComplete = false);
+
+/// <summary>Read-only role facts for one Windows storage partition.</summary>
+public sealed record NativePartitionRoleRecord(IReadOnlyList<string> AccessPaths, bool? IsSystem, bool? IsBoot, string? GptType, ushort? MbrType);
+
+/// <summary>Result of a fail-closed protected-role classification.</summary>
+public sealed record VolumeRoleClassification(ProtectedVolumeRoles Roles, bool IsComplete);
 
 /// <summary>Native metadata for one file-system object.</summary>
 public sealed record NativeFileMetadataRecord(
@@ -45,6 +54,9 @@ public interface IWindowsFileMetadataNative
 {
     /// <summary>Reads identity and standard metadata for an entry.</summary>
     NativeFileMetadataRecord ReadMetadata(string path, string? parentPath = null);
+
+    /// <summary>Opens a metadata-only handle for a file or directory.</summary>
+    SafeFileHandle OpenMetadata(string path, bool directory);
 
     /// <summary>Attempts to open a directory for change monitoring.</summary>
     SafeFileHandle OpenDirectory(string path);

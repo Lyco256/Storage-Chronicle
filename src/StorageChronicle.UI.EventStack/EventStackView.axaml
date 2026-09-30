@@ -21,11 +21,12 @@
     </Border>
 
     <Border Grid.Row="1" Grid.ColumnSpan="2" Padding="8" CornerRadius="4" Background="#15181C">
-      <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="6">
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="6">
         <TextBox Grid.Column="0" Text="{Binding SearchText, Mode=TwoWay}" PlaceholderText="Filter events" AutomationProperties.Name="Event filter" />
         <Button Grid.Column="1" Content="Apply" Command="{Binding ApplyFilterCommand}" AutomationProperties.Name="Apply event filter" />
-        <Button Grid.Column="2" Content="Save filter" Command="{Binding SaveFilterCommand}" AutomationProperties.Name="Save current filter" />
-        <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="4">
+        <TextBox x:Name="SavedFilterNameBox" Grid.Column="2" Width="130" Text="{Binding SavedFilterName, Mode=TwoWay}" PlaceholderText="Filter name" AutomationProperties.Name="Saved filter name" />
+        <Button Grid.Column="3" Content="Save filter" Command="{Binding SaveFilterCommand}" AutomationProperties.Name="Save current filter" />
+        <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="4">
           <ComboBox ItemsSource="{Binding SavedFilters}" SelectedItem="{Binding SelectedSavedFilter, Mode=TwoWay}" AutomationProperties.Name="Saved filters" />
           <Button Content="Use" Command="{Binding ApplySavedFilterCommand}" CommandParameter="{Binding SelectedSavedFilter}" AutomationProperties.Name="Apply saved filter" />
         </StackPanel>
@@ -54,24 +55,24 @@
                     <DataTemplate x:DataType="vm:EventStackChildViewModel">
                       <StackPanel Spacing="2">
                         <StackPanel Orientation="Horizontal" Spacing="6" Margin="12,4,0,0">
-                          <TextBlock Text="↳" />
+                          <Button Content="▸" Command="{Binding ToggleExpansionCommand}" IsVisible="{Binding HasChildren}" AutomationProperties.Name="Expand event child" />
                           <TextBlock Text="{Binding DisplaySummary}" />
                           <TextBlock Text="{Binding QualityDisplay}" Opacity="0.75" />
                         </StackPanel>
-                        <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding HasChildren}" Margin="24,0,0,0">
+                        <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}" Margin="24,0,0,0">
                           <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:EventStackChildViewModel">
                               <StackPanel Spacing="2">
                                 <StackPanel Orientation="Horizontal" Spacing="6" Margin="12,2,0,0">
-                                  <TextBlock Text="•" />
+                                  <Button Content="▸" Command="{Binding ToggleExpansionCommand}" IsVisible="{Binding HasChildren}" AutomationProperties.Name="Expand normalized event" />
                                   <TextBlock Text="{Binding DisplaySummary}" />
                                   <TextBlock Text="{Binding QualityDisplay}" Opacity="0.75" />
                                 </StackPanel>
-                                <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding HasChildren}" Margin="36,0,0,0">
+                                <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}" Margin="36,0,0,0">
                                   <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="vm:EventStackChildViewModel">
                                       <StackPanel Orientation="Horizontal" Spacing="6" Margin="12,2,0,0">
-                                        <TextBlock Text="└" />
+                                        <Button Content="▸" Command="{Binding ToggleExpansionCommand}" IsVisible="{Binding HasChildren}" AutomationProperties.Name="Expand source event" />
                                         <TextBlock Text="{Binding DisplaySummary}" />
                                         <TextBlock Text="{Binding QualityDisplay}" Opacity="0.75" />
                                       </StackPanel>
@@ -127,9 +128,8 @@
     <DockPanel Grid.Row="3" Grid.ColumnSpan="2">
       <TextBlock DockPanel.Dock="Left" Text="{Binding StatusMessage}" VerticalAlignment="Center" />
       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
-        <Button Content="50" Command="{Binding SetPageSizeCommand}" CommandParameter="{Binding PageSize50}" AutomationProperties.Name="50 rows per page" />
-        <Button Content="100" Command="{Binding SetPageSizeCommand}" CommandParameter="{Binding PageSize100}" AutomationProperties.Name="100 rows per page" />
-        <Button Content="250" Command="{Binding SetPageSizeCommand}" CommandParameter="{Binding PageSize250}" AutomationProperties.Name="250 rows per page" />
+        <TextBox x:Name="PageSizeInputBox" Width="80" Text="{Binding PageSizeInput, Mode=TwoWay}" AutomationProperties.Name="Rows per page from 50 through 5000" />
+        <Button Content="Apply size" Command="{Binding ApplyPageSizeCommand}" AutomationProperties.Name="Apply Event Stack page size" />
         <Button Content="Previous" Command="{Binding PreviousPageCommand}" IsEnabled="{Binding CanGoPrevious}" AutomationProperties.Name="Previous page" />
         <TextBlock Text="{Binding CurrentPage}" VerticalAlignment="Center" />
         <Button Content="Next" Command="{Binding NextPageCommand}" IsEnabled="{Binding HasMore}" AutomationProperties.Name="Next page" />

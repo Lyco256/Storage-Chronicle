@@ -1,0 +1,6 @@
+<Project>
+  <ItemGroup Condition="'$(IsTestProject)' == 'true'">
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.9.0" Condition="'$(ManagePackageVersionsCentrally)' == 'false'" />
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" Condition="'$(ManagePackageVersionsCentrally)' != 'false'" />
+  </ItemGroup>
+</Project>

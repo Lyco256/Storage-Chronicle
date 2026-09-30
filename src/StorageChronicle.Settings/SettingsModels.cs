@@ -20,12 +20,18 @@ public enum EventStackSortOrder
 /// <summary>Defines the initial event-stack grouping mode.</summary>
 public enum EventStackInitialMode
 {
-    /// <summary>Show the chronological event stream.</summary>
-    Timeline,
-    /// <summary>Group events by activity.</summary>
-    ActivityGroup,
-    /// <summary>Group events by file.</summary>
-    File
+    /// <summary>Show source events. Numeric value zero preserves the legacy Timeline setting.</summary>
+    Source = 0,
+    /// <summary>Legacy name for <see cref="Source"/> retained for settings compatibility.</summary>
+    Timeline = Source,
+    /// <summary>Show grouped event activities. Numeric value one preserves the legacy ActivityGroup setting.</summary>
+    Grouped = 1,
+    /// <summary>Legacy name for <see cref="Grouped"/> retained for settings compatibility.</summary>
+    ActivityGroup = Grouped,
+    /// <summary>Legacy file grouping setting; the current grouped view includes file summaries.</summary>
+    File = 2,
+    /// <summary>Show normalized events.</summary>
+    Normalized = 3
 }
 
 /// <summary>Defines the representation used by Diff View.</summary>
@@ -75,7 +81,7 @@ public sealed record UserSettings
     /// <summary>Gets the Event Stack row ordering.</summary>
     public EventStackSortOrder EventStackSort { get; init; } = EventStackSortOrder.NewestFirst;
     /// <summary>Gets the mode initially selected in Event Stack.</summary>
-    public EventStackInitialMode InitialEventStackMode { get; init; } = EventStackInitialMode.Timeline;
+    public EventStackInitialMode InitialEventStackMode { get; init; } = EventStackInitialMode.Grouped;
     /// <summary>Gets the Diff View display format.</summary>
     public DiffDisplayFormat DiffFormat { get; init; } = DiffDisplayFormat.SideBySide;
     /// <summary>Gets the Diff View zoom percentage.</summary>

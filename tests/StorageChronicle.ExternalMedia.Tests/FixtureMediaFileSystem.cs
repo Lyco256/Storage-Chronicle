@@ -1,0 +1,93 @@
+using StorageChronicle.Contracts;
+using StorageChronicle.Domain.Contracts;
+
+namespace StorageChronicle.ExternalMedia.Tests;
+
+/// <summary>Filesystem adapter restricted to a newly created test fixture directory.</summary>
+internal sealed class FixtureMediaFileSystem : IVolumeBoundMediaFileSystem
+{
+    private readonly string root;
+    private readonly HashSet<Stream> movableStreams = new(ReferenceEqualityComparer.Instance);
+
+    public FixtureMediaFileSystem(string root, VolumeId volumeId)
+    {
+        this.root = Path.GetFullPath(root);
+        VolumeId = volumeId;
+    }
+
+    public VolumeId VolumeId { get; }
+
+    public void EnsureDirectory(string relativePath) => Directory.CreateDirectory(Resolve(relativePath));
+
+    public bool TryCreateDirectory(string relativePath)
+    {
+        var path = Resolve(relativePath);
+        if (Directory.Exists(path) || File.Exists(path)) return false;
+        Directory.CreateDirectory(path);
+        return true;
+    }
+
+    public bool DirectoryExists(string relativePath)
+    {
+        var path = Resolve(relativePath);
+        return Directory.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0;
+    }
+
+    public bool FileExists(string relativePath)
+    {
+        var path = Resolve(relativePath);
+        return File.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0;
+    }
+
+    public IReadOnlyList<MediaFileSystemEntry> EnumerateEntries(string relativeDirectory)
+    {
+        var directory = Resolve(relativeDirectory);
+        return Directory.EnumerateFileSystemEntries(directory).Select(path => new MediaFileSystemEntry(Path.GetFileName(path), File.GetAttributes(path))).ToArray();
+    }
+
+    public Stream OpenRead(string relativePath)
+    {
+        var path = Resolve(relativePath);
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) throw new IOException("Fixture path may not be a reparse point.");
+        return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+    }
+
+    public Stream OpenTemporaryForRecovery(string relativePath)
+    {
+        var path = Resolve(relativePath);
+        var leaf = Path.GetFileName(path);
+        if (!Guid.TryParseExact(Path.GetFileNameWithoutExtension(leaf), "N", out _) || !leaf.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Only GUID-named temporary fixture files are recoverable.", nameof(relativePath));
+        var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, 4096, FileOptions.Asynchronous);
+        movableStreams.Add(stream);
+        return stream;
+    }
+
+    public Stream CreateNew(string relativePath)
+    {
+        var stream = new FileStream(Resolve(relativePath), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read | FileShare.Delete, 64 * 1024, FileOptions.Asynchronous | FileOptions.WriteThrough);
+        movableStreams.Add(stream);
+        return stream;
+    }
+
+    public void MoveCreatedFile(Stream createdOrRecoveryStream, string relativeDestination)
+    {
+        if (createdOrRecoveryStream is not FileStream fileStream || !movableStreams.Remove(createdOrRecoveryStream))
+            throw new ArgumentException("The source stream was not created or opened for recovery by this fixture.", nameof(createdOrRecoveryStream));
+        File.Move(fileStream.Name, Resolve(relativeDestination));
+    }
+
+    public void Dispose() { }
+
+    private string Resolve(string relativePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(relativePath);
+        var components = relativePath.Split(['\\', '/'], StringSplitOptions.None);
+        if (Path.IsPathRooted(relativePath) || components.Any(value => value is "" or "." or ".." || value.Contains(':')))
+            throw new ArgumentException("Fixture paths must be safe relative paths.", nameof(relativePath));
+        var path = Path.GetFullPath(Path.Combine(root, Path.Combine(components)));
+        if (!path.StartsWith(Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            throw new ArgumentException("Fixture path escaped the isolated root.", nameof(relativePath));
+        return path;
+    }
+}

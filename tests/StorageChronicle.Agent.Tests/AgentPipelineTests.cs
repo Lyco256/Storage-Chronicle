@@ -15,11 +15,38 @@ public sealed class AgentPipelineTests
         var store = new FakeStore();
         var state = new FakeState();
         var source = Source(1);
-        await new AgentPipeline(store, state, new EventNormalizer(), 1).RunAsync(new FakeCollector(source));
+        var committed = new List<SourceEvent>();
+        var pipeline = new AgentPipeline(store, state, new EventNormalizer(), 1);
+        pipeline.SourceCommitted += committed.Add;
+        await pipeline.RunAsync(new FakeCollector(source));
         Assert.Single(store.Sources);
         Assert.Single(store.Canonicals);
         Assert.Single(state.Values);
         Assert.Equal(source.EventId, store.Sources[0].EventId);
+        Assert.Equal([source.EventId], committed.Select(value => value.EventId));
+    }
+
+    [Fact]
+    public async Task ReadOnlyEtwObservationIsTransientAcrossTheDurablePipeline()
+    {
+        var store = new FakeStore();
+        var state = new FakeState();
+        var source = Source(12) with
+        {
+            Origin = EventOrigin.Etw,
+            Hint = null,
+            Properties = ImmutableDictionary<string, string>.Empty.Add("observation", "Read")
+        };
+        var observed = 0;
+        var pipeline = new AgentPipeline(store, state, new EventNormalizer());
+        pipeline.SourceObserved += _ => observed++;
+
+        await pipeline.RunAsync(new FakeCollector(source));
+
+        Assert.Empty(store.Sources);
+        Assert.Empty(store.Canonicals);
+        Assert.Empty(state.Values);
+        Assert.Equal(0, observed);
     }
 
     [Fact]

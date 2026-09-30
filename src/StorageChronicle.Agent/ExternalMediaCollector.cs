@@ -43,9 +43,10 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
     private readonly IVolumeEnumerator volumes;
     private readonly ISettingsStore<MachineSettings> settings;
     private readonly string pcId;
-    private readonly string ledgerRoot;
+    private readonly Func<string, MediaImportLedgerStore> ledgerStoreFactory;
     private readonly MountSessionTracker sessions;
     private readonly IMediaMirrorSessionCoordinator? mirrorCoordinator;
+    private readonly IVolumeBoundMediaFileSystemFactory? fileSystemFactory;
     private readonly Dictionary<VolumeId, (MountSession Session, MediaVolumeDescriptor Volume)> active = new();
     private readonly Dictionary<VolumeId, long> sequences = new();
 
@@ -55,17 +56,31 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
         IVolumeEnumerator volumes,
         ISettingsStore<MachineSettings> settings,
         string pcId,
-        string? ledgerRoot = null,
         IMediaClock? clock = null,
-        IMediaMirrorSessionCoordinator? mirrorCoordinator = null)
+        IMediaMirrorSessionCoordinator? mirrorCoordinator = null,
+        IVolumeBoundMediaFileSystemFactory? fileSystemFactory = null)
+        : this(changes, volumes, settings, pcId, static path => new MediaImportLedgerStore(path), clock, mirrorCoordinator, fileSystemFactory)
+    {
+    }
+
+    internal WindowsExternalMediaCollector(
+        IExternalMediaChangeSource changes,
+        IVolumeEnumerator volumes,
+        ISettingsStore<MachineSettings> settings,
+        string pcId,
+        Func<string, MediaImportLedgerStore> ledgerStoreFactory,
+        IMediaClock? clock = null,
+        IMediaMirrorSessionCoordinator? mirrorCoordinator = null,
+        IVolumeBoundMediaFileSystemFactory? fileSystemFactory = null)
     {
         this.changes = changes ?? throw new ArgumentNullException(nameof(changes));
         this.volumes = volumes ?? throw new ArgumentNullException(nameof(volumes));
         this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
         this.pcId = ValidateIdentity(pcId, nameof(pcId));
-        this.ledgerRoot = ledgerRoot ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Storage Chronicle", "history", "media-ledgers");
+        this.ledgerStoreFactory = ledgerStoreFactory ?? throw new ArgumentNullException(nameof(ledgerStoreFactory));
         sessions = new MountSessionTracker(clock);
         this.mirrorCoordinator = mirrorCoordinator;
+        this.fileSystemFactory = fileSystemFactory;
     }
 
     /// <inheritdoc />
@@ -79,6 +94,12 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
         await foreach (var change in changes.ReadChangesAsync(cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (change.Kind == ExternalMediaChangeKind.ContinuityGap)
+            {
+                yield return CreateGap(change.OccurredUtc, change.GapReason ?? "External media notification continuity was lost.");
+                continue;
+            }
+
             if (change.Kind == ExternalMediaChangeKind.Connected)
             {
                 var enumeration = await TryEnumerateAsync(cancellationToken).ConfigureAwait(false);
@@ -91,7 +112,10 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
                 foreach (var descriptor in enumeration.Descriptors!.Where(value => value.IsExternal && value.IsDirectoryReadable))
                 {
                     if (active.ContainsKey(descriptor.Id)) continue;
-                    var media = new MediaVolumeDescriptor(descriptor.Id.Value, descriptor.Id, descriptor.FileSystem, descriptor.IsReadOnly, descriptor.SupportsUsn, descriptor.IsSystem, MountPoints: descriptor.MountPoints);
+                    var media = new MediaVolumeDescriptor(descriptor.Id.Value, descriptor.Id, descriptor.FileSystem, descriptor.IsReadOnly, descriptor.SupportsUsn, descriptor.ProtectedRoles, descriptor.IsProtectedRoleClassificationComplete)
+                    {
+                        MountPoints = descriptor.MountPoints
+                    };
                     var assessment = MediaQuality.Assess(media);
                     var session = sessions.Start(descriptor.Id, pcId, ToContinuity(assessment.Quality));
                     active[descriptor.Id] = (session, media);
@@ -99,13 +123,32 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
 
                     if (mirrorCoordinator is not null)
                     {
+                        MediaLogDeletionRecovery? recovery = null;
+                        Exception? recoveryFailure = null;
+                        try { recovery = await RecoverMissingMirrorAsync(media, cancellationToken).ConfigureAwait(false); }
+                        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException or ArgumentException)
+                        {
+                            recoveryFailure = exception;
+                        }
+
+                        if (recovery is { LogWasMissing: true }) yield return CreateMediaRecoveryEvent(media, change.OccurredUtc, recovery);
+                        if (recoveryFailure is not null)
+                        {
+                            yield return CreateMediaGap(media, change.OccurredUtc, "External media history recovery failed: " + recoveryFailure.Message);
+                            continue;
+                        }
+
                         Exception? registrationFailure = null;
                         try { await mirrorCoordinator.RegisterAsync(media, session, cancellationToken).ConfigureAwait(false); }
-                        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
+                        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException or ArgumentException)
                         {
                             registrationFailure = exception;
                         }
-                        if (registrationFailure is not null) yield return CreateMediaGap(media, change.OccurredUtc, "External media mirror registration failed: " + registrationFailure.Message);
+                        if (registrationFailure is not null)
+                        {
+                            yield return CreateMediaGap(media, change.OccurredUtc, "External media mirror registration failed: " + registrationFailure.Message);
+                            continue;
+                        }
                     }
 
                     var importedEvents = new List<SourceEvent>();
@@ -114,7 +157,7 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
                     {
                         await foreach (var imported in ImportMirrorAsync(media, session, cancellationToken).ConfigureAwait(false)) importedEvents.Add(imported);
                     }
-                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
                     {
                         importFailure = exception;
                     }
@@ -150,16 +193,22 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
     {
         var configured = settings.Load().Settings.MediaMirrors.TryGetValue(media.LogicalMediaId, out var mirrorRoot) ? mirrorRoot : null;
         if (string.IsNullOrWhiteSpace(configured)) yield break;
-        var configuration = ExternalMediaStore.ValidateMirrorConfiguration(new MediaMirrorConfiguration(true, configured!, media.IsSystemVolume, media.IsBootVolume, media.IsRecoveryVolume, media.IsEfiVolume));
-        if (!configuration.IsAllowed) yield break;
-        ExternalMediaStore.ValidateMediaRootOnVolume(configuration.MediaRoot, media.MountPoints);
+        var configuration = ExternalMediaStore.ValidateMirrorConfiguration(new MediaMirrorConfiguration(true, configured!, media.ProtectedRoles, media.IsProtectedRoleClassificationComplete));
+        if (!configuration.IsAllowed || media.IsReadOnly) yield break;
+        if (fileSystemFactory is null) yield break;
 
         ExternalMediaStore store;
-        try { store = new ExternalMediaStore(configuration.MediaRoot, pcId, createIfMissing: false); }
+        try
+        {
+            var mediaRoot = ExternalMediaStore.ValidateMediaRoot(configuration.MediaRoot, media.MountPoints);
+            store = new ExternalMediaStore(mediaRoot, pcId, media.VolumeId, fileSystemFactory.Open(media.VolumeId), createIfMissing: false);
+        }
         catch (Exception) { yield break; }
 
-        var ledgerPath = Path.Combine(ledgerRoot, Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(media.LogicalMediaId)) + ".json");
-        var ledgerStore = new MediaImportLedgerStore(ledgerPath);
+        using (store)
+        {
+        var ledgerPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Storage Chronicle", "history", "media-ledgers", Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(media.LogicalMediaId)) + ".json");
+        var ledgerStore = ledgerStoreFactory(ledgerPath);
         var ledger = await ledgerStore.LoadAsync(cancellationToken).ConfigureAwait(false);
         var result = await new MediaHistoryImporter().ImportAsync(store, ledger, new MediaOnlyFilter(LogicalMediaId: media.LogicalMediaId), cancellationToken).ConfigureAwait(false);
         var imported = ledger with
@@ -176,6 +225,19 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
                 value.Time with { SourceSequence = sequence, MountSequence = new MountSequence(sequence.Value) }, EventQuality.Reconciled, value.ProcessInstanceId, value.ProcessQuality, session.Id, value.OperationCorrelationId,
                 value.Properties.SetItem("media.logicalMediaId", media.LogicalMediaId).SetItem("media.quality", "MirroredFromAnotherPc").SetItem("media.branch", result.Branch.Value));
         }
+        }
+    }
+
+    private async ValueTask<MediaLogDeletionRecovery?> RecoverMissingMirrorAsync(MediaVolumeDescriptor media, CancellationToken cancellationToken)
+    {
+        var configured = settings.Load().Settings.MediaMirrors.TryGetValue(media.LogicalMediaId, out var mirrorRoot) ? mirrorRoot : null;
+        if (string.IsNullOrWhiteSpace(configured) || media.IsReadOnly) return null;
+        var configuration = ExternalMediaStore.ValidateMirrorConfiguration(new MediaMirrorConfiguration(true, configured!, media.ProtectedRoles, media.IsProtectedRoleClassificationComplete));
+        if (!configuration.IsAllowed) return null;
+        if (fileSystemFactory is null) return null;
+        var mediaRoot = ExternalMediaStore.ValidateMediaRoot(configuration.MediaRoot, media.MountPoints);
+        var fileSystem = fileSystemFactory.Open(media.VolumeId);
+        return await MediaRecovery.RecoverDeletedLogAsync(mediaRoot, media.VolumeId, fileSystem, media.LogicalMediaId, pcId, cancellationToken).ConfigureAwait(false);
     }
 
     private SourceEvent CreateMountEvent(MediaVolumeDescriptor media, MountSession session, MediaQualityAssessment assessment, DateTimeOffset occurredUtc, bool removed)
@@ -197,6 +259,12 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
     private SourceEvent CreateMediaGap(MediaVolumeDescriptor media, DateTimeOffset occurredUtc, string reason) => new(EventId.New(), EventSchemaVersion.Current, EventOrigin.InitialSnapshot, media.VolumeId, null, null, null, null, CanonicalOperation.UnverifiedGap, null,
         new EventTime(occurredUtc, occurredUtc.Offset, occurredUtc, DateTimeOffset.UtcNow, NextSequence(media.VolumeId), new MountSequence(1)), EventQuality.UnverifiedGap, null, ProcessAttributionQuality.Unknown, null, null,
         ImmutableDictionary<string, string>.Empty.Add("reconciliationReason", reason).Add("media.logicalMediaId", media.LogicalMediaId));
+
+    private SourceEvent CreateMediaRecoveryEvent(MediaVolumeDescriptor media, DateTimeOffset occurredUtc, MediaLogDeletionRecovery recovery)
+    {
+        var value = CreateMediaGap(media, occurredUtc, "The opted-in Storage Chronicle media history directory was missing; a new branch was started because previous media history is unavailable.");
+        return value with { Properties = value.Properties.Add("media.recovery.branch", recovery.Branch.Value).Add("media.recovery.marker", recovery.MarkerPath) };
+    }
 
     private SourceSequence NextSequence(VolumeId volume)
     {

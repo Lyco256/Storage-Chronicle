@@ -6,18 +6,27 @@ namespace StorageChronicle.Platform.Windows.FileSystem.Volumes;
 /// <summary>Streams event-driven external media arrivals and removals.</summary>
 public sealed class WindowsExternalMediaMonitor : IAsyncDisposable
 {
-    private readonly Channel<ExternalMediaChange> changes = Channel.CreateUnbounded<ExternalMediaChange>(new UnboundedChannelOptions { SingleReader = false, SingleWriter = false });
+    private readonly Channel<ExternalMediaChange> changes;
     private readonly IDisposable registration;
     private readonly string? registrationFailure;
     private int disposed;
+    private int overflowed;
 
     /// <summary>Initializes the monitor and registers the Configuration Manager callback.</summary>
-    public WindowsExternalMediaMonitor(IWindowsDeviceNotificationNative? native = null)
+    public WindowsExternalMediaMonitor(IWindowsDeviceNotificationNative? native = null, int queueCapacity = 64)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(queueCapacity);
+        changes = Channel.CreateBounded<ExternalMediaChange>(new BoundedChannelOptions(queueCapacity)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
+            SingleReader = false,
+            SingleWriter = false,
+            AllowSynchronousContinuations = false
+        });
         var deviceNative = native ?? new WindowsNativeApi();
         try
         {
-            registration = deviceNative.Register(kind => changes.Writer.TryWrite(new ExternalMediaChange(kind, DateTimeOffset.UtcNow, null)));
+            registration = deviceNative.Register(PublishChange);
         }
         catch (Exception exception) when (exception is PlatformNotSupportedException or System.ComponentModel.Win32Exception or InvalidOperationException)
         {
@@ -32,9 +41,19 @@ public sealed class WindowsExternalMediaMonitor : IAsyncDisposable
     /// <summary>Reads connection changes until cancelled.</summary>
     public async IAsyncEnumerable<ExternalMediaChange> ReadChangesAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        await foreach (var change in changes.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        while (await changes.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            yield return change;
+            if (Interlocked.Exchange(ref overflowed, 0) != 0)
+            {
+                yield return new ExternalMediaChange(ExternalMediaChangeKind.ContinuityGap, DateTimeOffset.UtcNow, null, "The external-media notification queue overflowed; reconciliation is required.");
+            }
+
+            while (changes.Reader.TryRead(out var change)) yield return change;
+        }
+
+        if (Interlocked.Exchange(ref overflowed, 0) != 0)
+        {
+            yield return new ExternalMediaChange(ExternalMediaChangeKind.ContinuityGap, DateTimeOffset.UtcNow, null, "The external-media notification queue overflowed; reconciliation is required.");
         }
     }
 
@@ -48,6 +67,14 @@ public sealed class WindowsExternalMediaMonitor : IAsyncDisposable
         }
 
         return ValueTask.CompletedTask;
+    }
+
+    private void PublishChange(ExternalMediaChangeKind kind)
+    {
+        if (!changes.Writer.TryWrite(new ExternalMediaChange(kind, DateTimeOffset.UtcNow, null)))
+        {
+            Interlocked.Exchange(ref overflowed, 1);
+        }
     }
 
     private sealed class NoopDisposable : IDisposable

@@ -1,15 +1,18 @@
 using System.Buffers.Binary;
 using System.IO.Pipes;
+using System.Text.Json;
 using StorageChronicle.Contracts;
 using StorageChronicle.Contracts.Runtime;
 using StorageChronicle.Domain.Contracts;
+using StorageChronicle.Settings;
 
 namespace StorageChronicle.UI.Shared;
 
 /// <summary>Reads bounded projections from the local Agent named pipe.</summary>
-public sealed class AgentPipeProjectionClient : IVirtualizedPageSource<EventStackRow>, IProjectionService
+public sealed class AgentPipeProjectionClient : IVirtualizedPageSource<EventStackRow>, IProjectionService, IUserSettingsClient
 {
     private const int ConnectTimeoutMilliseconds = 2500;
+    private static readonly JsonSerializerOptions SettingsJsonOptions = new();
     private readonly string pipeName;
     private readonly LengthPrefixedJsonCodec codec = new();
 
@@ -53,6 +56,14 @@ public sealed class AgentPipeProjectionClient : IVirtualizedPageSource<EventStac
         return IpcProtocol.Read<DiffProjectionResponse>(response);
     }
 
+    /// <summary>Loads one bounded canonical event timeline page for an Activity Frame.</summary>
+    public async ValueTask<DiffActivityFrameTimelineResponse> GetActivityFrameTimelineAsync(DiffActivityFrameTimelineRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var response = await SendAsync("DiffActivityFrameTimelineRequest", request, cancellationToken).ConfigureAwait(false);
+        return IpcProtocol.Read<DiffActivityFrameTimelineResponse>(response);
+    }
+
     /// <summary>Loads detail data for one Event Stack selection.</summary>
     public async ValueTask<EventDetailsSnapshot?> GetDetailsAsync(EventId eventId, CancellationToken cancellationToken = default)
     {
@@ -75,10 +86,42 @@ public sealed class AgentPipeProjectionClient : IVirtualizedPageSource<EventStac
         return IpcProtocol.Read<AgentHealth>(response);
     }
 
+    /// <inheritdoc />
+    public async ValueTask<UserSettings> LoadUserSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync("SettingsSnapshotRequest", new SettingsSnapshotRequest(), cancellationToken).ConfigureAwait(false);
+        var snapshot = IpcProtocol.Read<SettingsSnapshot>(response);
+        return JsonSerializer.Deserialize<UserSettings>(snapshot.User.GetRawText())
+            ?? throw new InvalidDataException("The Agent returned an empty user-settings snapshot.");
+    }
+
+    /// <inheritdoc />
+    public async ValueTask<SettingsApplyResult> ApplyUserSettingsAsync(UserSettings settings, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        var payload = JsonSerializer.SerializeToElement(settings, SettingsJsonOptions);
+        var response = await SendAsync("SettingsUpdateRequest", new SettingsUpdateRequest(SettingsScope.User, payload), cancellationToken).ConfigureAwait(false);
+        return JsonSerializer.Deserialize<SettingsApplyResult>(response.Payload.GetRawText(), SettingsJsonOptions)
+            ?? throw new InvalidDataException("The Agent returned an empty user-settings apply result.");
+    }
+
+    /// <summary>Sends one versioned request through the authenticated Agent pipe transport.</summary>
+    /// <remarks>This transport boundary is shared by projection and typed Agent gateways.</remarks>
+    public ValueTask<IpcEnvelope> SendRequestAsync<T>(string messageType, T request, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(messageType);
+        ArgumentNullException.ThrowIfNull(request);
+        return SendAsync(messageType, request, cancellationToken);
+    }
+
     private async ValueTask<IpcEnvelope> SendAsync<T>(string messageType, T request, CancellationToken cancellationToken)
     {
         await using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
         await pipe.ConnectAsync(ConnectTimeoutMilliseconds, cancellationToken).ConfigureAwait(false);
+        var hello = IpcProtocol.Create("ClientHello", new IpcClientHello(IpcClientRole.DesktopUi, System.Diagnostics.Process.GetCurrentProcess().SessionId));
+        var helloFrame = codec.Encode(hello, IpcProtocol.Major, IpcProtocol.Minor);
+        await pipe.WriteAsync(helloFrame, cancellationToken).ConfigureAwait(false);
+        await pipe.FlushAsync(cancellationToken).ConfigureAwait(false);
         var frame = codec.Encode(IpcProtocol.Create(messageType, request), IpcProtocol.Major, IpcProtocol.Minor);
         await pipe.WriteAsync(frame, cancellationToken).ConfigureAwait(false);
         await pipe.FlushAsync(cancellationToken).ConfigureAwait(false);

@@ -1,0 +1,9 @@
+# Test-FinalAcceptance.ps1
+
+Final fail-closed aggregator for nine acceptance groups: current-commit PhysicalSafety audit, confirmed reconciliation, Windows privileged capabilities, Windows 10 22H2, idle resource acceptance, MFT performance, physical installer, live Agent/Explorer correlation, and branch integration.
+
+PhysicalSafety requires a machine-readable `StorageChronicle.PhysicalReadOnlyAudit.v1` artifact with `AcceptanceEligible=true`, `overallStatus=PASS`, `decision=ALLOW_RUN`, the exact current Git commit, a clean working tree, passing static source-to-sink review, read-only host preflight, and independent process-attributed write monitoring; every finding must be PASS and the independent runtime audit must be complete. This makes stale audit data and VM/TestLab-only evidence ineligible. The old TestLab group and VirtualBox installer prerequisite are not accepted.
+
+Physical installer evidence must identify `PhysicalMachine`/`Local`; Windows 10 Stage A must likewise be physical and local. Agent/Explorer evidence must identify a non-diagnostic Windows 11 physical Agent service run. The remaining groups retain their strict product-specific schemas, exact capability and installer-case contracts, durable source/canonical/state counts, MFT and performance suites, and branch-state checks. Missing, malformed, `NOT_EXECUTED`, diagnostic, fixture-only, partial, stale-commit, or otherwise ineligible artifacts keep the aggregate blocked and return exit code 2.
+
+The gate only reads evidence and Git metadata and writes its own aggregate artifact. It does not launch the product, VM, installer, privileged runner, or workload. Its source is mirrored here for role, contract, dependency, failure, and validation details; tests are in `tests/StorageChronicle.Installer.Tests/InstallerManifestTests.cs` and the release evidence tests.

@@ -10,7 +10,7 @@ namespace StorageChronicle.Agent;
 public sealed class AgentWorker : BackgroundService
 {
     /// <summary>Initializes the supervised Agent worker.</summary>
-    public AgentWorker(IEventStore eventStore, IStateStore stateStore, IEventNormalizer normalizer, IEnumerable<ISourceEventCollector> collectors, AppendOnlyStorageEngine storage, AgentHealthState health, IEnumerable<ICanonicalEventSink>? sinks = null)
+    public AgentWorker(IEventStore eventStore, IStateStore stateStore, IEventNormalizer normalizer, IEnumerable<ISourceEventCollector> collectors, AppendOnlyStorageEngine storage, AgentHealthState health, IEnumerable<ICanonicalEventSink>? sinks = null, ReconciliationLiveEventBuffer? reconciliationLiveEvents = null)
     {
         this.eventStore = eventStore ?? throw new ArgumentNullException(nameof(eventStore));
         this.stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
@@ -19,6 +19,7 @@ public sealed class AgentWorker : BackgroundService
         this.storage = storage ?? throw new ArgumentNullException(nameof(storage));
         this.health = health ?? throw new ArgumentNullException(nameof(health));
         this.sinks = sinks?.ToArray() ?? Array.Empty<ICanonicalEventSink>();
+        this.reconciliationLiveEvents = reconciliationLiveEvents ?? new ReconciliationLiveEventBuffer();
     }
 
     private readonly IEventStore eventStore;
@@ -28,6 +29,7 @@ public sealed class AgentWorker : BackgroundService
     private readonly AppendOnlyStorageEngine storage;
     private readonly AgentHealthState health;
     private readonly IReadOnlyList<ICanonicalEventSink> sinks;
+    private readonly ReconciliationLiveEventBuffer reconciliationLiveEvents;
     private readonly SemaphoreSlim lifecycleGate = new(1, 1);
     private readonly object runGate = new();
     private CancellationTokenSource? activeRun;
@@ -66,6 +68,19 @@ public sealed class AgentWorker : BackgroundService
     {
         try
         {
+            try
+            {
+                await health.RestoreFromHistoryAsync(storage, stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                health.RecordPipelineFailure(exception);
+            }
+
             while (!stoppingToken.IsCancellationRequested)
             {
                 var runCancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
@@ -82,12 +97,20 @@ public sealed class AgentWorker : BackgroundService
                     var pipeline = new AgentPipeline(eventStore, stateStore, normalizer, sinks: sinks);
                     pipeline.CollectorFailed += OnCollectorFailed;
                     pipeline.SourceObserved += health.Observe;
+                    pipeline.SourceCommitted += reconciliationLiveEvents.Observe;
                     pipeline.SinkFailed += health.RecordSinkFailure;
                     pipeline.QueueDepthChanged += health.SetQueueDepth;
                     await pipeline.RunAsync(collectors, runCancellation.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (runCancellation.IsCancellationRequested)
                 {
+                }
+                catch (Exception exception)
+                {
+                    // A durable sink, SQLite lock, capacity transition, or
+                    // normalization failure is a recording-quality failure,
+                    // not a reason to terminate the LocalSystem supervisor.
+                    health.RecordPipelineFailure(exception);
                 }
                 finally
                 {
@@ -106,6 +129,13 @@ public sealed class AgentWorker : BackgroundService
                 {
                     // A finite collector is allowed to finish, but the service remains
                     // alive and gives the supervisor a chance to restart it on settings change.
+                    if (storage.Status.State is RecordingState.Stopped or RecordingState.CapacityStopped)
+                    {
+                        // TryResumeAsync rechecks capacity and recreates a running
+                        // recording boundary without deleting immutable history.
+                        await storage.TryResumeAsync(stoppingToken).ConfigureAwait(false);
+                    }
+
                     await Task.Delay(TimeSpan.FromMilliseconds(100), stoppingToken).ConfigureAwait(false);
                 }
             }

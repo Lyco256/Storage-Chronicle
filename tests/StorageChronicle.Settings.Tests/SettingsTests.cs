@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using StorageChronicle.Settings;
 using Xunit;
 
@@ -33,7 +34,7 @@ public sealed class SettingsTests
         using var fixture = new SettingsFixture();
         var expected = new MachineSettings
         {
-            MonitoringPaths = new[] { fixture.Root, fixture.Root + "\\watched" },
+            MonitoringPaths = new[] { fixture.Root + "\\watched" },
             ExcludedPaths = new[] { fixture.Root + "\\excluded" },
             NoiseFilter = NoiseFilterProfile.Aggressive,
             LogStoragePath = fixture.Root + "\\logs",
@@ -86,10 +87,28 @@ public sealed class SettingsTests
     }
 
     [Fact]
+    public void EventStackInitialModesPreserveLegacyNumericValuesAndAddNormalizedMode()
+    {
+        Assert.Equal(0, (int)EventStackInitialMode.Source);
+        Assert.Equal(1, (int)EventStackInitialMode.Grouped);
+        Assert.Equal(2, (int)EventStackInitialMode.File);
+        Assert.Equal(3, (int)EventStackInitialMode.Normalized);
+        Assert.Equal(EventStackInitialMode.Source, EventStackInitialMode.Timeline);
+        Assert.Equal(EventStackInitialMode.Grouped, EventStackInitialMode.ActivityGroup);
+
+        using var fixture = new SettingsFixture();
+        var expected = new UserSettings { InitialEventStackMode = EventStackInitialMode.Normalized };
+        fixture.User.Save(expected);
+
+        Assert.Equal(EventStackInitialMode.Normalized, fixture.User.Load().Settings.InitialEventStackMode);
+    }
+
+    [Fact]
     public void LegacySchemaAndUnknownFieldsAreAccepted()
     {
         using var fixture = new SettingsFixture();
-        fixture.WriteText(fixture.MachinePath, "{\"schemaVersion\":0,\"settings\":{\"flushIntervalSeconds\":7,\"logStoragePath\":\"" + Escape(fixture.Root + "\\logs") + "\",\"monitoringPaths\":[\"" + Escape(fixture.Root) + "\"],\"unknownFutureField\":true},\"unknownRootField\":42}", new UTF8Encoding(false));
+        Directory.CreateDirectory(Path.GetDirectoryName(fixture.MachinePath)!);
+        File.WriteAllText(fixture.MachinePath, "{\"schemaVersion\":0,\"settings\":{\"flushIntervalSeconds\":7,\"logStoragePath\":\"" + Escape(fixture.Root + "\\logs") + "\",\"monitoringPaths\":[\"" + Escape(fixture.Root + "\\watched") + "\"],\"unknownFutureField\":true},\"unknownRootField\":42}", new UTF8Encoding(false));
 
         var result = fixture.Machine.Load();
 
@@ -105,7 +124,7 @@ public sealed class SettingsTests
         var second = new UserSettings { EventStackPageSize = 200 };
         fixture.User.Save(first);
         fixture.User.Save(second);
-        fixture.WriteText(fixture.UserPath, "{broken", new UTF8Encoding(false));
+        File.WriteAllText(fixture.UserPath, "{broken", new UTF8Encoding(false));
 
         var result = fixture.User.Load();
 
@@ -118,8 +137,9 @@ public sealed class SettingsTests
     public void BothCorruptGenerationsRecoverToDefaultsWithWarning()
     {
         using var fixture = new SettingsFixture();
-        fixture.WriteText(fixture.UserPath, "bad", new UTF8Encoding(false));
-        fixture.WriteText(fixture.UserPath + ".bak", "bad", new UTF8Encoding(false));
+        Directory.CreateDirectory(Path.GetDirectoryName(fixture.UserPath)!);
+        File.WriteAllText(fixture.UserPath, "bad", new UTF8Encoding(false));
+        File.WriteAllText(fixture.UserPath + ".bak", "bad", new UTF8Encoding(false));
 
         var result = fixture.User.Load();
 
@@ -162,6 +182,33 @@ public sealed class SettingsTests
         Assert.Contains(machineResult.Errors, error => error.Property == "LogStoragePath");
         Assert.False(userResult.IsValid);
         Assert.Equal(3, userResult.Errors.Count);
+    }
+
+    [Theory]
+    [InlineData("C:\\watched", "C:\\watched\\.StorageChronicleHistory")]
+    [InlineData("C:\\watched\\child", "C:\\watched")]
+    [InlineData("C:\\watched", "c:\\WATCHED\\")]
+    public void HistoryStorageCannotOverlapMonitoredData(string monitoringPath, string storagePath)
+    {
+        var result = SettingsValidator.Validate(new MachineSettings
+        {
+            MonitoringPaths = new[] { monitoringPath },
+            LogStoragePath = storagePath
+        });
+
+        Assert.Contains(result.Errors, error => error.Property == "LogStoragePath" && error.Message.Contains("monitored path", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void HistoryStorageRejectsNetworkAndUncPaths()
+    {
+        var result = SettingsValidator.Validate(new MachineSettings
+        {
+            MonitoringPaths = [],
+            LogStoragePath = "\\\\server\\share\\history"
+        });
+
+        Assert.Contains(result.Errors, error => error.Property == "LogStoragePath" && error.Message.Contains("UNC", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -234,7 +281,8 @@ public sealed class SettingsTests
         {
             tempDirectory = Path.Combine(Path.GetTempPath(), "StorageChronicleSettingsTests", runId);
             Directory.CreateDirectory(tempDirectory);
-            File.WriteAllText(Path.Combine(tempDirectory, ".test-owner"), runId);
+            using (var marker = new FileStream(Path.Combine(tempDirectory, ".test-owner.json"), FileMode.CreateNew, FileAccess.Write, FileShare.Read))
+                JsonSerializer.Serialize(marker, new { Schema = "StorageChronicle.TestFixtureOwner.v1", RunId = runId });
             var paths = new WindowsSettingsPathProvider(tempDirectory, tempDirectory);
             FileSystem = new RecordingFileSystem();
             Machine = new MachineSettingsStore(paths, FileSystem);
@@ -246,35 +294,27 @@ public sealed class SettingsTests
         public RecordingFileSystem FileSystem { get; }
         public MachineSettingsStore Machine { get; }
         public UserSettingsStore User { get; }
-        public MachineSettings ValidMachine => new() { MonitoringPaths = new[] { Root }, LogStoragePath = Root, FlushIntervalSeconds = 5 };
+        public MachineSettings ValidMachine => new() { MonitoringPaths = new[] { Path.Combine(Root, "watched") }, LogStoragePath = Root + "-history", FlushIntervalSeconds = 5 };
         public byte[] ReadBytes(string path) => File.ReadAllBytes(path);
-        public void WriteText(string path, string value, Encoding encoding)
-        {
-            var target = Path.GetFullPath(path);
-            var boundary = Path.GetFullPath(tempDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            if (!target.StartsWith(boundary, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Refusing to write outside the owned settings fixture.");
-            if (!File.Exists(Path.Combine(tempDirectory, ".test-owner")) || !string.Equals(File.ReadAllText(Path.Combine(tempDirectory, ".test-owner")), runId, StringComparison.Ordinal))
-                throw new InvalidOperationException("Refusing to write a settings fixture without its owner marker.");
-            var parent = Path.GetDirectoryName(target)!;
-            if (Directory.Exists(parent) && (File.GetAttributes(parent) & FileAttributes.ReparsePoint) != 0) throw new InvalidOperationException("Refusing to write through a fixture reparse point.");
-            if (File.Exists(target) && (File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0) throw new InvalidOperationException("Refusing to overwrite a fixture reparse point.");
-            Directory.CreateDirectory(parent);
-            File.WriteAllText(target, value, encoding);
-        }
         public void Dispose()
         {
-            var allowedRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "StorageChronicleSettingsTests"));
-            if (!string.Equals(Path.GetDirectoryName(Path.GetFullPath(tempDirectory)), allowedRoot, StringComparison.OrdinalIgnoreCase) ||
-                !File.Exists(Path.Combine(tempDirectory, ".test-owner")) || !string.Equals(File.ReadAllText(Path.Combine(tempDirectory, ".test-owner")), runId, StringComparison.Ordinal))
-                throw new InvalidOperationException("Refusing to clean a settings fixture without its matching run owner marker.");
-            var boundary = Path.GetFullPath(tempDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            foreach (var entry in Directory.EnumerateFileSystemEntries(tempDirectory, "*", SearchOption.AllDirectories))
-            {
-                var resolved = Path.GetFullPath(entry);
-                if (!resolved.StartsWith(boundary, StringComparison.OrdinalIgnoreCase) || (File.GetAttributes(resolved) & FileAttributes.ReparsePoint) != 0)
-                    throw new InvalidOperationException("Refusing to clean a settings fixture with an out-of-root path or reparse point.");
-            }
+            var expectedParent = Path.Combine(Path.GetTempPath(), "StorageChronicleSettingsTests");
+            if (!string.Equals(Path.GetDirectoryName(Path.GetFullPath(tempDirectory)), expectedParent, StringComparison.OrdinalIgnoreCase))
+                throw new IOException("The settings test fixture escaped its dedicated temp parent.");
+            using var marker = JsonDocument.Parse(File.ReadAllText(Path.Combine(tempDirectory, ".test-owner.json")));
+            if (marker.RootElement.GetProperty("Schema").GetString() != "StorageChronicle.TestFixtureOwner.v1" || marker.RootElement.GetProperty("RunId").GetString() != runId || Path.GetFileName(tempDirectory) != runId)
+                throw new IOException("The settings fixture owner marker does not match this run.");
+            EnsureNoReparsePoints(tempDirectory);
             Directory.Delete(tempDirectory, recursive: true);
+        }
+
+        private static void EnsureNoReparsePoints(string directory)
+        {
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
+            {
+                if ((File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0) throw new IOException($"A reparse point was found in the owned settings fixture: {entry}");
+                if (Directory.Exists(entry)) EnsureNoReparsePoints(entry);
+            }
         }
     }
 
