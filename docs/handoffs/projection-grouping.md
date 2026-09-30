@@ -44,4 +44,4 @@ Projectionは入力イベントとSource Eventを変更せず、ファイル内�
 - 異なる既知Processが同一/祖先/子孫routeへ変更した場合だけ先行frameを閉じる。Unknown attribution同士のsource/volume/mount不一致は競合Processと推測しない。
 - `ActivityGroupProjection.CloseBoundaryUtc`を追加。競合境界は競合イベント時刻、timeout境界は最終イベント+timeout。まだactiveなGroupはnull。
 - 追加テスト: 独立route同時保持、timeout境界、UnknownとExact actorの非混合。Projection suite 17/17 pass、build 0 warnings/errors。
-- この追加はDiff View要件16.3向けで、canonical events/state/durable historyは変更しない。ファイル内容・内容hash・OS filesystemは参照しない。
+- このProjection grouping変更はcanonical events/stateを変更せず、ファイル内容・内容hash・OS filesystemも参照しない。トップ統合では要件16.3のProcessStop Replay用に別種の非ファイルProcessLifecycle履歴を追加している。

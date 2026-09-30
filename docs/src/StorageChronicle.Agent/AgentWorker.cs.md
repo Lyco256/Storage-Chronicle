@@ -1,10 +1,10 @@
 # AgentWorker.cs
 
-Adapts the multi-collector pipeline to the .NET hosted-service lifecycle. Before the first collection pass it rehydrates unresolved continuity prompts from canonical history, then forwards collector failures, source continuity, and bounded queue depth to health IPC, catches durable pipeline failures as quality state, retries recoverable stopped storage through `TryResumeAsync`, disposes event-driven Windows sources on shutdown, and flushes durable storage before service completion. It has no UI and is intended for LocalSystem deployment with service recovery settings.
+Adapts the multi-collector pipeline to the .NET hosted-service lifecycle. Before the first collection pass it rehydrates unresolved continuity prompts from canonical history, then forwards collector failures, source continuity, and bounded queue depth to health IPC, catches durable pipeline failures as quality state, retries recoverable stopped storage through `TryResumeAsync`, disposes event-driven Windows sources on shutdown, drains the process-lifecycle persistence queue, and only then stops durable storage. It has no UI and is intended for LocalSystem deployment with service recovery settings.
 
 ## Role
 
-This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle. The worker wires the singleton bounded reconciliation live-event buffer to the pipeline's post-commit source notification so reconciliation never relies on a global monitoring stop.
+This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle. The worker wires the singleton bounded reconciliation live-event buffer to the pipeline's post-commit source notification so reconciliation never relies on a global monitoring stop. The optional process-lifecycle state is drained after collectors stop and before the storage engine stops, preserving queued ProcessStop facts during graceful shutdown.
 
 ## Public types and responsibilities
 
@@ -32,7 +32,7 @@ Failure, corruption, cancellation, and recovery remain observable and are not co
 
 ## Tests
 
-Validated by tests/StorageChronicle.Integration.Tests and the affected integration tests.
+Validated by `tests/StorageChronicle.Agent.Tests/AgentWorkerTests.cs` for shutdown drain ordering and by the Agent projection tests for process-exit replay.
 
 ## OS constraints
 

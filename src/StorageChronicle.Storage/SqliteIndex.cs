@@ -17,7 +17,7 @@ internal readonly record struct EventIndexRecord(
 
 internal sealed class SqliteIndex : IAsyncDisposable
 {
-    private const int CurrentSchemaVersion = 2;
+    private const int CurrentSchemaVersion = 3;
     private readonly string _databasePath;
     private readonly TimeSpan _busyTimeout;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -150,6 +150,104 @@ internal sealed class SqliteIndex : IAsyncDisposable
             }
 
             transaction.Commit();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    internal async ValueTask<bool> ContainsProcessLifecycleEventAsync(EventId eventId, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "SELECT 1 FROM process_lifecycle WHERE event_id = $event_id LIMIT 1;";
+            AddParameter(command, "$event_id", eventId.ToString());
+            return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    internal async ValueTask AppendProcessLifecycleEventAsync(long sequence, ProcessLifecycleEvent value, byte[] payload, CancellationToken cancellationToken)
+    {
+        await AppendProcessLifecycleEventsAsync([(sequence, value, payload)], cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async ValueTask AppendProcessLifecycleEventsAsync(IReadOnlyList<(long Sequence, ProcessLifecycleEvent Value, byte[] Payload)> values, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        if (values.Count == 0) return;
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var transaction = _connection.BeginTransaction();
+            using var command = _connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "INSERT OR IGNORE INTO process_lifecycle (sequence, event_id, process_instance_id, occurred_utc, received_utc, payload) VALUES ($sequence, $event_id, $process_instance_id, $occurred_utc, $received_utc, $payload);";
+            AddParameter(command, "$sequence", 0L);
+            AddParameter(command, "$event_id", string.Empty);
+            AddParameter(command, "$process_instance_id", string.Empty);
+            AddParameter(command, "$occurred_utc", string.Empty);
+            AddParameter(command, "$received_utc", string.Empty);
+            AddParameter(command, "$payload", Array.Empty<byte>());
+            foreach (var item in values)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                command.Parameters["$sequence"].Value = item.Sequence;
+                command.Parameters["$event_id"].Value = item.Value.EventId.ToString();
+                command.Parameters["$process_instance_id"].Value = item.Value.ProcessInstanceId.Value;
+                command.Parameters["$occurred_utc"].Value = item.Value.OccurredUtc.ToUniversalTime().ToString("O");
+                command.Parameters["$received_utc"].Value = item.Value.ReceivedUtc.ToUniversalTime().ToString("O");
+                command.Parameters["$payload"].Value = item.Payload;
+                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            transaction.Commit();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    internal async ValueTask<IReadOnlyList<byte[]>> ReadProcessLifecycleEventsAsync(IReadOnlyCollection<ProcessInstanceId> processInstances, DateTimeOffset fromUtc, DateTimeOffset toUtc, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(processInstances);
+        if (fromUtc > toUtc) throw new ArgumentException("The lifecycle query start must not be after its end.", nameof(fromUtc));
+        var ids = processInstances.Select(value => value.Value).Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.Ordinal).ToArray();
+        if (ids.Length == 0) return Array.Empty<byte[]>();
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var result = new List<(string OccurredUtc, long Sequence, byte[] Payload)>();
+            foreach (var chunk in ids.Chunk(400))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                using var command = _connection.CreateCommand();
+                var parameters = new List<string>(chunk.Length);
+                for (var index = 0; index < chunk.Length; index++)
+                {
+                    var parameter = "$process" + index.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    parameters.Add(parameter);
+                    AddParameter(command, parameter, chunk[index]);
+                }
+
+                command.CommandText = $"SELECT occurred_utc, sequence, payload FROM process_lifecycle WHERE process_instance_id IN ({string.Join(",", parameters)}) AND occurred_utc >= $from_utc AND occurred_utc <= $to_utc ORDER BY occurred_utc, sequence;";
+                AddParameter(command, "$from_utc", fromUtc.ToUniversalTime().ToString("O"));
+                AddParameter(command, "$to_utc", toUtc.ToUniversalTime().ToString("O"));
+                using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                    result.Add((reader.GetString(0), reader.GetInt64(1), (byte[])reader[2]));
+            }
+
+            return result.OrderBy(item => item.OccurredUtc, StringComparer.Ordinal).ThenBy(item => item.Sequence).Select(item => item.Payload).ToArray();
         }
         finally
         {
@@ -430,6 +528,7 @@ internal sealed class SqliteIndex : IAsyncDisposable
         if (version > CurrentSchemaVersion) throw new StorageException($"SQLite schema version {version} is newer than {CurrentSchemaVersion}.");
         if (version == 0) ApplyMigrationOne();
         else if (version == 1) ApplyMigrationTwo();
+        if (ReadUserVersion() == 2) ApplyMigrationThree();
     }
 
     private void ApplyMigrationOne()
@@ -522,6 +621,28 @@ internal sealed class SqliteIndex : IAsyncDisposable
             CREATE UNIQUE INDEX IF NOT EXISTS ux_event_index_event_kind ON event_index (event_id, kind);
             INSERT INTO schema_migrations(version, applied_utc) VALUES (2, $now);
             PRAGMA user_version = 2;
+            """;
+        AddParameter(command, "$now", DateTimeOffset.UtcNow.ToString("O"));
+        command.ExecuteNonQuery();
+        transaction.Commit();
+    }
+
+    private void ApplyMigrationThree()
+    {
+        using var transaction = _connection.BeginTransaction();
+        using var command = _connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            CREATE TABLE IF NOT EXISTS process_lifecycle (
+                sequence INTEGER PRIMARY KEY,
+                event_id TEXT NOT NULL UNIQUE,
+                process_instance_id TEXT NOT NULL,
+                occurred_utc TEXT NOT NULL,
+                received_utc TEXT NOT NULL,
+                payload BLOB NOT NULL);
+            CREATE INDEX IF NOT EXISTS ix_process_lifecycle_instance_time ON process_lifecycle (process_instance_id, occurred_utc, sequence);
+            INSERT INTO schema_migrations(version, applied_utc) VALUES (3, $now);
+            PRAGMA user_version = 3;
             """;
         AddParameter(command, "$now", DateTimeOffset.UtcNow.ToString("O"));
         command.ExecuteNonQuery();

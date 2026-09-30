@@ -44,13 +44,179 @@ public sealed class StorageEngineTests
             {
                 await connection.OpenAsync();
                 using var command = connection.CreateCommand();
-                command.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('event_index', 'current_state', 'path_search', 'process', 'volume', 'mount_session', 'projection_cache') ORDER BY name;";
+                command.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('event_index', 'current_state', 'path_search', 'process', 'volume', 'mount_session', 'projection_cache', 'process_lifecycle') ORDER BY name;";
                 using var reader = await command.ExecuteReaderAsync();
                 var tables = new List<string>();
                 while (await reader.ReadAsync()) tables.Add(reader.GetString(0));
-                Assert.Equal(7, tables.Count);
+                Assert.Equal(8, tables.Count);
                 connection.Close();
             }
+        }
+        finally
+        {
+            RemoveDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessLifecycleFactsRemainSeparateAndRebuildFromAppendLog()
+    {
+        var directory = CreateDirectory();
+        var processId = ProcessInstanceId.Create("process-lifecycle-replay");
+        var occurred = DateTimeOffset.UtcNow.AddMinutes(-1);
+        var value = new ProcessLifecycleEvent(EventId.New(), EventSchemaVersion.Current, processId, ProcessLifecycleTransition.Exited, occurred, DateTimeOffset.UtcNow, EventOrigin.Etw, EventQuality.Exact);
+        try
+        {
+            await using (var store = CreateStore(directory))
+            {
+                await store.AppendProcessLifecycleEventAsync(value);
+                Assert.Equal(0, await store.CountEventsAsync(canonical: false));
+                Assert.Equal(0, await store.CountEventsAsync(canonical: true));
+                Assert.Equal(value, Assert.Single(await store.ReadProcessLifecycleEventsAsync([processId], occurred.AddSeconds(-1), occurred.AddSeconds(1))));
+                await store.StopAsync();
+            }
+
+            foreach (var path in new[] { Path.Combine(directory, "index.sqlite"), Path.Combine(directory, "index.sqlite-wal"), Path.Combine(directory, "index.sqlite-shm") })
+                if (File.Exists(path)) File.Delete(path);
+
+            await using (var recovered = CreateStore(directory))
+            {
+                await recovered.RebuildSqliteAsync();
+                Assert.Equal(value, Assert.Single(await recovered.ReadProcessLifecycleEventsAsync([processId], occurred.AddSeconds(-1), occurred.AddSeconds(1))));
+            }
+        }
+        finally
+        {
+            RemoveDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessLifecycleAppendHonorsCancellationAndCapacityStop()
+    {
+        var directory = CreateDirectory();
+        var value = new ProcessLifecycleEvent(EventId.New(), EventSchemaVersion.Current, ProcessInstanceId.Create("process-lifecycle-failure"), ProcessLifecycleTransition.Exited, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, EventOrigin.Etw, EventQuality.Exact);
+        try
+        {
+            await using (var store = CreateStore(directory))
+            {
+                using var cancellation = new CancellationTokenSource();
+                cancellation.Cancel();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await store.AppendProcessLifecycleEventAsync(value, cancellation.Token));
+                Assert.Empty(await store.ReadProcessLifecycleEventsAsync([value.ProcessInstanceId], value.OccurredUtc.AddSeconds(-1), value.OccurredUtc.AddSeconds(1)));
+            }
+
+            await using var capacityStopped = new AppendOnlyStorageEngine(new StorageEngineOptions(Path.Combine(directory, "capacity"))
+            {
+                MinimumFreeBytes = 1,
+                CapacityProbe = new FixedCapacityProbe(0)
+            });
+            await Assert.ThrowsAsync<StorageCapacityException>(async () => await capacityStopped.AppendProcessLifecycleEventAsync(value));
+            Assert.Equal(RecordingState.CapacityStopped, capacityStopped.Status.State);
+            Assert.Empty(await capacityStopped.ReadProcessLifecycleEventsAsync([value.ProcessInstanceId], value.OccurredUtc.AddSeconds(-1), value.OccurredUtc.AddSeconds(1)));
+        }
+        finally
+        {
+            RemoveDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessLifecycleIndexRecoversMissingRowsFromImmutableSegmentsOnOpen()
+    {
+        var directory = CreateDirectory();
+        var processId = ProcessInstanceId.Create("process-lifecycle-index-recovery");
+        var occurred = DateTimeOffset.UtcNow.AddMinutes(-1);
+        var value = new ProcessLifecycleEvent(EventId.New(), EventSchemaVersion.Current, processId, ProcessLifecycleTransition.Exited, occurred, DateTimeOffset.UtcNow, EventOrigin.Etw, EventQuality.Exact);
+        try
+        {
+            await using (var store = CreateStore(directory))
+            {
+                await store.AppendProcessLifecycleEventAsync(value);
+                await store.StopAsync();
+            }
+
+            await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(directory, "index.sqlite"), Pooling = false }.ToString()))
+            {
+                await connection.OpenAsync();
+                using var command = connection.CreateCommand();
+                command.CommandText = "DELETE FROM process_lifecycle WHERE event_id = $eventId;";
+                command.Parameters.AddWithValue("$eventId", value.EventId.ToString());
+                Assert.Equal(1, await command.ExecuteNonQueryAsync());
+            }
+
+            await using var recovered = CreateStore(directory);
+            Assert.Equal(value, Assert.Single(await recovered.ReadProcessLifecycleEventsAsync([processId], occurred.AddSeconds(-1), occurred.AddSeconds(1))));
+        }
+        finally
+        {
+            RemoveDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task CorruptProcessLifecycleIndexPayloadIsObservableAndCanBeRebuiltFromSegments()
+    {
+        var directory = CreateDirectory();
+        var processId = ProcessInstanceId.Create("process-lifecycle-corruption");
+        var occurred = DateTimeOffset.UtcNow.AddMinutes(-1);
+        var value = new ProcessLifecycleEvent(EventId.New(), EventSchemaVersion.Current, processId, ProcessLifecycleTransition.Exited, occurred, DateTimeOffset.UtcNow, EventOrigin.Etw, EventQuality.Exact);
+        try
+        {
+            await using (var store = CreateStore(directory))
+            {
+                await store.AppendProcessLifecycleEventAsync(value);
+                await store.StopAsync();
+            }
+
+            await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(directory, "index.sqlite"), Pooling = false }.ToString()))
+            {
+                await connection.OpenAsync();
+                using var command = connection.CreateCommand();
+                command.CommandText = "UPDATE process_lifecycle SET payload = $payload WHERE event_id = $eventId;";
+                command.Parameters.AddWithValue("$payload", new byte[] { 0x7b, 0x7d, 0x7d });
+                command.Parameters.AddWithValue("$eventId", value.EventId.ToString());
+                Assert.Equal(1, await command.ExecuteNonQueryAsync());
+            }
+
+            await using var recovered = CreateStore(directory);
+            await Assert.ThrowsAsync<JsonException>(async () => await recovered.ReadProcessLifecycleEventsAsync([processId], occurred.AddSeconds(-1), occurred.AddSeconds(1)));
+            await recovered.RebuildSqliteAsync();
+            Assert.Equal(value, Assert.Single(await recovered.ReadProcessLifecycleEventsAsync([processId], occurred.AddSeconds(-1), occurred.AddSeconds(1))));
+        }
+        finally
+        {
+            RemoveDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task SchemaVersionTwoMigratesToLifecycleIndexWithoutLosingEventRows()
+    {
+        var directory = CreateDirectory();
+        var processId = ProcessInstanceId.Create("process-lifecycle-v2-migration");
+        var occurred = DateTimeOffset.UtcNow;
+        var lifecycle = new ProcessLifecycleEvent(EventId.New(), EventSchemaVersion.Current, processId, ProcessLifecycleTransition.Exited, occurred, occurred, EventOrigin.Etw, EventQuality.Exact);
+        try
+        {
+            await using (var store = CreateStore(directory))
+            {
+                await store.AppendSourceAsync(CreateSource(1));
+                await store.StopAsync();
+            }
+
+            await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(directory, "index.sqlite"), Pooling = false }.ToString()))
+            {
+                await connection.OpenAsync();
+                using var command = connection.CreateCommand();
+                command.CommandText = "DROP TABLE process_lifecycle; DELETE FROM schema_migrations WHERE version = 3; PRAGMA user_version = 2;";
+                await command.ExecuteNonQueryAsync();
+            }
+
+            await using var migrated = CreateStore(directory);
+            Assert.Equal(1, await migrated.CountEventsAsync(canonical: false));
+            await migrated.AppendProcessLifecycleEventAsync(lifecycle);
+            Assert.Equal(lifecycle, Assert.Single(await migrated.ReadProcessLifecycleEventsAsync([processId], occurred.AddSeconds(-1), occurred.AddSeconds(1))));
         }
         finally
         {

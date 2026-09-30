@@ -3,6 +3,7 @@ using StorageChronicle.Application;
 using StorageChronicle.Contracts;
 using StorageChronicle.Domain.Contracts;
 using StorageChronicle.Normalization;
+using StorageChronicle.Platform.Abstractions;
 using StorageChronicle.Storage;
 using Xunit;
 
@@ -21,18 +22,23 @@ public sealed class AgentWorkerTests
             CompressClosedSegments = false
         });
         var health = new AgentHealthState();
+        var lifecycleState = new AgentProcessLifecycleState(storage, health);
         var worker = new AgentWorker(
             new ThrowingEventStore(),
             new NoopStateStore(),
             new EventNormalizer(),
             new[] { new SingleSourceCollector() },
             storage,
-            health);
+            health,
+            processLifecycleState: lifecycleState);
 
         Exception? cleanupFailure = null;
         try
         {
             await worker.StartAsync(CancellationToken.None);
+            var processId = ProcessInstanceId.Create("worker-stop-drain");
+            var exitedUtc = DateTimeOffset.UtcNow;
+            lifecycleState.RecordProcessExit(processId, exitedUtc);
             var observed = await WaitForAsync(
                 () => health.Snapshot(storage.Status).Reason?.Contains("Pipeline:", StringComparison.Ordinal) == true,
                 TimeSpan.FromSeconds(3));
@@ -40,6 +46,8 @@ public sealed class AgentWorkerTests
             Assert.True(observed, "The supervised pipeline failure was not published to Agent health.");
             using var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
             await worker.StopAsync(stopTimeout.Token);
+            Assert.Equal(RecordingState.Completed, storage.Status.State);
+            Assert.Equal(exitedUtc, Assert.Single(await storage.ReadProcessLifecycleEventsAsync([processId], exitedUtc.AddSeconds(-1), exitedUtc.AddSeconds(1))).OccurredUtc);
         }
         finally
         {

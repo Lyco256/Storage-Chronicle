@@ -49,6 +49,7 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
             _index = new SqliteIndex(options);
         }
 
+        var lifecycleRecoveryBatch = new List<(long Sequence, ProcessLifecycleEvent Value, byte[] Payload)>(512);
         foreach (var record in _segments.ReadAllRecords())
         {
             _nextSequence = Math.Max(_nextSequence, record.Sequence);
@@ -64,7 +65,21 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
                     // A segment with valid framing but an invalid event payload remains readable as a segment issue.
                 }
             }
+            else if (record.Kind == StorageRecordKind.ProcessLifecycleEvent)
+            {
+                var lifecycle = JsonSerializer.Deserialize<ProcessLifecycleEvent>(record.Payload, JsonOptions)
+                    ?? throw new InvalidDataException("A process lifecycle segment record deserialized to null.");
+                lifecycleRecoveryBatch.Add((record.Sequence, lifecycle, record.Payload));
+                if (lifecycleRecoveryBatch.Count >= 512)
+                {
+                    _index.AppendProcessLifecycleEventsAsync(lifecycleRecoveryBatch, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+                    lifecycleRecoveryBatch.Clear();
+                }
+            }
         }
+
+        if (lifecycleRecoveryBatch.Count > 0)
+            _index.AppendProcessLifecycleEventsAsync(lifecycleRecoveryBatch, CancellationToken.None).AsTask().GetAwaiter().GetResult();
 
         _flushLoop = Task.Run(FlushLoopAsync);
     }
@@ -102,6 +117,65 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
         {
             await FlushAsync(cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>Appends and immediately flushes a non-file process lifecycle fact for historical Activity Frame reconstruction.</summary>
+    public async ValueTask AppendProcessLifecycleEventAsync(ProcessLifecycleEvent value, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if (string.IsNullOrWhiteSpace(value.ProcessInstanceId.Value)) throw new ArgumentException("A process instance identity is required.", nameof(value));
+        if (value.OccurredUtc == default || value.ReceivedUtc == default) throw new ArgumentException("Process lifecycle event times are required.", nameof(value));
+        if (value.SchemaVersion.Major <= 0 || value.SchemaVersion.Minor < 0) throw new ArgumentException("A valid event schema version is required.", nameof(value));
+
+        EnsureRunning();
+        await _writerGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (await _index.ContainsProcessLifecycleEventAsync(value.EventId, cancellationToken).ConfigureAwait(false)) return;
+            await EnsureCapacityAsync(cancellationToken).ConfigureAwait(false);
+            var sequence = checked(++_nextSequence);
+            var payload = JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions);
+            var segmentAppendCompleted = false;
+            try
+            {
+                await _segments.AppendAsync(StorageRecordKind.ProcessLifecycleEvent, value.SchemaVersion.Major, value.SchemaVersion.Minor, sequence, payload, cancellationToken).ConfigureAwait(false);
+                segmentAppendCompleted = true;
+                // The append log is authoritative. Make the lifecycle fact durable before
+                // publishing its SQLite projection row so a crash cannot leave an index-only fact.
+                await _segments.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+                await _index.AppendProcessLifecycleEventAsync(sequence, value, payload, CancellationToken.None).ConfigureAwait(false);
+                await _index.StoreFinalSequenceAsync(sequence, _lastSourceSequence, RecordingState.Running, null, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException)
+            {
+                var capacity = exception is StorageCapacityException || IsCapacityFailure(exception);
+                var status = new RecordingStatus(capacity ? RecordingState.CapacityStopped : RecordingState.Stopped, segmentAppendCompleted ? sequence : sequence - 1, _lastSourceSequence, exception.Message);
+                SetStatus(status);
+                await TryStoreStatusAsync(status).ConfigureAwait(false);
+                if (capacity) throw new StorageCapacityException("Recording stopped because process lifecycle history could not be made durable.", exception);
+                throw new StorageException("Recording stopped after a process lifecycle history failure.", exception);
+            }
+        }
+        finally
+        {
+            _writerGate.Release();
+        }
+    }
+
+    /// <summary>Reads lifecycle facts for selected process instances and a bounded UTC interval.</summary>
+    public async ValueTask<IReadOnlyList<ProcessLifecycleEvent>> ReadProcessLifecycleEventsAsync(IReadOnlyCollection<ProcessInstanceId> processInstances, DateTimeOffset fromUtc, DateTimeOffset toUtc, CancellationToken cancellationToken = default)
+    {
+        var payloads = await _index.ReadProcessLifecycleEventsAsync(processInstances, fromUtc, toUtc, cancellationToken).ConfigureAwait(false);
+        var values = new List<ProcessLifecycleEvent>(payloads.Count);
+        foreach (var payload in payloads)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var value = JsonSerializer.Deserialize<ProcessLifecycleEvent>(payload, JsonOptions);
+            if (value is not null) values.Add(value);
+        }
+
+        return values;
     }
 
     /// <summary>Appends a bounded canonical-event batch while retaining immutable segment ordering and one SQLite durability transaction.</summary>
@@ -365,6 +439,7 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
             await _index.RecreateAsync(cancellationToken).ConfigureAwait(false);
             var indexBatch = new List<EventIndexRecord>(512);
             var canonicalBatch = new List<CanonicalEvent>(512);
+            var lifecycleBatch = new List<(long Sequence, ProcessLifecycleEvent Value, byte[] Payload)>(512);
             foreach (var record in _segments.ReadAllRecords())
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -376,7 +451,7 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
                         indexBatch.Add(new EventIndexRecord(record.Kind, record.Sequence, source.EventId, source.SchemaVersion, source.Time, source.FileId, source.ParentFileId, source.Name, record.Payload));
                     }
                 }
-                else
+                else if (record.Kind == StorageRecordKind.CanonicalEvent)
                 {
                     var canonical = JsonSerializer.Deserialize<CanonicalEvent>(record.Payload, JsonOptions);
                     if (canonical is not null)
@@ -385,11 +460,21 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
                         canonicalBatch.Add(canonical);
                     }
                 }
+                else if (record.Kind == StorageRecordKind.ProcessLifecycleEvent)
+                {
+                    var lifecycle = JsonSerializer.Deserialize<ProcessLifecycleEvent>(record.Payload, JsonOptions);
+                    if (lifecycle is not null) lifecycleBatch.Add((record.Sequence, lifecycle, record.Payload));
+                }
 
-                if (indexBatch.Count >= 512) await FlushRebuildBatchAsync(_index, indexBatch, canonicalBatch, cancellationToken).ConfigureAwait(false);
+                if (indexBatch.Count >= 512 || lifecycleBatch.Count >= 512)
+                {
+                    await FlushRebuildBatchAsync(_index, indexBatch, canonicalBatch, cancellationToken).ConfigureAwait(false);
+                    await FlushLifecycleRebuildBatchAsync(_index, lifecycleBatch, cancellationToken).ConfigureAwait(false);
+                }
             }
 
             await FlushRebuildBatchAsync(_index, indexBatch, canonicalBatch, cancellationToken).ConfigureAwait(false);
+            await FlushLifecycleRebuildBatchAsync(_index, lifecycleBatch, cancellationToken).ConfigureAwait(false);
 
             await _index.StoreFinalSequenceAsync(_nextSequence, _lastSourceSequence, _status.State, _status.Reason, cancellationToken).ConfigureAwait(false);
         }
@@ -503,6 +588,7 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
     {
         var indexBatch = new List<EventIndexRecord>(512);
         var canonicalBatch = new List<CanonicalEvent>(512);
+        var lifecycleBatch = new List<(long Sequence, ProcessLifecycleEvent Value, byte[] Payload)>(512);
         foreach (var record in segments.ReadAllRecords())
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -514,7 +600,7 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
                     indexBatch.Add(new EventIndexRecord(record.Kind, record.Sequence, source.EventId, source.SchemaVersion, source.Time, source.FileId, source.ParentFileId, source.Name, record.Payload));
                 }
             }
-            else
+            else if (record.Kind == StorageRecordKind.CanonicalEvent)
             {
                 var canonical = JsonSerializer.Deserialize<CanonicalEvent>(record.Payload, JsonOptions);
                 if (canonical is not null)
@@ -523,11 +609,28 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
                     canonicalBatch.Add(canonical);
                 }
             }
+            else if (record.Kind == StorageRecordKind.ProcessLifecycleEvent)
+            {
+                var lifecycle = JsonSerializer.Deserialize<ProcessLifecycleEvent>(record.Payload, JsonOptions);
+                if (lifecycle is not null) lifecycleBatch.Add((record.Sequence, lifecycle, record.Payload));
+            }
 
-            if (indexBatch.Count >= 512) await FlushRebuildBatchAsync(index, indexBatch, canonicalBatch, cancellationToken).ConfigureAwait(false);
+            if (indexBatch.Count >= 512 || lifecycleBatch.Count >= 512)
+            {
+                await FlushRebuildBatchAsync(index, indexBatch, canonicalBatch, cancellationToken).ConfigureAwait(false);
+                await FlushLifecycleRebuildBatchAsync(index, lifecycleBatch, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         await FlushRebuildBatchAsync(index, indexBatch, canonicalBatch, cancellationToken).ConfigureAwait(false);
+        await FlushLifecycleRebuildBatchAsync(index, lifecycleBatch, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask FlushLifecycleRebuildBatchAsync(SqliteIndex index, List<(long Sequence, ProcessLifecycleEvent Value, byte[] Payload)> batch, CancellationToken cancellationToken)
+    {
+        if (batch.Count == 0) return;
+        await index.AppendProcessLifecycleEventsAsync(batch, cancellationToken).ConfigureAwait(false);
+        batch.Clear();
     }
 
     private static async ValueTask FlushRebuildBatchAsync(SqliteIndex index, List<EventIndexRecord> indexBatch, List<CanonicalEvent> canonicalBatch, CancellationToken cancellationToken)

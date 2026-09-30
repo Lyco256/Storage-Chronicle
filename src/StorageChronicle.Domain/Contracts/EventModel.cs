@@ -76,7 +76,7 @@ public enum EventOrigin
     LiveUsn,
     /// <summary>USN record recovered after interruption.</summary>
     RecoveredUsn,
-    /// <summary>ETW observation retained only for bounded correlation.</summary>
+    /// <summary>ETW-derived fact; read-only file I/O observations remain transient, while distinct non-file lifecycle facts may be durable.</summary>
     Etw,
     /// <summary>User-session clipboard observation.</summary>
     Clipboard,
@@ -207,6 +207,24 @@ public sealed record EventTime(
     DateTimeOffset ReceivedUtc,
     SourceSequence SourceSequence,
     MountSequence MountSequence);
+
+/// <summary>Describes a durable non-file process lifecycle fact used to reconstruct Activity Frame boundaries.</summary>
+public enum ProcessLifecycleTransition
+{
+    /// <summary>A previously observed process instance exited.</summary>
+    Exited
+}
+
+/// <summary>Represents an observed process lifecycle fact without introducing a synthetic file event.</summary>
+public sealed record ProcessLifecycleEvent(
+    EventId EventId,
+    EventSchemaVersion SchemaVersion,
+    ProcessInstanceId ProcessInstanceId,
+    ProcessLifecycleTransition Transition,
+    DateTimeOffset OccurredUtc,
+    DateTimeOffset ReceivedUtc,
+    EventOrigin Origin,
+    EventQuality Quality);
 
 /// <summary>Metadata observed for a file-system object. It deliberately has no content or content hash.</summary>
 public sealed record FileMetadata(

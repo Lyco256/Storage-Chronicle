@@ -1,6 +1,6 @@
 # SqliteIndex.cs
 
-The index exposes bounded payload-page and count queries used by the Agent projection adapter. Queries are parameterized, ordered by recorded/source/segment sequence, and never expose file contents or content hashes.
+The index exposes bounded payload-page and count queries used by the Agent projection adapter. Queries are parameterized, ordered by recorded/source/segment sequence, and never expose file contents or content hashes. Schema migration 3 adds a separate process-lifecycle index keyed by process-instance ID, observed UTC time, and segment sequence; it is rebuilt from immutable segment records and is not counted as Source or Canonical history.
 
 The bounded append support resolves existing event identities in chunks and writes a finite batch in one `synchronous=FULL` transaction. Segment files remain the source of truth, so a failure after segment append is recoverable by SQLite rebuild.
 
@@ -12,11 +12,11 @@ Canonical state and projection-cache recovery uses the same finite batch boundar
 
 ## スキーマ
 
-明示的なmigration version 1で`event_index`、`path_search`、`current_state`、`process`、`volume`、`mount_session`、`projection_cache`、`storage_metadata`を作成する。path検索はFileId/親/名前/Sequenceで保持し、重複したフルパス文字列を正本として保存しない。
+明示的なmigration version 1/2で`event_index`、`path_search`、`current_state`、`process`、`volume`、`mount_session`、`projection_cache`、`storage_metadata`を作成し、version 3で`process_lifecycle`の再生成可能な索引を追加する。path検索はFileId/親/名前/Sequenceで保持し、重複したフルパス文字列を正本として保存しない。
 
 ## 不変条件・回復
 
-イベント索引や状態は再生成可能なキャッシュであり、追記ログを更新・削除しない。`RecreateAsync`はSQLite本体とWAL/SHMだけを再作成し、ログの各レコードを再読して索引とcanonical stateを復元する。SQLiteの新規・破損・削除時もengineが再初期化する。
+イベント索引、Process Lifecycle索引、状態は再生成可能なキャッシュであり、追記ログを更新・削除しない。`RecreateAsync`はSQLite本体とWAL/SHMだけを再作成し、ログの各レコードを再読して索引とcanonical stateを復元する。SQLiteの新規・破損・削除時もengineが再初期化する。
 
 ## 関連テスト
 

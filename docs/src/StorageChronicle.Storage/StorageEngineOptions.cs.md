@@ -6,7 +6,7 @@
 
 ## 公開型と不変条件
 
-- `StorageRecordKind` は source/canonical の2種類だけを表す。
+- `StorageRecordKind` は source、canonical、およびファイルイベントではないProcessLifecycle履歴を区別する。後者はイベント一覧や正規化対象に含めない。
 - `StorageEngineOptions` のflush初期値は5秒、閉じたセグメントは既定でZstandard化される。
 - `RecordingStatus` は最終内部Sequenceと最終Source Sequenceを保持する。
 - `StorageCapacityException` は容量不足時に記録を停止したことを表す。自動削除は行わない。

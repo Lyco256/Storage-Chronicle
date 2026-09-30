@@ -40,11 +40,11 @@
 - `dotnet test tests/StorageChronicle.UI.Headless.Tests/StorageChronicle.UI.Headless.Tests.csproj --no-restore`: 8/8 pass。
 - 最終統合後 `./build/Test-All.ps1` — 2026-09-29 成功、exit code 0。DiffView 11/11、Headless UI 8/8、設定UI 13/13を含む。全体カバレッジ/文書ミラー/VirtualBox契約/UIゲートも成功。
 
-トップ統合追補: Activity Frame対応後の現ツリーで `./build/Test-All.ps1` exit code 0、続くAgent全テスト46 passed/3 physical skips、DiffView 13/13、Headless UI 8/8、DocMirror pass。サーバーはsort方向を適用してからページを選ぶ。ProcessStopはAgent生存中のみtransientであり、再起動後の履歴Replayに終了境界を復元できないため、要件16.3はこの点で未完了。
+トップ統合追補（2026-09-30）: Requirement 00 §16.3 のrestart/replay欠落を補い、ProcessStopを非ファイルの耐久ProcessLifecycleEventとして保存し、ReplayではAgent再起動後も読み戻す。サーバーはsort方向を適用してからページを選ぶ。Storage 15/15、Agent 48 passed/3 physical skips、既定の `./build/Test-All.ps1` exit 0、DocMirror pass。実機・elevated受入は未実行。
 
 ## 既知の制限
 
-- プロセス/Activity別のFrame、開始/終了/timeoutのライフサイクル、pin/order、複数pane表示は実装・テスト済み。ProcessStop境界は同一Agentセッション内だけで、Agent再起動後のReplayでは復元できない。
+- プロセス/Activity別のFrame、開始/終了/timeoutのライフサイクル、pin/order、複数pane表示は実装・テスト済み。ETW ProcessStopは別種の非ファイル履歴として耐久化し、Agent再起動後のReplayで復元する。Windows実機受入は未実施。
 - direct-path navigationは文字列履歴であり、実在確認・filesystem query・OS Explorer起動を行わない。Explorer起動eligibilityは共通Projectionの事実に従う。
 - zoom値はUI状態/APIのみ。Avalonia側での実寸レンダリング反映は統合後に接続する。
 
@@ -54,4 +54,4 @@
 - ViewModelはFrame一覧を新しい順に表示し、昇順切替時はAgentが並べ替えた先頭ページを取り直す。Sort directionはIPCへ渡り、サーバー側で全Frameをsortしてから独立pagingするため、履歴が1ページを超えても新着が先頭となる。独立追加読込、Frame event timeline、Live timeout後のpin維持/解除を実装した。Replay cursorで未固定Frameの出現・消滅を絞る。
 - Avalonia panelはFrameごとにプロセス名、route、時間、duration、change/file count、size delta、操作内訳、stateを表示し、selected Frameだけのmetadata-only event timelineを追加pagingする。
 - UI ViewModel test suite: `dotnet build tests/StorageChronicle.UI.DiffView.Tests/StorageChronicle.UI.DiffView.Tests.csproj --no-restore --nologo` (0 warnings/errors), `StorageChronicle.UI.DiffView.Tests.exe --progress off --minimum-expected-tests 1` (12/12 passed)。Desktop project build: 0 warnings/errors。
-- LiveではWindows ETW ProcessStopをProcess Instance IDへ対応づけ、永続file historyへ混ぜずAgent内transient lifecycle registryからFrameを閉じる。未知PIDは推測せず無視する。Agent restart後には終了観測を復元できないため、過去ReplayにProcessStopを反映できない。これは要件16.3のrestart/replay lifecycle制限として残り、全要件完了とは扱わない。
+- LiveではWindows ETW ProcessStopをProcess Instance IDへ対応づけ、Source/Canonical file historyとは別のProcessLifecycleEventとして保存し、Agent内transient registryも更新してFrameを閉じる。Replayはdurable lifecycle indexを用いる。未知PIDは推測せず無視する。Storage/Agent restart-replay tests pass; physical ETW acceptance remains pending.

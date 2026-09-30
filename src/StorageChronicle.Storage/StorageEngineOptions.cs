@@ -8,7 +8,9 @@ public enum StorageRecordKind : byte
     /// <summary>A source fact acquired from a platform source.</summary>
     SourceEvent = 1,
     /// <summary>A canonical event produced by normalization.</summary>
-    CanonicalEvent = 2
+    CanonicalEvent = 2,
+    /// <summary>A non-file lifecycle fact that is durable for historical projections only.</summary>
+    ProcessLifecycleEvent = 3
 }
 
 /// <summary>Describes the recording lifecycle exposed by the storage engine.</summary>

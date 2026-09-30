@@ -1,6 +1,6 @@
 # EventModel.cs
 
-Defines stable IDs, event origins, operations, time/quality metadata, source and canonical event envelopes, file metadata, directory versions, reconciliation gaps, mount sessions, and semantic operation icons. It never stores file contents or content hashes. Changes are consumed by normalization, state, storage, and projection tests.
+Defines stable IDs, event origins, operations, time/quality metadata, source and canonical event envelopes, non-file process lifecycle facts, file metadata, directory versions, reconciliation gaps, mount sessions, and semantic operation icons. `ProcessLifecycleEvent` records observed process-exit facts separately from Source/Canonical file events so historical Activity Frame boundaries can be replayed without fabricating file operations. The ETW origin distinguishes transient read-only file-I/O observations from separately typed durable non-file lifecycle facts. It never stores file contents or content hashes. Changes are consumed by normalization, state, storage, and projection tests.
 
 ## Role
 

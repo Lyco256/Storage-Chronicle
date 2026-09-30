@@ -41,6 +41,34 @@ public sealed class AgentProjectionServiceTests
     }
 
     [Fact]
+    public async Task ProcessLifecyclePersistenceFailureIsReportedAndQueuedFactRemainsAbsent()
+    {
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.ProcessLifecyclePersistenceFailure", out var runId);
+        try
+        {
+            await using var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(Path.Combine(fixtureRoot, "history"))
+            {
+                MinimumFreeBytes = 1,
+                CapacityProbe = new NoFreeSpaceProbe()
+            });
+            var health = new AgentHealthState();
+            var state = new AgentProcessLifecycleState(storage, health);
+            var processId = ProcessInstanceId.Create("process-lifecycle-capacity");
+            var occurred = DateTimeOffset.UtcNow;
+            state.RecordProcessExit(processId, occurred);
+            await state.DisposeAsync();
+
+            Assert.Equal(RecordingState.CapacityStopped, storage.Status.State);
+            Assert.Contains("reserve", health.Snapshot(storage.Status).Reason, StringComparison.OrdinalIgnoreCase);
+            Assert.Empty(await storage.ReadProcessLifecycleEventsAsync([processId], occurred.AddSeconds(-1), occurred.AddSeconds(1)));
+        }
+        finally
+        {
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.ProcessLifecyclePersistenceFailure", runId);
+        }
+    }
+
+    [Fact]
     public async Task DiffProjectionReturnsConcurrentActivityFramesAndTimelinePages()
     {
         var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.ActivityFrames", out var runId);
@@ -211,6 +239,66 @@ public sealed class AgentProjectionServiceTests
         }
     }
 
+    [Fact]
+    public async Task ReplayRestoresProcessExitBoundaryAfterProjectionServiceRestart()
+    {
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.ActivityFramesReplayRecovery", out var runId);
+        try
+        {
+            await using var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(Path.Combine(fixtureRoot, "history")) { FlushInterval = TimeSpan.FromMinutes(1) });
+            var started = DateTimeOffset.UtcNow.AddMinutes(-1);
+            var exited = started.AddSeconds(2);
+            var fileEvent = Event(started, 1, "process-restarted", "C:\\data\\restart.txt");
+            await storage.AppendCanonicalAsync(fileEvent);
+            var liveLifecycle = new AgentProcessLifecycleState(storage);
+            liveLifecycle.RecordProcessExit(ProcessInstanceId.Create("process-restarted"), exited);
+            await liveLifecycle.DisposeAsync();
+
+            // A fresh in-memory lifecycle registry models an Agent restart. Replay must use the durable lifecycle fact.
+            var restartedState = new AgentProcessLifecycleState();
+            var service = new AgentProjectionService(storage, processLifecycle: restartedState);
+            var replay = await service.GetDiffProjectionAsync(new DiffProjectionRequest(started, started.AddSeconds(4), DiffMode.Replay));
+
+            var frame = Assert.Single(replay.ActivityFrames!);
+            Assert.True(frame.IsClosedByProcessExit);
+            Assert.Equal(exited, frame.CloseBoundaryUtc);
+            var sourceEvents = new List<SourceEvent>();
+            await foreach (var sourceEvent in storage.ReadSourceAsync()) sourceEvents.Add(sourceEvent);
+            Assert.Empty(sourceEvents);
+            Assert.Single(await storage.ReadProcessLifecycleEventsAsync([ProcessInstanceId.Create("process-restarted")], started, started.AddSeconds(4)));
+        }
+        finally
+        {
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.ActivityFramesReplayRecovery", runId);
+        }
+    }
+
+    [Fact]
+    public async Task ReplayIncludesFrameAlreadyOpenAtRequestedRangeStart()
+    {
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.ActivityFramesReplayBoundary", out var runId);
+        try
+        {
+            await using var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(Path.Combine(fixtureRoot, "history")) { FlushInterval = TimeSpan.FromMinutes(1) });
+            var eventTime = DateTimeOffset.UtcNow.AddMinutes(-1);
+            var fromUtc = eventTime.AddSeconds(2);
+            var exitedUtc = eventTime.AddSeconds(3);
+            var process = ProcessInstanceId.Create("process-open-at-range-start");
+            await storage.AppendCanonicalAsync(Event(eventTime, 1, process.Value, "C:\\data\\boundary.txt"));
+            await storage.AppendProcessLifecycleEventAsync(new ProcessLifecycleEvent(EventId.New(), EventSchemaVersion.Current, process, ProcessLifecycleTransition.Exited, exitedUtc, DateTimeOffset.UtcNow, EventOrigin.Etw, EventQuality.Exact));
+
+            var replay = await new AgentProjectionService(storage).GetDiffProjectionAsync(new DiffProjectionRequest(fromUtc, eventTime.AddSeconds(5), DiffMode.Replay));
+
+            var frame = Assert.Single(replay.ActivityFrames!);
+            Assert.True(frame.IsClosedByProcessExit);
+            Assert.Equal(exitedUtc, frame.CloseBoundaryUtc);
+        }
+        finally
+        {
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.ActivityFramesReplayBoundary", runId);
+        }
+    }
+
     private static CanonicalEvent Event(DateTimeOffset recordedUtc, long sequence, string process, string path)
     {
         var name = Path.GetFileName(path);
@@ -237,5 +325,10 @@ public sealed class AgentProjectionServiceTests
         public void RecordProcessExit(ProcessInstanceId processInstanceId, DateTimeOffset exitTime) => exits[processInstanceId] = exitTime;
 
         public bool TryGetProcessExit(ProcessInstanceId processInstanceId, out DateTimeOffset exitTime) => exits.TryGetValue(processInstanceId, out exitTime);
+    }
+
+    private sealed class NoFreeSpaceProbe : IStorageCapacityProbe
+    {
+        public long GetAvailableBytes(string storageDirectory) => 0;
     }
 }

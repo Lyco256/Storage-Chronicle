@@ -10,7 +10,7 @@ namespace StorageChronicle.Agent;
 public sealed class AgentWorker : BackgroundService
 {
     /// <summary>Initializes the supervised Agent worker.</summary>
-    public AgentWorker(IEventStore eventStore, IStateStore stateStore, IEventNormalizer normalizer, IEnumerable<ISourceEventCollector> collectors, AppendOnlyStorageEngine storage, AgentHealthState health, IEnumerable<ICanonicalEventSink>? sinks = null, ReconciliationLiveEventBuffer? reconciliationLiveEvents = null)
+    public AgentWorker(IEventStore eventStore, IStateStore stateStore, IEventNormalizer normalizer, IEnumerable<ISourceEventCollector> collectors, AppendOnlyStorageEngine storage, AgentHealthState health, IEnumerable<ICanonicalEventSink>? sinks = null, ReconciliationLiveEventBuffer? reconciliationLiveEvents = null, AgentProcessLifecycleState? processLifecycleState = null)
     {
         this.eventStore = eventStore ?? throw new ArgumentNullException(nameof(eventStore));
         this.stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
@@ -20,6 +20,7 @@ public sealed class AgentWorker : BackgroundService
         this.health = health ?? throw new ArgumentNullException(nameof(health));
         this.sinks = sinks?.ToArray() ?? Array.Empty<ICanonicalEventSink>();
         this.reconciliationLiveEvents = reconciliationLiveEvents ?? new ReconciliationLiveEventBuffer();
+        this.processLifecycleState = processLifecycleState;
     }
 
     private readonly IEventStore eventStore;
@@ -30,6 +31,7 @@ public sealed class AgentWorker : BackgroundService
     private readonly AgentHealthState health;
     private readonly IReadOnlyList<ICanonicalEventSink> sinks;
     private readonly ReconciliationLiveEventBuffer reconciliationLiveEvents;
+    private readonly AgentProcessLifecycleState? processLifecycleState;
     private readonly SemaphoreSlim lifecycleGate = new(1, 1);
     private readonly object runGate = new();
     private CancellationTokenSource? activeRun;
@@ -146,6 +148,11 @@ public sealed class AgentWorker : BackgroundService
             foreach (var disposable in collectors.OfType<IAsyncDisposable>())
             {
                 try { await disposable.DisposeAsync().ConfigureAwait(false); } catch (Exception) { }
+            }
+            if (processLifecycleState is not null)
+            {
+                try { await processLifecycleState.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception exception) { health.RecordPipelineFailure(exception); }
             }
             await FlushSinksAsync(CancellationToken.None).ConfigureAwait(false);
             foreach (var sink in sinks)

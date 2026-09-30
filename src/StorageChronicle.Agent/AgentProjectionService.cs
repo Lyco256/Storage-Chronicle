@@ -155,10 +155,19 @@ public sealed class AgentProjectionService : IProjectionService
             var lookbackFrom = SubtractTimeout(request.FromUtc, timeout);
             var frameEvents = await ReadCanonicalRangeAsync(lookbackFrom, request.ToUtc, cancellationToken).ConfigureAwait(false);
             var groups = new ActivityGrouper().Group(frameEvents, timeout);
-            var matching = groups.Select(group => (Group: group, Snapshot: ToSnapshot(group, timeout, processLifecycle)))
-                .Where(value => request.Mode == DiffMode.Replay
-                    ? value.Group.StartedUtc <= request.ToUtc && value.Group.EndedUtc >= (request.FromUtc ?? DateTimeOffset.MinValue)
-                    : value.Snapshot.CloseBoundaryUtc > request.ToUtc)
+            var candidates = groups.Where(group => request.Mode == DiffMode.Replay
+                    ? group.StartedUtc <= request.ToUtc && group.EndedUtc + timeout >= (request.FromUtc ?? DateTimeOffset.MinValue)
+                    : group.EndedUtc + timeout > request.ToUtc)
+                .ToArray();
+            var processIds = candidates.Select(group => group.Process?.Id).Where(value => value is not null).Select(value => value!.Value).Distinct().ToArray();
+            var durableExits = processIds.Length == 0
+                ? Array.Empty<ProcessLifecycleEvent>()
+                : await store.ReadProcessLifecycleEventsAsync(processIds, lookbackFrom ?? DateTimeOffset.MinValue, request.ToUtc, cancellationToken).ConfigureAwait(false);
+            var processExitTimes = durableExits.Where(value => value.Transition == ProcessLifecycleTransition.Exited)
+                .GroupBy(value => value.ProcessInstanceId)
+                .ToDictionary(group => group.Key, group => group.Min(value => value.OccurredUtc));
+            var matching = candidates.Select(group => (Group: group, Snapshot: ToSnapshot(group, timeout, processLifecycle, processExitTimes)))
+                .Where(value => request.Mode == DiffMode.Replay || value.Snapshot.CloseBoundaryUtc > request.ToUtc)
                 .OrderBy(value => value.Snapshot.StartedUtc, request.ActivityFramesAscending
                     ? Comparer<DateTimeOffset>.Default
                     : Comparer<DateTimeOffset>.Create((left, right) => right.CompareTo(left)))
@@ -238,12 +247,18 @@ public sealed class AgentProjectionService : IProjectionService
         }
     }
 
-    private static DiffActivityFrameSnapshot ToSnapshot(ActivityGroupProjection value, TimeSpan timeout, IProcessLifecycleSink? lifecycle)
+    private static DiffActivityFrameSnapshot ToSnapshot(ActivityGroupProjection value, TimeSpan timeout, IProcessLifecycleSink? lifecycle, IReadOnlyDictionary<ProcessInstanceId, DateTimeOffset>? durableExitTimes = null)
     {
         var closeBoundary = value.CloseBoundaryUtc ?? value.EndedUtc + timeout;
         var closedByProcessExit = false;
-        if (value.Process?.Id is { } processId && lifecycle?.TryGetProcessExit(processId, out var exitedUtc) == true &&
-            exitedUtc >= value.EndedUtc && exitedUtc < closeBoundary)
+        DateTimeOffset? observedExit = null;
+        if (value.Process?.Id is { } processId)
+        {
+            if (durableExitTimes?.TryGetValue(processId, out var durableExitUtc) == true) observedExit = durableExitUtc;
+            if (lifecycle?.TryGetProcessExit(processId, out var transientExitUtc) == true && (observedExit is null || transientExitUtc < observedExit)) observedExit = transientExitUtc;
+        }
+
+        if (observedExit is { } exitedUtc && exitedUtc >= value.EndedUtc && exitedUtc < closeBoundary)
         {
             closeBoundary = exitedUtc;
             closedByProcessExit = true;

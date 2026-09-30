@@ -2,7 +2,7 @@
 
 Process detail lookup accepts the Normalizer's case-insensitive safe-property keys, preserving parent/child Process Instance navigation after canonicalization.
 
-Adapts durable Agent history to the platform-neutral Projection service. Source and normalized Event Stack pages use SQLite-bounded reads and counts; grouped mode regenerates complete groups to keep group boundaries atomic. Diff requests load the requested range in bounded batches; Live/Replay requests also rebuild Activity Frames from canonical events with persisted user pane timeout and bounded lookback, sort the entire computed summary set in the requested direction, then select the independent page. An in-memory process-exit observation may shorten a pane boundary but is never made durable. Timeline detail pages expose event metadata only. Missing settings use the product default; cancellation and invalid ranges remain observable. It never reads file contents or content hashes.
+Adapts durable Agent history to the platform-neutral Projection service. Source and normalized Event Stack pages use SQLite-bounded reads and counts; grouped mode regenerates complete groups to keep group boundaries atomic. Diff requests load the requested range in bounded batches; Live/Replay requests also rebuild Activity Frames from canonical events with persisted user pane timeout and bounded lookback, include frames whose timeout overlaps the Replay range start, load matching durable non-file process-lifecycle facts plus transient observations, sort the summary set, then select the independent page. Timeline detail pages expose event metadata only. Missing settings use the product default; cancellation and invalid ranges remain observable. It never reads file contents or content hashes.
 
 ## Role
 
