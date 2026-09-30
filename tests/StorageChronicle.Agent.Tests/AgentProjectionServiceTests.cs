@@ -91,12 +91,68 @@ public sealed class AgentProjectionServiceTests
             probe.Release.Set();
             await state.DisposeAsync();
 
-            Assert.Contains("3 additional queued process lifecycle fact(s) were not attempted", health.Snapshot(storage.Status).Reason, StringComparison.Ordinal);
+            Assert.Contains("4 lifecycle fact(s) are retained for retry", health.Snapshot(storage.Status).Reason, StringComparison.Ordinal);
         }
         finally
         {
             probe.Release.Set();
             AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.ProcessLifecycleQueuedTail", runId);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessLifecyclePersistenceFailureRetriesRetainedFactsAfterStorageRecovery()
+    {
+        var fixtureRoot = AgentTestFixtureOwnership.CreateTempRoot("StorageChronicle.ProcessLifecycleRetry", out var runId);
+        var probe = new RecoverableCapacityProbe();
+        try
+        {
+            await using var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(Path.Combine(fixtureRoot, "history"))
+            {
+                MinimumFreeBytes = 1,
+                CapacityProbe = probe
+            });
+            var health = new AgentHealthState();
+            var state = new AgentProcessLifecycleState(storage, health);
+            var firstId = ProcessInstanceId.Create("process-lifecycle-retry-first");
+            var firstTime = DateTimeOffset.UtcNow;
+            state.RecordProcessExit(firstId, firstTime);
+
+            var deadline = DateTime.UtcNow.AddSeconds(3);
+            while (storage.Status.State == RecordingState.Running && DateTime.UtcNow < deadline)
+                await Task.Delay(10);
+            Assert.Equal(RecordingState.CapacityStopped, storage.Status.State);
+            deadline = DateTime.UtcNow.AddSeconds(3);
+            while (health.Snapshot(storage.Status).Reason?.Contains("1 lifecycle fact(s) are retained for retry", StringComparison.Ordinal) != true && DateTime.UtcNow < deadline)
+                await Task.Delay(10);
+            Assert.Contains("1 lifecycle fact(s) are retained for retry", health.Snapshot(storage.Status).Reason, StringComparison.Ordinal);
+
+            probe.HasCapacity = true;
+            Assert.True(await storage.TryResumeAsync());
+            using (var canceled = new CancellationTokenSource())
+            {
+                canceled.Cancel();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => state.RetryPendingAsync(canceled.Token).AsTask());
+            }
+            probe.HasCapacity = false;
+            Assert.False(await state.RetryPendingAsync());
+            Assert.Equal(RecordingState.CapacityStopped, storage.Status.State);
+
+            probe.HasCapacity = true;
+            Assert.True(await storage.TryResumeAsync());
+            Assert.True(await state.RetryPendingAsync());
+            var secondId = ProcessInstanceId.Create("process-lifecycle-retry-after-recovery");
+            var secondTime = firstTime.AddSeconds(1);
+            state.RecordProcessExit(secondId, secondTime);
+            await state.DisposeAsync();
+
+            var recovered = await storage.ReadProcessLifecycleEventsAsync([firstId, secondId], firstTime.AddSeconds(-1), secondTime.AddSeconds(1));
+            Assert.Equal(2, recovered.Count);
+            Assert.Equal(new[] { firstId, secondId }, recovered.Select(value => value.ProcessInstanceId));
+        }
+        finally
+        {
+            AgentTestFixtureOwnership.DeleteTempRoot(fixtureRoot, "StorageChronicle.ProcessLifecycleRetry", runId);
         }
     }
 
@@ -375,5 +431,12 @@ public sealed class AgentProjectionServiceTests
             if (!Release.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("The capacity-probe test gate was not released.");
             return 0;
         }
+    }
+
+    private sealed class RecoverableCapacityProbe : IStorageCapacityProbe
+    {
+        public volatile bool HasCapacity;
+
+        public long GetAvailableBytes(string storageDirectory) => HasCapacity ? 1024 * 1024 : 0;
     }
 }
