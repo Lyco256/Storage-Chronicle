@@ -6,6 +6,7 @@ Branch: `feat/readonly-host-preflight`
 
 - Replaced the Windows 10 physical preflight with a read-only, fail-closed inventory. It validates local non-reparse paths, separates test and evidence roots from protected locations, requires a dedicated non-system fixed NTFS volume with safe system/boot/USB role checks and 40 GiB free, binds the two Workload markers to the actual volume identity, and refuses marker reparse points before opening them.
 - Checks for an existing Storage Chronicle installation/history, Agent service name collision, and acceptance SMB share collision. Inventory errors are recorded as failed checks.
+- Enumerates uninstall registrations in machine scope and all loaded non-special user profiles; an unmounted user hive fails closed, and per-profile install directories/reparse paths are inspected. SMB conflict detection matches the `SCAcc<GUID>` names used by the acceptance tests and compares share paths at directory boundaries.
 - Writes a unique report directly under a pre-existing approved EvidenceRoot with `FileMode.CreateNew`; it always declares `AcceptanceEligible = false`.
 - Updated the Windows 10 bundle instructions, finalizer documentation, installer static contract test, and V-165 verification note.
 
@@ -14,6 +15,7 @@ Branch: `feat/readonly-host-preflight`
 - PowerShell parser validation for the verifier, finalizer, and bundle generator: passed.
 - `git diff --check`: passed (Git reports its standard LF-to-CRLF normalization warning for the new PowerShell script).
 - `build/Test-All.ps1`: passed; all projects built with zero warnings/errors, all enabled tests passed, and three elevated acceptance tests were skipped because they require a dedicated elevated NTFS/non-NTFS host.
+- Re-run after adding loaded/unloaded profile inventory and real `SCAcc<GUID>` share-name detection: `build/Test-All.ps1` passed with zero build warnings/errors, all enabled tests passed, and the same three elevated acceptance tests were skipped.
 - `build/quality/Test-DocMirror.ps1`: passed.
 - Installer static test for the fail-closed verifier contract: passed in `Test-All`.
 
