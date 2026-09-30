@@ -40,7 +40,7 @@
 - `dotnet test tests/StorageChronicle.UI.Headless.Tests/StorageChronicle.UI.Headless.Tests.csproj --no-restore`: 8/8 pass。
 - 最終統合後 `./build/Test-All.ps1` — 2026-09-29 成功、exit code 0。DiffView 11/11、Headless UI 8/8、設定UI 13/13を含む。全体カバレッジ/文書ミラー/VirtualBox契約/UIゲートも成功。
 
-トップ統合追補（2026-09-30）: Requirement 00 §16.3 のrestart/replay欠落を補い、ProcessStopを非ファイルの耐久ProcessLifecycleEventとして保存し、ReplayではAgent再起動後も読み戻す。サーバーはsort方向を適用してからページを選ぶ。Storage 15/15、Agent 48 passed/3 physical skips、既定の `./build/Test-All.ps1` exit 0、DocMirror pass。実機・elevated受入は未実行。
+トップ統合追補（2026-09-30）: Requirement 00 §16.3 のrestart/replay欠落を補い、ProcessStopを非ファイルの耐久ProcessLifecycleEventとして保存し、ReplayではAgent再起動後も読み戻す。サーバーはsort方向を適用してからページを選ぶ。Storage 18/18（v1/v2→v3 migrationを含む）、Agent 50 passed/3 physical skips（graceful shutdown drainを含む）、既定の `./build/Test-All.ps1` exit 0（v1 migration test追加前）、DocMirror pass。保存失敗時はAgent healthをfailedにし、後続queue tailをretryしない既知制限があり、強制終了時のfault injectionも未実施。実機・elevated受入は未実行。
 
 ## 既知の制限
 

@@ -225,6 +225,40 @@ public sealed class StorageEngineTests
     }
 
     [Fact]
+    public async Task SchemaVersionOneMigratesThroughCurrentLifecycleSchemaWithoutLosingEventRows()
+    {
+        var directory = CreateDirectory();
+        var processId = ProcessInstanceId.Create("process-lifecycle-v1-migration");
+        var occurred = DateTimeOffset.UtcNow;
+        var lifecycle = new ProcessLifecycleEvent(EventId.New(), EventSchemaVersion.Current, processId, ProcessLifecycleTransition.Exited, occurred, occurred, EventOrigin.Etw, EventQuality.Exact);
+        try
+        {
+            await using (var store = CreateStore(directory))
+            {
+                await store.AppendSourceAsync(CreateSource(1));
+                await store.StopAsync();
+            }
+
+            await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(directory, "index.sqlite"), Pooling = false }.ToString()))
+            {
+                await connection.OpenAsync();
+                using var command = connection.CreateCommand();
+                command.CommandText = "DROP TABLE process_lifecycle; DELETE FROM schema_migrations WHERE version IN (2, 3); PRAGMA user_version = 1;";
+                await command.ExecuteNonQueryAsync();
+            }
+
+            await using var migrated = CreateStore(directory);
+            Assert.Equal(1, await migrated.CountEventsAsync(canonical: false));
+            await migrated.AppendProcessLifecycleEventAsync(lifecycle);
+            Assert.Equal(lifecycle, Assert.Single(await migrated.ReadProcessLifecycleEventsAsync([processId], occurred.AddSeconds(-1), occurred.AddSeconds(1))));
+        }
+        finally
+        {
+            RemoveDirectory(directory);
+        }
+    }
+
+    [Fact]
     public async Task DeletedSqliteIsRebuiltFromSegments()
     {
         var directory = CreateDirectory();
