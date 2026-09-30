@@ -50,7 +50,7 @@ public sealed class InstallerManifestTests
     }
 
     [Fact]
-    public void Windows10AcceptanceComposersRequireRealEvidence()
+    public void Windows10AcceptanceUsesPhysicalEvidenceAndRejectsLegacyVmComposition()
     {
         var root = FindRoot();
         var stageA = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Compose-Windows10StageA.ps1"));
@@ -62,6 +62,14 @@ public sealed class InstallerManifestTests
         Assert.Contains("EvidenceOrigin -ne 'real'", stageA, StringComparison.Ordinal);
         Assert.Contains("StorageChronicle.Windows10PhysicalAcceptance.v1", physical, StringComparison.Ordinal);
         Assert.Contains("Status = 'NOT_EXECUTED'", physical, StringComparison.Ordinal);
+        Assert.Contains("Windows10PrivilegedManifestPath", physical, StringComparison.Ordinal);
+        Assert.Contains("StorageChronicle.WindowsPrivilegedAcceptance.v2", physical, StringComparison.Ordinal);
+        Assert.Contains("Assert-PhysicalCapabilities", physical, StringComparison.Ordinal);
+        Assert.Contains("not from the same physical computer", physical, StringComparison.Ordinal);
+        Assert.DoesNotContain("Assert-StageA", physical, StringComparison.Ordinal);
+        Assert.DoesNotContain("VirtualBoxVm", physical, StringComparison.Ordinal);
+        Assert.Contains("ComputerName = $env:COMPUTERNAME", File.ReadAllText(Path.Combine(root, "build", "Test-Privileged.ps1")), StringComparison.Ordinal);
+        Assert.Contains("ComputerName = $env:COMPUTERNAME", File.ReadAllText(Path.Combine(root, "build", "package", "Test-Installer.ps1")), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -90,7 +98,6 @@ public sealed class InstallerManifestTests
         var contract = File.ReadAllText(Path.Combine(root, "build", "quality", "AcceptanceContracts.ps1"));
         var producer = File.ReadAllText(Path.Combine(root, "build", "Test-Privileged.ps1"));
         var wrapper = File.ReadAllText(Path.Combine(root, "build", "Test-WindowsPrivileged.ps1"));
-        var stageA = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Compose-Windows10StageA.ps1"));
         var finalGate = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-FinalAcceptance.ps1"));
 
         foreach (var capability in new[] { "Vhdx", "UsnQuery", "UsnRead", "Mft", "Reconciliation", "Etw", "ReadDirectoryChangesW", "BufferGap", "Smb", "Service", "SessionAgent", "Clipboard", "VolumeGuid", "HotAttachDetach", "AclDeniedMetadata", "NonNtfs" })
@@ -100,8 +107,9 @@ public sealed class InstallerManifestTests
 
         Assert.Contains("AcceptanceContracts.ps1", producer, StringComparison.Ordinal);
         Assert.Contains("Get-RequiredWindowsPrivilegedCapabilities", producer, StringComparison.Ordinal);
-        Assert.Contains("Get-RequiredWindowsPrivilegedCapabilities", stageA, StringComparison.Ordinal);
         Assert.Contains("Get-RequiredWindowsPrivilegedCapabilities", finalGate, StringComparison.Ordinal);
+        Assert.Contains("Windows 10 privileged evidence", finalGate, StringComparison.Ordinal);
+        Assert.DoesNotContain("Windows10StageAAcceptance.v1", finalGate, StringComparison.Ordinal);
         Assert.Contains("WorkloadOraclePath", wrapper, StringComparison.Ordinal);
         Assert.Contains("AgentHistoryPath", wrapper, StringComparison.Ordinal);
         Assert.Contains("Windows 11", finalGate, StringComparison.Ordinal);

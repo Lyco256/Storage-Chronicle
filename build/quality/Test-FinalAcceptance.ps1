@@ -21,7 +21,7 @@ if ([string]::IsNullOrWhiteSpace($OutputPath)) { $OutputPath = Join-Path $root (
 $artifactDirectory = Split-Path -Parent $OutputPath
 New-Item -ItemType Directory -Force -Path $artifactDirectory | Out-Null
 
-$requiredWindows10StageAChecks = @(Get-RequiredWindows10StageAChecks)
+$requiredWindowsPrivilegedCapabilities = @(Get-RequiredWindowsPrivilegedCapabilities)
 $requiredInstallerCaseIds = @(Get-RequiredInstallerCaseIds)
 
 function Read-ReferencedJson {
@@ -145,24 +145,26 @@ function Assert-GroupEvidence {
         'Windows10_22H2' {
             if ($schema -ne 'StorageChronicle.Windows10PhysicalAcceptance.v1') { throw 'Windows 10 evidence has an unexpected schema.' }
             if ([string]$Value.TargetOs -ne 'Windows10-22H2') { throw 'Windows 10 evidence does not identify Windows10-22H2.' }
-            foreach ($field in @('StageA', 'StageB')) { if ($null -eq $Value.PSObject.Properties[$field]) { throw "Windows 10 evidence is missing $field." } }
-            $stageA = Read-ReferencedJson -Path ([string]$Value.StageA.ManifestPath) -Label 'Windows 10 Stage A manifest'
-            if ([string]$stageA.Schema -ne 'StorageChronicle.Windows10StageAAcceptance.v1' -or [string]$stageA.TargetOs -ne 'Windows10-22H2' -or [string]$stageA.TargetKind -ne 'PhysicalMachine' -or [string]$stageA.ExecutionMode -ne 'Local' -or [string]$stageA.Status -ne 'PASSED' -or -not [bool]$stageA.AcceptanceEligible) { throw 'Windows 10 Stage A is not an eligible physical-machine acceptance artifact.' }
-            if (@($stageA.Checks).Count -ne $requiredWindows10StageAChecks.Count) { throw 'Windows 10 Stage A does not contain exactly the required check count.' }
-            $stageACheckNames = @($stageA.Checks | ForEach-Object { [string]$_.Name })
-            if (@($stageACheckNames | Sort-Object -Unique).Count -ne $requiredWindows10StageAChecks.Count -or @($requiredWindows10StageAChecks | Where-Object { $stageACheckNames -notcontains $_ }).Count -ne 0) { throw 'Windows 10 Stage A checks are missing, duplicated, or contain an unexpected name.' }
-            foreach ($checkName in $requiredWindows10StageAChecks) {
-                $matches = @($stageA.Checks | Where-Object { [string]$_.Name -eq $checkName })
-                if ($matches.Count -ne 1 -or [string]$matches[0].Status -ne 'PASSED') { throw "Windows 10 Stage A check is not exactly PASSED: $checkName" }
-                if ([string]$matches[0].Origin -ne 'real') { throw "Windows 10 Stage A check does not declare real evidence: $checkName" }
-                $checkEvidence = @($matches[0].Evidence | ForEach-Object { [string]$_ })
-                if ($checkEvidence.Count -eq 0 -or @($checkEvidence | Where-Object { [string]::IsNullOrWhiteSpace($_) -or -not (Test-Path -LiteralPath $_ -PathType Leaf) }).Count -ne 0) { throw "Windows 10 Stage A check evidence is missing: $checkName" }
+            foreach ($field in @('PhysicalCapabilities', 'StageB')) { if ($null -eq $Value.PSObject.Properties[$field]) { throw "Windows 10 evidence is missing $field." } }
+            $privileged = Read-ReferencedJson -Path ([string]$Value.StageB.PrivilegedManifestPath) -Label 'Windows 10 physical privileged manifest'
+            if ([string]$privileged.Schema -ne 'StorageChronicle.WindowsPrivilegedAcceptance.v2' -or [string]$privileged.Status -ne 'PASSED' -or -not [bool]$privileged.AcceptanceEligible -or [string]$privileged.Configuration -ne 'Release') { throw 'Windows 10 privileged evidence is not eligible.' }
+            if ([string]$privileged.Environment.ProductName -notmatch 'Windows 10' -or ([string]$privileged.Environment.DisplayVersion -ne '22H2' -and [string]$privileged.Environment.Build -ne '19045') -or [string]$privileged.Environment.Architecture -ne 'x64' -or -not [bool]$privileged.Environment.IsAdministrator) { throw 'Windows 10 privileged evidence does not prove the required elevated physical OS.' }
+            $declaredCapabilities = @($privileged.RequiredCapabilities | ForEach-Object { [string]$_ })
+            if ($declaredCapabilities.Count -ne $requiredWindowsPrivilegedCapabilities.Count -or @($declaredCapabilities | Sort-Object -Unique).Count -ne $declaredCapabilities.Count -or @($requiredWindowsPrivilegedCapabilities | Where-Object { $declaredCapabilities -notcontains $_ }).Count -ne 0) { throw 'Windows 10 privileged evidence does not declare the complete capability contract.' }
+            $privilegedTests = @($privileged.Tests)
+            if ($privilegedTests.Count -ne $requiredWindowsPrivilegedCapabilities.Count) { throw 'Windows 10 privileged evidence does not contain exactly the required capability results.' }
+            foreach ($capability in $requiredWindowsPrivilegedCapabilities) {
+                $matches = @($privilegedTests | Where-Object { [string]$_.Capability -eq $capability })
+                if ($matches.Count -ne 1 -or [string]$matches[0].Status -ne 'PASSED') { throw "Windows 10 privileged capability is not exactly PASSED: $capability" }
             }
             $preflight = Read-ReferencedJson -Path ([string]$Value.StageB.PreflightPath) -Label 'Windows 10 physical preflight'
             if ([string]$preflight.Schema -ne 'StorageChronicle.Windows10PhysicalPreflight.v1' -or -not [bool]$preflight.Ready -or @($preflight.Checks | Where-Object { [string]$_.Status -ne 'PASS' }).Count -ne 0) { throw 'Windows 10 physical preflight is not fully PASS.' }
             if ([string]$preflight.Environment.ProductName -notmatch 'Windows 10' -or ([string]$preflight.Environment.DisplayVersion -ne '22H2' -and [string]$preflight.Environment.Build -ne '19045') -or [string]$preflight.Environment.Architecture -ne 'x64') { throw 'Windows 10 physical preflight does not prove Windows 10 22H2 x64.' }
             $installer = Read-ReferencedJson -Path ([string]$Value.StageB.InstallerManifestPath) -Label 'Windows 10 physical installer manifest'
             if ([string]$installer.Schema -ne 'storage-chronicle.installer-acceptance.v1' -or [string]$installer.Status -ne 'PASSED' -or -not [bool]$installer.AcceptanceEligible -or [string]$installer.TargetOs -ne 'Windows10-22H2' -or [string]$installer.TargetKind -ne 'PhysicalMachine' -or [string]$installer.ExecutionMode -ne 'Local') { throw 'Windows 10 physical installer artifact is not eligible.' }
+            if ([string]::IsNullOrWhiteSpace([string]$privileged.Environment.ComputerName) -or
+                -not [string]::Equals([string]$privileged.Environment.ComputerName, [string]$preflight.Environment.ComputerName, [StringComparison]::OrdinalIgnoreCase) -or
+                -not [string]::Equals([string]$privileged.Environment.ComputerName, [string]$installer.Environment.ComputerName, [StringComparison]::OrdinalIgnoreCase)) { throw 'Windows 10 evidence inputs are not bound to the same physical computer.' }
             Assert-InstallerCaseRows -Value $installer -Label 'Windows 10 physical installer artifact'
         }
         'IdleResource' {
