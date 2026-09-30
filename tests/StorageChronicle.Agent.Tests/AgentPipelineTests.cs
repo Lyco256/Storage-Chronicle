@@ -27,6 +27,29 @@ public sealed class AgentPipelineTests
     }
 
     [Fact]
+    public async Task ReadOnlyEtwObservationIsTransientAcrossTheDurablePipeline()
+    {
+        var store = new FakeStore();
+        var state = new FakeState();
+        var source = Source(12) with
+        {
+            Origin = EventOrigin.Etw,
+            Hint = null,
+            Properties = ImmutableDictionary<string, string>.Empty.Add("observation", "Read")
+        };
+        var observed = 0;
+        var pipeline = new AgentPipeline(store, state, new EventNormalizer());
+        pipeline.SourceObserved += _ => observed++;
+
+        await pipeline.RunAsync(new FakeCollector(source));
+
+        Assert.Empty(store.Sources);
+        Assert.Empty(store.Canonicals);
+        Assert.Empty(state.Values);
+        Assert.Equal(0, observed);
+    }
+
+    [Fact]
     public async Task BoundedQueueReportsDepthAndReturnsToZeroAfterDrain()
     {
         var depths = new System.Collections.Concurrent.ConcurrentBag<int>();
