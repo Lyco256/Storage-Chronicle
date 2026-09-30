@@ -38,7 +38,7 @@ Codex can continue static review, implementation, documentation, and non-privile
 
 The repository is not yet ready for `main`. The top-agent merge sequence remains `feat/*` review -> `devenv` with `--no-ff` -> final gates -> `main` with `--no-ff`.
 
-The branch/ref audit for this continuation is recorded in `docs/release/branch-audit-2026-08-19.md`; local `devenv` and `main` exist, while the remote currently exposes only `origin/feat/benchmark-performance`.
+The branch/ref audit for this continuation is recorded in `docs/release/branch-audit-2026-08-19.md`. At the latest check, local `devenv` and `main` exist, and the user-requested `origin/devenv` push is updated through commit `8ed5ef8`; `main` has not been changed and no PR has been opened.
 
 `build/quality/Test-FinalAcceptance.ps1` is the final evidence aggregator. It requires nine real, eligible artifacts and exits with `2` when any artifact is missing, diagnostic, partial, failed, or `AcceptanceEligible=false`; the no-argument verification on 2026-08-20 correctly remained blocked.
 
