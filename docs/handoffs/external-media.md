@@ -86,4 +86,4 @@ No product process, installer, physical drive, privileged runner, or hardware wo
 
 ### Commit
 
-Pending commit in this handoff snapshot; record the resulting commit ID after the assigned worktree is committed.
+Implementation and validation changes are committed on `feat/external-media` as `b3779a5a63298b524b4816a8784e02f6b28c02b6`. This handoff update is committed immediately afterward; the final branch HEAD is reported with the handoff.
