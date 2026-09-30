@@ -658,6 +658,7 @@ try {
     $displayVersion = if ($null -ne $os.PSObject.Properties['DisplayVersion']) { [string]$os.DisplayVersion } elseif ($null -ne $currentVersion) { [string]$currentVersion.DisplayVersion } else { '' }
     $buildNumber = if ($null -ne $os.PSObject.Properties['BuildNumber']) { [string]$os.BuildNumber } elseif ($null -ne $currentVersion) { [string]$currentVersion.CurrentBuild } else { '' }
     $manifest.Environment = [ordered]@{
+        ComputerName = $env:COMPUTERNAME
         OS = [Environment]::OSVersion.VersionString
         ProductName = [string]$os.Caption
         DisplayVersion = $displayVersion

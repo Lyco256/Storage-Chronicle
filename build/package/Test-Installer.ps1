@@ -200,6 +200,7 @@ $script:Manifest = [ordered]@{
     ExecutionMode = $ExecutionMode
     ExecuteRequested = [bool]$Execute
     Environment = [ordered]@{
+        ComputerName = $env:COMPUTERNAME
         Host = [Environment]::OSVersion.VersionString
         TargetOs = $TargetOs
         TargetKind = $TargetKind

@@ -55,7 +55,7 @@ if (-not (Test-Path -LiteralPath $TestDataRoot -PathType Container)) { Add-Check
 $payload = [ordered]@{
     Schema = 'StorageChronicle.Windows10PhysicalPreflight.v1'
     GeneratedUtc = [DateTimeOffset]::UtcNow
-    Environment = [ordered]@{ ProductName = $os.Caption; DisplayVersion = $displayVersion; Build = $buildNumber; Architecture = if ($isX64) { 'x64' } else { 'x86' }; TestDataRoot = $TestDataRoot }
+    Environment = [ordered]@{ ComputerName = $env:COMPUTERNAME; ProductName = $os.Caption; DisplayVersion = $displayVersion; Build = $buildNumber; Architecture = if ($isX64) { 'x64' } else { 'x86' }; TestDataRoot = $TestDataRoot }
     Checks = @($checks)
     Ready = @($checks | Where-Object Status -eq 'FAIL').Count -eq 0
     AcceptanceEligible = $false
