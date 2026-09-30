@@ -1,5 +1,7 @@
 # Physical read-only audit
 
+Update 2026-09-30 after local `devenv` merge `b6343ba`: `Verify-Windows10PhysicalAcceptance.ps1` now implements a read-only Windows 10 host inventory and create-new evidence output, with contract tests. This closes only the missing-tooling portion of the host-preflight finding. It has not been executed on a dedicated approved host, does not attest hardware or the source-to-sink/runtime audits, and adds no machine evidence. The audit remains `NOT_EXECUTED` / **DO NOT RUN**; its prior `targetCommit` is stale for this tree.
+
 ## Current state (2026-09-30)
 
 The audit described below predates the current Activity Frame lifecycle-history changes in `devenv`. Those changes add a bounded asynchronous product-history writer for exact ETW ProcessStop facts, flush the authoritative segment before SQLite indexing, drain the writer before AgentWorker stops storage, and add migration/recovery/shutdown-order tests. If a lifecycle append fails, Agent health records the pipeline failure and the writer stops; other already queued lifecycle facts are not retried. Forced process termination can also lose facts still in the memory queue. Targeted tests do not establish the full write-sink policy, host preflight, independent process-attributed write monitoring, or abrupt-power-loss behavior. The prior audit and JSON artifact are historical only; current status remains `NOT_EXECUTED` / **DO NOT RUN** until a complete audit is bound to the final source commit.
