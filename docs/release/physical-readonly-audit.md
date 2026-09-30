@@ -1,5 +1,13 @@
 # Physical read-only audit
 
+## Current state (2026-09-30)
+
+The current `devenv` head is `94cde49`. A top-agent ETW session/factory seam and deterministic fake-session tests were added after the prior source-safety review. NTFS/ETW tests pass 23/23 and `./build/Test-Fast.ps1` exits 0; neither result is a source-to-sink safety certification. The existing machine-readable artifact still targets an older commit and is historical only. The current tree has not received the complete commit-bound static audit, host preflight, or independent process-attributed write monitoring; overall status remains `NOT_EXECUTED`, decision remains **DO NOT RUN**.
+
+The separately reviewed `feat/windows-filesystem` branch now bounds its collector pipelines and emits a rescan signal on device-notification overflow, but path-based child metadata opens/reopens remain vulnerable to an ancestor-component reparse swap. The collector access masks are read/notify-only, so this does not grant mutation access; it does invalidate proof that traversal stays within the enumerated subtree. Do not treat the branch as containment-complete or merge it as a completed requirement until it uses handle-relative child opens or an equivalent verified fix and deterministic race coverage.
+
+The ETW seam factors TraceEvent session creation/processing behind an internal boundary and requests only the kernel File I/O and Process providers. The ordinary collector still owns a live kernel ETW session when used on Windows; none was opened during unit or fast validation. Startup/processing failures, overflow, cancellation, and cleanup now have synthetic coverage. The ETW production path is included in the current tree and requires source-to-sink review before any product execution.
+
 ## Current state (2026-09-29 continuation)
 
 The audit is invalidated for the current working tree by changes to `src/StorageChronicle.Agent/Program.cs`, `tools/TestEnvironment/Invoke-WindowsTestLab.ps1`, its test, and mirrored docs. `--testlab` now fails before Agent host/settings/collector initialization, and the old VM runner exits before loading helpers or creating artifacts. This is a containment fix only, not the replacement physical runner or a source-to-sink audit. The machine-readable audit artifact remains stale and must not be used as current-commit evidence. Final acceptance still contains VM-dependent contracts and is not eligible. No product, VM, installer, service, or privileged script was run.
