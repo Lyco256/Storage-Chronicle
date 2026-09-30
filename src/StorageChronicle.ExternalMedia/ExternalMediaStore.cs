@@ -1,12 +1,236 @@
 using System.Buffers.Binary;
 using System.Collections.Immutable;
 using System.Security.Cryptography;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using StorageChronicle.Contracts;
 using StorageChronicle.Domain.Contracts;
 
+[assembly: InternalsVisibleTo("StorageChronicle.ExternalMedia.Tests")]
+[assembly: InternalsVisibleTo("StorageChronicle.Agent.Tests")]
+
 namespace StorageChronicle.ExternalMedia;
+
+/// <summary>Durable, PC-local proof that one exact temporary media segment was created by this product.</summary>
+internal sealed record MediaRecoveryIntent(VolumeId VolumeId, string WriterPcId, string TemporaryFileName, long Length, string Sha256);
+
+/// <summary>Stores and removes recovery intents outside the removable media on a verified product-owned PC path.</summary>
+/// <remarks>Implementations must be durable, append-safe, and must not fall back to paths on the media volume.</remarks>
+internal interface IMediaRecoveryIntentStore
+{
+    /// <summary>Durably records a new intent without replacing an existing intent.</summary>
+    ValueTask SaveAsync(MediaRecoveryIntent intent, CancellationToken cancellationToken = default);
+
+    /// <summary>Reads the intent for one exact temporary name, or returns null when no intent exists.</summary>
+    ValueTask<MediaRecoveryIntent?> FindAsync(VolumeId volumeId, string writerPcId, string temporaryFileName, CancellationToken cancellationToken = default);
+
+    /// <summary>Removes an intent only after its temporary was safely finalized.</summary>
+    ValueTask RemoveAsync(VolumeId volumeId, string writerPcId, string temporaryFileName, CancellationToken cancellationToken = default);
+}
+
+/// <summary>Stores recovery proofs in the fixed per-PC Storage Chronicle product-data area.</summary>
+internal sealed class ProductMediaRecoveryIntentStore : IMediaRecoveryIntentStore
+{
+    private static readonly JsonSerializerOptions Options = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = false };
+    private readonly string directory;
+
+    /// <summary>Initializes the store beneath CommonApplicationData; no caller-supplied path is accepted.</summary>
+    public ProductMediaRecoveryIntentStore()
+    {
+        directory = GetIntentDirectory(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData));
+    }
+
+    internal ProductMediaRecoveryIntentStore(string isolatedFixtureRoot, bool isolatedTestRoot)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(isolatedFixtureRoot);
+        if (!isolatedTestRoot) throw new ArgumentException("Only a run-owned isolated test root is accepted.", nameof(isolatedTestRoot));
+        var fullFixtureRoot = Path.GetFullPath(isolatedFixtureRoot);
+        var testParent = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "StorageChronicle.Media.Tests"));
+        var prefix = Path.TrimEndingDirectorySeparator(testParent) + Path.DirectorySeparatorChar;
+        if (!fullFixtureRoot.StartsWith(prefix, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) ||
+            !Guid.TryParseExact(Path.GetFileName(fullFixtureRoot), "N", out _) || !File.Exists(Path.Combine(fullFixtureRoot, ".test-owner.json")))
+            throw new ArgumentException("Recovery-intent test storage requires a run-owned fixture under the dedicated temp parent.", nameof(isolatedFixtureRoot));
+        directory = GetIntentDirectory(fullFixtureRoot);
+    }
+
+    internal static void ValidateCommonDataRoot(string commonData)
+    {
+        if (string.IsNullOrWhiteSpace(commonData) || !Path.IsPathFullyQualified(commonData) || commonData.StartsWith("\\\\", StringComparison.Ordinal) || commonData.StartsWith("//", StringComparison.Ordinal))
+            throw new IOException("The fixed PC-local product data root could not be established.");
+        var fullCommonData = Path.GetFullPath(commonData);
+        if (!string.Equals(fullCommonData, Path.TrimEndingDirectorySeparator(commonData), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            throw new IOException("CommonApplicationData is not a normalized absolute local path.");
+        if (new DriveInfo(Path.GetPathRoot(fullCommonData)!).DriveType != DriveType.Fixed)
+            throw new IOException("CommonApplicationData is not on a fixed local drive.");
+        EnsureNoReparsePoints(fullCommonData);
+    }
+
+    private static string GetIntentDirectory(string commonData)
+    {
+        ValidateCommonDataRoot(commonData);
+        var fullCommonData = Path.GetFullPath(commonData);
+        var intentDirectory = Path.GetFullPath(Path.Combine(fullCommonData, "Storage Chronicle", "history", "media-recovery-intents"));
+        if (!IsContainedBy(intentDirectory, fullCommonData)) throw new IOException("The PC-local recovery-intent path escaped CommonApplicationData.");
+        return intentDirectory;
+    }
+
+    /// <inheritdoc />
+    public async ValueTask SaveAsync(MediaRecoveryIntent intent, CancellationToken cancellationToken = default)
+    {
+        ValidateIntent(intent);
+        EnsureDirectory(createIfMissing: true);
+        var destination = GetIntentPath(intent.VolumeId, intent.WriterPcId, intent.TemporaryFileName);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(intent, Options);
+        if (File.Exists(destination))
+        {
+            var existing = await ReadAsync(destination, cancellationToken).ConfigureAwait(false);
+            if (existing == intent) return;
+            throw new IOException("A different recovery intent already occupies the unique product-local intent name.");
+        }
+
+        var temporary = Path.Combine(directory, "." + Guid.NewGuid().ToString("N") + ".tmp");
+        var ownsTemporary = false;
+        try
+        {
+            await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough | FileOptions.Asynchronous))
+            {
+                ownsTemporary = true;
+                await output.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+                await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                output.Flush(flushToDisk: true);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                File.Move(temporary, destination, overwrite: false);
+                ownsTemporary = false;
+            }
+            catch (IOException) when (File.Exists(destination))
+            {
+                var existing = await ReadAsync(destination, cancellationToken).ConfigureAwait(false);
+                if (existing != intent) throw new IOException("A different recovery intent already occupies the unique product-local intent name.");
+            }
+        }
+        catch
+        {
+            if (ownsTemporary)
+            {
+                try { EnsureNoReparsePoints(temporary); File.Delete(temporary); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+            throw;
+        }
+
+        if (ownsTemporary)
+        {
+            try { EnsureNoReparsePoints(temporary); File.Delete(temporary); }
+            catch (FileNotFoundException) { }
+        }
+    }
+
+    /// <inheritdoc />
+    public async ValueTask<MediaRecoveryIntent?> FindAsync(VolumeId volumeId, string writerPcId, string temporaryFileName, CancellationToken cancellationToken = default)
+    {
+        ValidateIdentity(volumeId, writerPcId, temporaryFileName);
+        EnsureDirectory(createIfMissing: false);
+        var path = GetIntentPath(volumeId, writerPcId, temporaryFileName);
+        if (!File.Exists(path)) return null;
+        var intent = await ReadAsync(path, cancellationToken).ConfigureAwait(false);
+        ValidateIntent(intent);
+        return intent.VolumeId == volumeId && intent.WriterPcId == writerPcId && intent.TemporaryFileName == temporaryFileName ? intent : null;
+    }
+
+    /// <inheritdoc />
+    public async ValueTask RemoveAsync(VolumeId volumeId, string writerPcId, string temporaryFileName, CancellationToken cancellationToken = default)
+    {
+        ValidateIdentity(volumeId, writerPcId, temporaryFileName);
+        EnsureDirectory(createIfMissing: false);
+        var path = GetIntentPath(volumeId, writerPcId, temporaryFileName);
+        if (!File.Exists(path)) return;
+        var intent = await ReadAsync(path, cancellationToken).ConfigureAwait(false);
+        ValidateIntent(intent);
+        if (intent.VolumeId != volumeId || intent.WriterPcId != writerPcId || intent.TemporaryFileName != temporaryFileName)
+            throw new IOException("The product-local recovery intent identity changed; it was preserved.");
+        File.Delete(path);
+    }
+
+    private void EnsureDirectory(bool createIfMissing)
+    {
+        EnsureNoReparsePoints(Path.GetFullPath(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData)));
+        if (!Directory.Exists(directory))
+        {
+            if (!createIfMissing) return;
+            EnsureNoReparsePoints(directory);
+            Directory.CreateDirectory(directory);
+        }
+        EnsureNoReparsePoints(directory);
+        foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+        {
+            if ((File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0) throw new IOException("A reparse point exists in the product-local recovery-intent directory.");
+            var name = Path.GetFileName(entry);
+            var intentName = name.EndsWith(".json", StringComparison.OrdinalIgnoreCase) && Path.GetFileNameWithoutExtension(name).Length == 64 && Path.GetFileNameWithoutExtension(name).All(Uri.IsHexDigit);
+            var temporaryName = name.StartsWith('.') && name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase) && Guid.TryParseExact(name[1..^4], "N", out _);
+            if (Directory.Exists(entry) || (!intentName && !temporaryName))
+                throw new IOException("An unrecognized entry exists in the product-local recovery-intent directory; no entry was changed.");
+        }
+    }
+
+    private string GetIntentPath(VolumeId volumeId, string writerPcId, string temporaryFileName)
+    {
+        var identity = string.Join("\n", volumeId.Value, writerPcId, temporaryFileName);
+        var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
+        return Path.Combine(directory, key + ".json");
+    }
+
+    private static async ValueTask<MediaRecoveryIntent> ReadAsync(string path, CancellationToken cancellationToken)
+    {
+        EnsureNoReparsePoints(path);
+        try
+        {
+            var intent = JsonSerializer.Deserialize<MediaRecoveryIntent>(await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false), Options);
+            return intent ?? throw new InvalidDataException("The product-local recovery intent is empty.");
+        }
+        catch (JsonException exception) { throw new InvalidDataException("The product-local recovery intent is malformed and was preserved.", exception); }
+    }
+
+    private static void ValidateIntent(MediaRecoveryIntent intent)
+    {
+        ArgumentNullException.ThrowIfNull(intent);
+        ValidateIdentity(intent.VolumeId, intent.WriterPcId, intent.TemporaryFileName);
+        if (intent.Length <= 0 || string.IsNullOrWhiteSpace(intent.Sha256) || intent.Sha256.Length != 64 || !intent.Sha256.All(Uri.IsHexDigit))
+            throw new InvalidDataException("The product-local recovery intent has invalid length or hash fields.");
+    }
+
+    private static void ValidateIdentity(VolumeId volumeId, string writerPcId, string temporaryFileName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(volumeId.Value);
+        ArgumentException.ThrowIfNullOrWhiteSpace(writerPcId);
+        if (!Guid.TryParseExact(Path.GetFileNameWithoutExtension(temporaryFileName), "N", out _) || !string.Equals(Path.GetExtension(temporaryFileName), ".tmp", StringComparison.OrdinalIgnoreCase) || temporaryFileName != Path.GetFileName(temporaryFileName))
+            throw new InvalidDataException("A recovery intent must identify one GUID-named segment temporary.");
+    }
+
+    private static void EnsureNoReparsePoints(string path)
+    {
+        var current = Path.GetFullPath(path);
+        while (!string.IsNullOrEmpty(current))
+        {
+            if ((Directory.Exists(current) || File.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Product-local recovery-intent paths may not traverse reparse points.");
+            var parent = Directory.GetParent(current)?.FullName;
+            if (string.IsNullOrEmpty(parent) || parent == current) break;
+            current = parent;
+        }
+    }
+
+    private static bool IsContainedBy(string path, string parent)
+    {
+        var prefix = Path.TrimEndingDirectorySeparator(parent) + Path.DirectorySeparatorChar;
+        return path.StartsWith(prefix, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    }
+}
 
 /// <summary>Writes, validates, and reads immutable media-related event segments.</summary>
 public sealed class ExternalMediaStore : IDisposable
@@ -22,6 +246,7 @@ public sealed class ExternalMediaStore : IDisposable
     private readonly string writerId;
     private readonly IMediaClock clock;
     private readonly IVolumeBoundMediaFileSystem fileSystem;
+    private readonly IMediaRecoveryIntentStore recoveryIntents;
     private readonly bool ownsFileSystem;
 
     /// <summary>Initializes a store over an already opened, identity-verified media filesystem session.</summary>
@@ -32,15 +257,21 @@ public sealed class ExternalMediaStore : IDisposable
     /// <param name="clock">Optional clock for deterministic manifest timestamps.</param>
     /// <param name="createIfMissing">Whether a missing, exclusively created owned layout should be initialized.</param>
     public ExternalMediaStore(string mediaRoot, string writerId, VolumeId expectedVolumeId, IVolumeBoundMediaFileSystem fileSystem, IMediaClock? clock = null, bool createIfMissing = true)
-        : this(mediaRoot, writerId, expectedVolumeId, fileSystem, clock, createIfMissing, ownsFileSystem: true)
+        : this(mediaRoot, writerId, expectedVolumeId, fileSystem, clock, createIfMissing, new ProductMediaRecoveryIntentStore(), ownsFileSystem: true)
     {
     }
 
-    private ExternalMediaStore(string mediaRoot, string writerId, VolumeId expectedVolumeId, IVolumeBoundMediaFileSystem fileSystem, IMediaClock? clock, bool createIfMissing, bool ownsFileSystem)
+    internal ExternalMediaStore(string mediaRoot, string writerId, VolumeId expectedVolumeId, IVolumeBoundMediaFileSystem fileSystem, IMediaClock? clock, bool createIfMissing, IMediaRecoveryIntentStore recoveryIntents)
+        : this(mediaRoot, writerId, expectedVolumeId, fileSystem, clock, createIfMissing, recoveryIntents, ownsFileSystem: true)
+    {
+    }
+
+    private ExternalMediaStore(string mediaRoot, string writerId, VolumeId expectedVolumeId, IVolumeBoundMediaFileSystem fileSystem, IMediaClock? clock, bool createIfMissing, IMediaRecoveryIntentStore recoveryIntents, bool ownsFileSystem)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(mediaRoot);
         ArgumentException.ThrowIfNullOrWhiteSpace(writerId);
         ArgumentNullException.ThrowIfNull(fileSystem);
+        ArgumentNullException.ThrowIfNull(recoveryIntents);
         if (fileSystem.VolumeId != expectedVolumeId)
         {
             if (ownsFileSystem) fileSystem.Dispose();
@@ -50,6 +281,7 @@ public sealed class ExternalMediaStore : IDisposable
         this.writerId = ValidateComponent(writerId, nameof(writerId));
         this.clock = clock ?? new SystemMediaClock();
         this.fileSystem = fileSystem;
+        this.recoveryIntents = recoveryIntents;
         this.ownsFileSystem = ownsFileSystem;
         root = Path.Combine(this.mediaRoot, DirectoryName);
         try
@@ -89,7 +321,7 @@ public sealed class ExternalMediaStore : IDisposable
             if ((entry.Attributes & FileAttributes.ReparsePoint) != 0) throw new IOException($"A media writer entry is a reparse point: {entry.Name}");
             if ((entry.Attributes & FileAttributes.Directory) == 0) throw new IOException($"An unexpected file exists in the media writers directory: {entry.Name}");
             var writer = ValidateComponent(entry.Name, nameof(entry.Name));
-            stores.Add(new ExternalMediaStore(mediaRoot, writer, fileSystem.VolumeId, fileSystem, clock, createIfMissing: false, ownsFileSystem: false));
+            stores.Add(new ExternalMediaStore(mediaRoot, writer, fileSystem.VolumeId, fileSystem, clock, createIfMissing: false, recoveryIntents, ownsFileSystem: false));
         }
 
         return stores;
@@ -133,10 +365,15 @@ public sealed class ExternalMediaStore : IDisposable
     {
         ArgumentNullException.ThrowIfNull(events);
         if (events.Count == 0) throw new ArgumentException("A media segment must contain at least one event.", nameof(events));
+        var mediaFilter = CreateBatchMediaFilter(events[0]);
+        if (events.Any(value => !MediaEventFilter.IsRelated(value, mediaFilter)))
+            throw new InvalidDataException("A media segment can contain only events related to its selected media identity.");
         fileSystem.EnsureDirectory(WriterRelativeDirectory);
         var id = Guid.NewGuid().ToString("N");
         var temporary = RelativeWriterPath(id + ".tmp");
         var final = RelativeWriterPath(id + ".seg");
+        using var segmentHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        long lengthOnDisk = 0;
         await using (var stream = fileSystem.CreateNew(temporary))
         {
             foreach (var value in events)
@@ -145,18 +382,26 @@ public sealed class ExternalMediaStore : IDisposable
                 var payload = JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions);
                 if (payload.Length > MaxRecordBytes) throw new InvalidDataException("A media record exceeds the bounded segment record size.");
                 var length = new byte[sizeof(int)];
+                var crc = MediaCrc32C.Compute(payload);
                 BinaryPrimitives.WriteInt32LittleEndian(length, payload.Length);
+                segmentHash.AppendData(length);
+                segmentHash.AppendData(payload);
+                segmentHash.AppendData(crc);
+                lengthOnDisk += length.Length + payload.Length + crc.Length;
                 await stream.WriteAsync(length, cancellationToken).ConfigureAwait(false);
                 await stream.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
-                await stream.WriteAsync(MediaCrc32C.Compute(payload), cancellationToken).ConfigureAwait(false);
+                await stream.WriteAsync(crc, cancellationToken).ConfigureAwait(false);
             }
 
             await FlushDurablyAsync(stream, cancellationToken).ConfigureAwait(false);
+            var segmentSha256 = Convert.ToHexString(segmentHash.GetHashAndReset());
+            var proof = new MediaRecoveryIntent(fileSystem.VolumeId, writerId, id + ".tmp", lengthOnDisk, segmentSha256);
+            await recoveryIntents.SaveAsync(proof, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
             fileSystem.MoveCreatedFile(stream, final);
+            await RemoveFinalizedIntentAsync(id + ".tmp").ConfigureAwait(false);
+            return new MediaSegment(id + ".seg", segmentSha256, events.Count, writerId, lengthOnDisk);
         }
-        await using var finalized = fileSystem.OpenRead(final);
-        var sha = await ComputeSha256Async(finalized, cancellationToken).ConfigureAwait(false);
-        return new MediaSegment(id + ".seg", sha, events.Count, writerId, finalized.Length);
     }
 
     /// <summary>Reads and verifies one finalized segment, including record CRC32C and segment SHA-256.</summary>
@@ -295,6 +540,7 @@ public sealed class ExternalMediaStore : IDisposable
     /// <summary>Recovers the single temporary segment left by one interrupted write.</summary>
     public async ValueTask<InterruptedSegmentRecovery?> RecoverInterruptedWriteAsync(CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!fileSystem.DirectoryExists(WriterRelativeDirectory)) return null;
         var temporaryFiles = fileSystem.EnumerateEntries(WriterRelativeDirectory)
             .Where(entry => (entry.Attributes & FileAttributes.Directory) == 0 && entry.Name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
@@ -310,7 +556,15 @@ public sealed class ExternalMediaStore : IDisposable
         }
 
         var temporary = RelativeWriterPath(fileName);
+        var intent = await recoveryIntents.FindAsync(fileSystem.VolumeId, writerId, fileName, cancellationToken).ConfigureAwait(false);
+        if (intent is null || intent.VolumeId != fileSystem.VolumeId || !string.Equals(intent.WriterPcId, writerId, StringComparison.Ordinal) ||
+            !string.Equals(intent.TemporaryFileName, fileName, StringComparison.Ordinal) || intent.Length <= 0 || string.IsNullOrWhiteSpace(intent.Sha256) || intent.Sha256.Length != 64 || !intent.Sha256.All(Uri.IsHexDigit))
+        {
+            throw new InvalidDataException("The temporary segment was retained unchanged because its PC-local volume/writer/name-bound recovery intent is missing or invalid.");
+        }
+
         await using var input = fileSystem.OpenTemporaryForRecovery(temporary);
+        if (input.Length != intent.Length) throw new InvalidDataException("The temporary segment length does not match its PC-local recovery intent; it was retained unchanged.");
         byte[] bytes;
         using (var buffer = new MemoryStream())
         {
@@ -318,14 +572,31 @@ public sealed class ExternalMediaStore : IDisposable
             bytes = buffer.ToArray();
         }
         var valid = TryValidateSegmentBytes(bytes, out var recordCount);
-        if (!valid)
+        var actualSha = Convert.ToHexString(SHA256.HashData(bytes));
+        if (!valid || !CryptographicOperations.FixedTimeEquals(Convert.FromHexString(actualSha), Convert.FromHexString(intent.Sha256)))
         {
-            throw new InvalidDataException("The incomplete media segment was retained unchanged because CRC/record-boundary validation failed.");
+            throw new InvalidDataException("The temporary media segment was retained unchanged because its CRC/record boundary or PC-local hash intent did not validate.");
         }
 
         var final = RelativeWriterPath(Path.GetFileNameWithoutExtension(fileName) + ".seg");
+        if (fileSystem.FileExists(final)) throw new IOException("The finalized segment destination already exists; neither existing file was changed.");
+        cancellationToken.ThrowIfCancellationRequested();
         fileSystem.MoveCreatedFile(input, final);
+        await RemoveFinalizedIntentAsync(fileName).ConfigureAwait(false);
         return new InterruptedSegmentRecovery(fileName, true, false, $"The complete temporary segment was finalized with {recordCount} records.");
+    }
+
+    private async ValueTask RemoveFinalizedIntentAsync(string temporaryFileName)
+    {
+        try { await recoveryIntents.RemoveAsync(fileSystem.VolumeId, writerId, temporaryFileName, CancellationToken.None).ConfigureAwait(false); }
+        catch (IOException)
+        {
+            // The segment is already finalized; a stale PC-local intent cannot authorize another rename because its temp is gone.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Product-local cleanup permissions cannot undo a finalized media segment.
+        }
     }
 
     private async ValueTask<string> SelectWriteSlotAsync(CancellationToken cancellationToken)
@@ -397,6 +668,16 @@ public sealed class ExternalMediaStore : IDisposable
         }
 
         return position == bytes.Length && recordCount > 0;
+    }
+
+    private MediaOnlyFilter CreateBatchMediaFilter(CanonicalEvent first)
+    {
+        ArgumentNullException.ThrowIfNull(first);
+        first.Properties.TryGetValue("media.logicalMediaId", out var logicalMediaId);
+        var filter = new MediaOnlyFilter(first.VolumeId, logicalMediaId, first.MountSessionId);
+        if (!filter.IsSpecified || !MediaEventFilter.IsRelated(first, filter))
+            throw new InvalidDataException("A media segment requires a canonical event with a usable media identity.");
+        return filter;
     }
 
     private static void ValidateLogicalIdentity(string logicalMediaId, string mountSessionId)

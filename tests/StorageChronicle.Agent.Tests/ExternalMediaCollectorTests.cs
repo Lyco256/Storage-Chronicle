@@ -27,7 +27,7 @@ public sealed class ExternalMediaCollectorTests
         var source = new OneMediaChangeSource(new ExternalMediaChange(ExternalMediaChangeKind.Connected, DateTimeOffset.UtcNow, "test-device"));
         try
         {
-            await using var collector = new WindowsExternalMediaCollector(source, new FixedVolumeEnumerator(descriptor), settings, "pc-test", ledgerRoot, mirrorCoordinator: new NoOpMirrorCoordinator(), fileSystemFactory: new FixtureVolumeFileSystemFactory(mediaRoot));
+            await using var collector = new WindowsExternalMediaCollector(source, new FixedVolumeEnumerator(descriptor), settings, "pc-test", path => new MediaImportLedgerStore(Path.Combine(ledgerRoot, Path.GetFileName(path)), isolatedTestRoot: true), mirrorCoordinator: new NoOpMirrorCoordinator(), fileSystemFactory: new FixtureVolumeFileSystemFactory(mediaRoot));
             var events = new List<SourceEvent>();
             await foreach (var value in collector.CollectAsync(TestContext.Current.CancellationToken)) events.Add(value);
 
@@ -36,7 +36,7 @@ public sealed class ExternalMediaCollectorTests
             Assert.Equal(EventQuality.UnverifiedGap, recovery.Quality);
             Assert.StartsWith("recovered-", recovery.Properties["media.recovery.branch"], StringComparison.Ordinal);
             Assert.True(File.Exists(Path.Combine(mediaRoot, ".StorageChronicle", "recovery-marker.json")));
-            Assert.True(File.Exists(Path.Combine(ledgerRoot, "6D656469612D766F6C756D65.json")));
+            Assert.Single(Directory.EnumerateFiles(ledgerRoot, "6D656469612D766F6C756D65.*.generation.json"));
         }
         finally
         {
@@ -58,7 +58,7 @@ public sealed class ExternalMediaCollectorTests
         var source = new OneMediaChangeSource(new ExternalMediaChange(ExternalMediaChangeKind.Connected, DateTimeOffset.UtcNow, "test-device"));
         try
         {
-            await using var collector = new WindowsExternalMediaCollector(source, new FixedVolumeEnumerator(descriptor), settings, "pc-test", Path.Combine(fixtureRoot, "local-ledger"), mirrorCoordinator: new NoOpMirrorCoordinator());
+            await using var collector = new WindowsExternalMediaCollector(source, new FixedVolumeEnumerator(descriptor), settings, "pc-test", mirrorCoordinator: new NoOpMirrorCoordinator());
             var events = new List<SourceEvent>();
             await foreach (var value in collector.CollectAsync(TestContext.Current.CancellationToken)) events.Add(value);
 
@@ -74,7 +74,7 @@ public sealed class ExternalMediaCollectorTests
     private static string CreateFixtureRoot(out string runId)
     {
         runId = Guid.NewGuid().ToString("N");
-        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.MediaCollectorTests", runId);
+        var root = Path.Combine(Path.GetTempPath(), "StorageChronicle.Media.Tests", runId);
         Directory.CreateDirectory(root);
         using var marker = new FileStream(Path.Combine(root, ".test-owner.json"), FileMode.CreateNew, FileAccess.Write, FileShare.Read);
         JsonSerializer.Serialize(marker, new { Schema = "StorageChronicle.TestFixtureOwner.v1", RunId = runId });
@@ -85,7 +85,7 @@ public sealed class ExternalMediaCollectorTests
     {
         if (!Directory.Exists(root)) return;
         var fullRoot = Path.GetFullPath(root);
-        if (!string.Equals(Path.GetDirectoryName(fullRoot), Path.Combine(Path.GetTempPath(), "StorageChronicle.MediaCollectorTests"), StringComparison.OrdinalIgnoreCase) || Path.GetFileName(fullRoot) != runId)
+        if (!string.Equals(Path.GetDirectoryName(fullRoot), Path.Combine(Path.GetTempPath(), "StorageChronicle.Media.Tests"), StringComparison.OrdinalIgnoreCase) || Path.GetFileName(fullRoot) != runId)
             throw new IOException("The media collector fixture escaped its dedicated temp parent.");
         using var marker = JsonDocument.Parse(File.ReadAllText(Path.Combine(fullRoot, ".test-owner.json")));
         if (marker.RootElement.GetProperty("Schema").GetString() != "StorageChronicle.TestFixtureOwner.v1" || marker.RootElement.GetProperty("RunId").GetString() != runId)

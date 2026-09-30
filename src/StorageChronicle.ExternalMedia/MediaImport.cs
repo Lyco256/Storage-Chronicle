@@ -1,5 +1,8 @@
 using System.Text.Json;
+using System.Runtime.CompilerServices;
 using StorageChronicle.Domain.Contracts;
+
+[assembly: InternalsVisibleTo("StorageChronicle.ExternalMedia.Tests")]
 
 namespace StorageChronicle.ExternalMedia;
 
@@ -66,57 +69,73 @@ public sealed class MediaHistoryImporter
 /// <summary>Persists media import deduplication hashes on the PC side.</summary>
 public sealed class MediaImportLedgerStore
 {
-    private sealed record LedgerDocument(string[] ManifestHashes, string[] SegmentHashes, string[] BranchHashes);
-    private sealed record LedgerOwnershipMarker(string Schema);
-    private const string OwnershipMarkerName = ".storage-chronicle-ledgers-owner.json";
-    private const string OwnershipSchema = "StorageChronicle.MediaLedgerOwnership.v1";
-    private static readonly JsonSerializerOptions Options = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true, WriteIndented = false };
+    private const int CurrentSchemaVersion = 1;
+    private sealed record LedgerDocument(int SchemaVersion, string[] ManifestHashes, string[] SegmentHashes, string[] BranchHashes);
+    private static readonly JsonSerializerOptions Options = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = false, WriteIndented = false };
     private readonly string path;
+    private readonly string directory;
 
-    /// <summary>Creates a ledger store at a PC-side path.</summary>
+    /// <summary>Creates a ledger store at the fixed PC-local product ledger path.</summary>
+    /// <remarks>Arbitrary caller paths are rejected; generations are append-only and never replace an existing ledger.</remarks>
     public MediaImportLedgerStore(string path)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         this.path = Path.GetFullPath(path);
+        directory = Path.GetDirectoryName(this.path) ?? throw new ArgumentException("A ledger path must have a parent directory.", nameof(path));
+        var commonData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        ProductMediaRecoveryIntentStore.ValidateCommonDataRoot(commonData);
+        var productRoot = Path.GetFullPath(Path.Combine(commonData, "Storage Chronicle", "history", "media-ledgers"));
+        if (!string.Equals(directory, productRoot, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            throw new ArgumentException("Media import ledgers may only use the fixed CommonApplicationData Storage Chronicle product directory.", nameof(path));
+        var stem = Path.GetFileNameWithoutExtension(this.path);
+        if (!this.path.EndsWith(".json", StringComparison.OrdinalIgnoreCase) || stem.Length == 0 || !stem.All(Uri.IsHexDigit))
+            throw new ArgumentException("The product ledger filename must be the hexadecimal encoding of one logical media identity.", nameof(path));
     }
 
-    /// <summary>Loads the ledger or returns an empty ledger when no ledger exists.</summary>
+    internal MediaImportLedgerStore(string path, bool isolatedTestRoot)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        if (!isolatedTestRoot) throw new ArgumentException("The test-only ledger path must explicitly use an isolated fixture root.", nameof(isolatedTestRoot));
+        this.path = Path.GetFullPath(path);
+        directory = Path.GetDirectoryName(this.path) ?? throw new ArgumentException("A ledger path must have a parent directory.", nameof(path));
+        ValidateIsolatedTestPath(this.path);
+    }
+
+    /// <summary>Loads and unions all immutable ledger generations or returns an empty ledger.</summary>
     public async ValueTask<MediaImportLedger> LoadAsync(CancellationToken cancellationToken = default)
     {
-        if (!File.Exists(path)) return MediaImportLedger.Empty;
-        ValidateOwnedLedgerDirectory(createIfMissing: false);
-        EnsureNotReparsePoint(path);
-        try
+        if (!Directory.Exists(directory)) return MediaImportLedger.Empty;
+        await ValidateLedgerDirectoryAsync(cancellationToken).ConfigureAwait(false);
+        var result = MediaImportLedger.Empty;
+        foreach (var candidate in EnumerateLedgerFiles())
         {
-            var document = JsonSerializer.Deserialize<LedgerDocument>(await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false), Options);
-            if (document is null) throw new InvalidDataException("The media import ledger is empty; its original bytes were retained.");
-            return new MediaImportLedger((document.ManifestHashes ?? Array.Empty<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase), (document.SegmentHashes ?? Array.Empty<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase), (document.BranchHashes ?? Array.Empty<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase));
+            cancellationToken.ThrowIfCancellationRequested();
+            var next = await ReadLedgerAsync(candidate, cancellationToken).ConfigureAwait(false);
+            result = Union(result, next);
         }
-        catch (JsonException exception)
-        {
-            throw new InvalidDataException("The media import ledger is corrupt; its original bytes were retained and import was stopped.", exception);
-        }
-        catch (IOException exception)
-        {
-            throw new InvalidDataException("The media import ledger could not be read safely; its contents were retained and import was stopped.", exception);
-        }
+
+        return result;
     }
 
-    /// <summary>Saves the ledger atomically so a process stop cannot erase prior deduplication.</summary>
+    /// <summary>Appends a uniquely named immutable generation without replacing any existing ledger file.</summary>
     public async ValueTask SaveAsync(MediaImportLedger ledger, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(ledger);
-        var directory = Path.GetDirectoryName(path);
-        if (string.IsNullOrWhiteSpace(directory)) throw new IOException("The media import ledger has no parent directory.");
-        ValidateOwnedLedgerDirectory(createIfMissing: true);
-        var current = File.Exists(path) ? await LoadAsync(cancellationToken).ConfigureAwait(false) : MediaImportLedger.Empty;
+        ValidateNoReparsePoints(directory);
+        Directory.CreateDirectory(directory);
+        ValidateNoReparsePoints(directory);
+        await ValidateLedgerDirectoryAsync(cancellationToken).ConfigureAwait(false);
+        var current = await LoadAsync(cancellationToken).ConfigureAwait(false);
         if (!ledger.ManifestHashes.IsSupersetOf(current.ManifestHashes) || !ledger.SegmentHashes.IsSupersetOf(current.SegmentHashes) || !ledger.BranchHashes.IsSupersetOf(current.BranchHashes))
         {
             throw new InvalidOperationException("A media import ledger save cannot discard previously recorded hashes.");
         }
 
-        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        var document = new LedgerDocument(ledger.ManifestHashes.Order(StringComparer.OrdinalIgnoreCase).ToArray(), ledger.SegmentHashes.Order(StringComparer.OrdinalIgnoreCase).ToArray(), ledger.BranchHashes.Order(StringComparer.OrdinalIgnoreCase).ToArray());
+        ValidateLedger(ledger);
+        var stem = Path.GetFileNameWithoutExtension(path);
+        var generation = Path.Combine(directory, $"{stem}.{Guid.NewGuid():N}.generation.json");
+        var temporary = generation + ".tmp";
+        var document = new LedgerDocument(CurrentSchemaVersion, ledger.ManifestHashes.Order(StringComparer.OrdinalIgnoreCase).ToArray(), ledger.SegmentHashes.Order(StringComparer.OrdinalIgnoreCase).ToArray(), ledger.BranchHashes.Order(StringComparer.OrdinalIgnoreCase).ToArray());
         var bytes = JsonSerializer.SerializeToUtf8Bytes(document, Options);
         await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough | FileOptions.Asynchronous))
         {
@@ -125,55 +144,116 @@ public sealed class MediaImportLedgerStore
             output.Flush(flushToDisk: true);
         }
 
-        File.Move(temporary, path, true);
+        cancellationToken.ThrowIfCancellationRequested();
+        File.Move(temporary, generation, overwrite: false);
     }
 
-    private void ValidateOwnedLedgerDirectory(bool createIfMissing)
+    private IEnumerable<string> EnumerateLedgerFiles()
     {
-        var directory = Path.GetDirectoryName(path) ?? throw new IOException("The media import ledger has no parent directory.");
-        EnsureNoReparsePoints(directory);
-        if (!Directory.Exists(directory))
-        {
-            if (!createIfMissing) return;
-            Directory.CreateDirectory(directory);
-            EnsureNoReparsePoints(directory);
-            var newMarker = Path.Combine(directory, OwnershipMarkerName);
-            using var output = new FileStream(newMarker, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 1024, FileOptions.WriteThrough);
-            JsonSerializer.Serialize(output, new LedgerOwnershipMarker(OwnershipSchema), Options);
-            output.Flush(flushToDisk: true);
-            return;
-        }
-
-        var markerPath = Path.Combine(directory, OwnershipMarkerName);
-        EnsureNotReparsePoint(markerPath);
-        if (!File.Exists(markerPath)) throw new IOException("The existing media ledger directory is not marked as Storage Chronicle-owned and will not be changed.");
-        using (var input = new FileStream(markerPath, FileMode.Open, FileAccess.Read, FileShare.Read))
-        {
-            var marker = JsonSerializer.Deserialize<LedgerOwnershipMarker>(input, Options);
-            if (marker?.Schema != OwnershipSchema) throw new IOException("The media ledger ownership marker is invalid.");
-        }
-
+        var baseName = Path.GetFileName(path);
+        var stem = Path.GetFileNameWithoutExtension(path);
         foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
         {
             EnsureNotReparsePoint(entry);
-            if (string.Equals(Path.GetFileName(entry), OwnershipMarkerName, StringComparison.OrdinalIgnoreCase)) continue;
-            if (Directory.Exists(entry)) throw new IOException("An unexpected directory exists in the media ledger store; it will not be changed.");
+            if (Directory.Exists(entry)) throw new IOException("An unexpected directory exists in the fixed media ledger directory; no files were changed.");
             var name = Path.GetFileName(entry);
-            if (!name.EndsWith(".json", StringComparison.OrdinalIgnoreCase) && !IsOwnedTemporaryLedgerName(name))
-            {
-                throw new IOException("An unexpected file exists in the media ledger store; it will not be changed.");
-            }
+            if (name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("An interrupted ledger write was retained; no generation was replaced or recovered.");
+            if (!string.Equals(name, baseName, StringComparison.OrdinalIgnoreCase) && !IsGenerationFor(name, stem))
+                throw new IOException("An unknown file exists in the fixed media ledger directory; no files were changed.");
+            yield return entry;
         }
     }
 
-    private bool IsOwnedTemporaryLedgerName(string name)
+    private async ValueTask ValidateLedgerDirectoryAsync(CancellationToken cancellationToken)
     {
-        var prefix = Path.GetFileName(path) + ".";
-        return name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase) &&
-               Guid.TryParseExact(name.AsSpan(prefix.Length, name.Length - prefix.Length - ".tmp".Length), "N", out _);
+        ValidateNoReparsePoints(directory);
+        var baseName = Path.GetFileName(path);
+        var stem = Path.GetFileNameWithoutExtension(path);
+        foreach (var candidate in Directory.EnumerateFileSystemEntries(directory))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            EnsureNotReparsePoint(candidate);
+            if (Directory.Exists(candidate)) throw new IOException("An unexpected directory exists in the fixed media ledger directory; no files were changed.");
+            var name = Path.GetFileName(candidate);
+            if (name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("An interrupted ledger write was retained; no generation was replaced or recovered.");
+            if (!string.Equals(name, baseName, StringComparison.OrdinalIgnoreCase) && !IsGenerationFor(name, stem))
+                throw new IOException("An unknown file exists in the fixed media ledger directory; no files were changed.");
+            _ = await ReadLedgerAsync(candidate, cancellationToken).ConfigureAwait(false);
+        }
     }
 
-    private static void EnsureNoReparsePoints(string path)
+    private static bool IsGenerationFor(string name, string stem)
+    {
+        var prefix = stem + ".";
+        if (!name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || !name.EndsWith(".generation.json", StringComparison.OrdinalIgnoreCase)) return false;
+        var generationId = name[prefix.Length..^".generation.json".Length];
+        return Guid.TryParseExact(generationId, "N", out _);
+    }
+
+    private static async ValueTask<MediaImportLedger> ReadLedgerAsync(string filePath, CancellationToken cancellationToken)
+    {
+        ValidateNoReparsePoints(filePath);
+        JsonDocument document;
+        try { document = JsonDocument.Parse(await File.ReadAllBytesAsync(filePath, cancellationToken).ConfigureAwait(false)); }
+        catch (JsonException exception) { throw new InvalidDataException("The media import ledger is corrupt; its original bytes were retained.", exception); }
+        using (document)
+        {
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) throw new InvalidDataException("The media import ledger root must be an object.");
+            var fields = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            foreach (var property in root.EnumerateObject())
+                if (!fields.TryAdd(property.Name, property.Value)) throw new InvalidDataException("The media import ledger contains duplicate fields.");
+            var allowed = new HashSet<string>(["schemaVersion", "manifestHashes", "segmentHashes", "branchHashes"], StringComparer.Ordinal);
+            if (fields.Keys.Any(field => !allowed.Contains(field)) || !fields.TryGetValue("manifestHashes", out var manifests) || !fields.TryGetValue("segmentHashes", out var segments) || !fields.TryGetValue("branchHashes", out var branches))
+                throw new InvalidDataException("The media import ledger has an unknown schema or missing required fields.");
+            if (fields.TryGetValue("schemaVersion", out var schema) && (!schema.TryGetInt32(out var version) || version != CurrentSchemaVersion))
+                throw new InvalidDataException("The media import ledger schema version is unsupported.");
+            var result = new MediaImportLedger(ParseArray(manifests, true), ParseArray(segments, true), ParseArray(branches, false));
+            ValidateLedger(result);
+            return result;
+        }
+    }
+
+    private static IReadOnlySet<string> ParseArray(JsonElement element, bool sha256)
+    {
+        if (element.ValueKind != JsonValueKind.Array) throw new InvalidDataException("A media import ledger field is not an array.");
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var value in element.EnumerateArray())
+        {
+            if (value.ValueKind != JsonValueKind.String) throw new InvalidDataException("A media import ledger array contains a non-string value.");
+            var item = value.GetString();
+            if (string.IsNullOrWhiteSpace(item) || item.Length > 128 || item.Any(char.IsControl) || (sha256 && (item.Length != 64 || !item.All(Uri.IsHexDigit))))
+                throw new InvalidDataException("A media import ledger contains an invalid identity value.");
+            result.Add(item);
+        }
+        return result;
+    }
+
+    private static void ValidateLedger(MediaImportLedger ledger)
+    {
+        foreach (var hash in ledger.ManifestHashes.Concat(ledger.SegmentHashes))
+            if (string.IsNullOrWhiteSpace(hash) || hash.Length != 64 || !hash.All(Uri.IsHexDigit)) throw new InvalidDataException("A media import ledger contains a malformed SHA-256 hash.");
+        foreach (var branch in ledger.BranchHashes)
+            if (string.IsNullOrWhiteSpace(branch) || branch.Length > 128 || branch.Any(char.IsControl)) throw new InvalidDataException("A media import ledger contains a malformed branch identity.");
+    }
+
+    private static MediaImportLedger Union(MediaImportLedger left, MediaImportLedger right) => new(
+        left.ManifestHashes.Concat(right.ManifestHashes).ToHashSet(StringComparer.OrdinalIgnoreCase),
+        left.SegmentHashes.Concat(right.SegmentHashes).ToHashSet(StringComparer.OrdinalIgnoreCase),
+        left.BranchHashes.Concat(right.BranchHashes).ToHashSet(StringComparer.OrdinalIgnoreCase));
+
+    private static void ValidateIsolatedTestPath(string fullPath)
+    {
+        var testParent = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "StorageChronicle.Media.Tests"));
+        var prefix = Path.TrimEndingDirectorySeparator(testParent) + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(prefix, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            throw new ArgumentException("The internal test ledger constructor only accepts isolated media-test fixture paths.", nameof(fullPath));
+        var fixtureRoot = Directory.GetParent(Path.GetDirectoryName(fullPath)!)?.FullName;
+        if (fixtureRoot is null || !Guid.TryParseExact(Path.GetFileName(fixtureRoot), "N", out _) || !File.Exists(Path.Combine(fixtureRoot, ".test-owner.json")))
+            throw new ArgumentException("The internal test ledger path has no run-owned fixture marker.", nameof(fullPath));
+    }
+
+    private static void ValidateNoReparsePoints(string path)
     {
         var current = Path.GetFullPath(path);
         while (!string.IsNullOrEmpty(current))

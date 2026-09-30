@@ -43,7 +43,7 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
     private readonly IVolumeEnumerator volumes;
     private readonly ISettingsStore<MachineSettings> settings;
     private readonly string pcId;
-    private readonly string ledgerRoot;
+    private readonly Func<string, MediaImportLedgerStore> ledgerStoreFactory;
     private readonly MountSessionTracker sessions;
     private readonly IMediaMirrorSessionCoordinator? mirrorCoordinator;
     private readonly IVolumeBoundMediaFileSystemFactory? fileSystemFactory;
@@ -56,7 +56,19 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
         IVolumeEnumerator volumes,
         ISettingsStore<MachineSettings> settings,
         string pcId,
-        string? ledgerRoot = null,
+        IMediaClock? clock = null,
+        IMediaMirrorSessionCoordinator? mirrorCoordinator = null,
+        IVolumeBoundMediaFileSystemFactory? fileSystemFactory = null)
+        : this(changes, volumes, settings, pcId, static path => new MediaImportLedgerStore(path), clock, mirrorCoordinator, fileSystemFactory)
+    {
+    }
+
+    internal WindowsExternalMediaCollector(
+        IExternalMediaChangeSource changes,
+        IVolumeEnumerator volumes,
+        ISettingsStore<MachineSettings> settings,
+        string pcId,
+        Func<string, MediaImportLedgerStore> ledgerStoreFactory,
         IMediaClock? clock = null,
         IMediaMirrorSessionCoordinator? mirrorCoordinator = null,
         IVolumeBoundMediaFileSystemFactory? fileSystemFactory = null)
@@ -65,7 +77,7 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
         this.volumes = volumes ?? throw new ArgumentNullException(nameof(volumes));
         this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
         this.pcId = ValidateIdentity(pcId, nameof(pcId));
-        this.ledgerRoot = ledgerRoot ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Storage Chronicle", "history", "media-ledgers");
+        this.ledgerStoreFactory = ledgerStoreFactory ?? throw new ArgumentNullException(nameof(ledgerStoreFactory));
         sessions = new MountSessionTracker(clock);
         this.mirrorCoordinator = mirrorCoordinator;
         this.fileSystemFactory = fileSystemFactory;
@@ -195,8 +207,8 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
 
         using (store)
         {
-        var ledgerPath = Path.Combine(ledgerRoot, Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(media.LogicalMediaId)) + ".json");
-        var ledgerStore = new MediaImportLedgerStore(ledgerPath);
+        var ledgerPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Storage Chronicle", "history", "media-ledgers", Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(media.LogicalMediaId)) + ".json");
+        var ledgerStore = ledgerStoreFactory(ledgerPath);
         var ledger = await ledgerStore.LoadAsync(cancellationToken).ConfigureAwait(false);
         var result = await new MediaHistoryImporter().ImportAsync(store, ledger, new MediaOnlyFilter(LogicalMediaId: media.LogicalMediaId), cancellationToken).ConfigureAwait(false);
         var imported = ledger with
