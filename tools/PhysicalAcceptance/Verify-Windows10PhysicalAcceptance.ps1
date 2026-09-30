@@ -160,13 +160,41 @@ try {
     Add-Check 'RunOwnershipMarkers' $false $_.Exception.Message
 }
 
+$uninspectedProfiles = [System.Collections.Generic.List[string]]::new()
 try {
+    $profiles = @(Get-CimInstance -ClassName Win32_UserProfile -ErrorAction Stop)
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $profileUninstallPaths = [System.Collections.Generic.List[string]]::new()
+    $profileInstallPaths = [System.Collections.Generic.List[string]]::new()
+    $currentProfileFound = $false
+    foreach ($profile in $profiles) {
+        if ([bool]$profile.Special) { continue }
+        $profileSid = [string]$profile.SID
+        if ([string]::IsNullOrWhiteSpace($profileSid)) { throw 'A non-special Windows user profile has no SID.' }
+        if ($profileSid -eq $currentSid) { $currentProfileFound = $true }
+        $profilePath = [string]$profile.LocalPath
+        if ([string]::IsNullOrWhiteSpace($profilePath)) { throw "Windows user profile $profileSid has no local profile path." }
+        $profilePath = [Environment]::ExpandEnvironmentVariables($profilePath)
+        $profileInstallPaths.Add((Join-Path $profilePath 'AppData\Local\Storage Chronicle'))
+        if (-not [bool]$profile.Loaded) {
+            $uninspectedProfiles.Add($profileSid)
+            continue
+        }
+        foreach ($uninstallSubkey in @(
+            'Software\Microsoft\Windows\CurrentVersion\Uninstall',
+            'Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+        )) {
+            $profileUninstallPaths.Add("Registry::HKEY_USERS\$profileSid\$uninstallSubkey")
+        }
+    }
+    if (-not $currentProfileFound) { throw 'The current user profile is missing from the Windows profile inventory.' }
+
     $uninstallPaths = @(
         'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
         'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
         'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
         'HKCU:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
-    )
+    ) + @($profileUninstallPaths)
     $installedProducts = [System.Collections.Generic.List[object]]::new()
     foreach ($uninstallPath in $uninstallPaths) {
         if (Test-Path -LiteralPath $uninstallPath -PathType Container -ErrorAction Stop) {
@@ -180,10 +208,12 @@ try {
     $historyEntries = if (Test-Path -LiteralPath $historyRoot -PathType Container) { @(Get-ChildItem -LiteralPath $historyRoot -Force -ErrorAction Stop) } else { @() }
     $installPaths = @((Join-Path $env:ProgramFiles 'Storage Chronicle'))
     if (-not [string]::IsNullOrWhiteSpace(${env:ProgramFiles(x86)})) { $installPaths += Join-Path ${env:ProgramFiles(x86)} 'Storage Chronicle' }
-    $installPaths += Join-Path $env:LocalAppData 'Storage Chronicle'
+    $installPaths += @($profileInstallPaths)
     $existingInstallPaths = @($installPaths | Where-Object { Test-Path -LiteralPath $_ })
-    $clean = $installedProducts.Count -eq 0 -and $existingInstallPaths.Count -eq 0 -and -not (Test-Path -LiteralPath $historyRoot) -and $historyEntries.Count -eq 0
-    Add-Check 'ExistingProductAndHistoryAbsent' $clean ("RegisteredProducts={0}; ExistingInstallOrUserDataPaths={1}; HistoryRootPresent={2}; HistoryEntries={3}" -f $installedProducts.Count, ($existingInstallPaths -join ';'), (Test-Path -LiteralPath $historyRoot), $historyEntries.Count)
+    foreach ($protectedPath in @($historyRoot) + $existingInstallPaths) { Assert-NoReparsePath $protectedPath }
+    $clean = $installedProducts.Count -eq 0 -and $existingInstallPaths.Count -eq 0 -and -not (Test-Path -LiteralPath $historyRoot) -and $historyEntries.Count -eq 0 -and $uninspectedProfiles.Count -eq 0
+    Add-Check 'UnloadedUserProfileHivesAbsent' ($uninspectedProfiles.Count -eq 0) ("ProfilesNotSafelyInspectable={0}" -f ($uninspectedProfiles -join ';'))
+    Add-Check 'ExistingProductAndHistoryAbsent' $clean ("RegisteredProducts={0}; ExistingInstallOrUserDataPaths={1}; HistoryRootPresent={2}; HistoryEntries={3}; ProfilesNotSafelyInspectable={4}" -f $installedProducts.Count, ($existingInstallPaths -join ';'), (Test-Path -LiteralPath $historyRoot), $historyEntries.Count, ($uninspectedProfiles -join ';'))
 } catch {
     Add-Check 'ExistingProductAndHistoryInventory' $false $_.Exception.Message
 }
@@ -196,7 +226,7 @@ try {
 }
 
 try {
-    $shares = @(Get-SmbShare -ErrorAction Stop | Where-Object { [string]$_.Name -match '(?i)^SC[_-]?ACCEPTANCE' -or [string]$_.Path -like ($TestDataRoot + '*') })
+    $shares = @(Get-SmbShare -ErrorAction Stop | Where-Object { [string]$_.Name -match '(?i)^(SCAcc|SC[_-]?ACCEPTANCE)' -or (Test-PathWithin -Path ([string]$_.Path) -Root $TestDataRoot) })
     Add-Check 'AcceptanceShareNameAndPathAvailable' ($shares.Count -eq 0) ("ConflictingShares={0}" -f (($shares | ForEach-Object { '{0}:{1}' -f $_.Name, $_.Path }) -join ';'))
 } catch {
     Add-Check 'SmbShareInventory' $false $_.Exception.Message
@@ -222,6 +252,7 @@ $payload = [ordered]@{
         TestId = if ($marker) { [string]$marker.TestId } else { '' }
         FreeSpaceGiB = $freeGiB
         EvidenceRoot = $EvidenceRoot
+        UninspectedUserProfileCount = if ($uninspectedProfiles) { $uninspectedProfiles.Count } else { 0 }
     }
     Checks = @($checks)
     Ready = $failed.Count -eq 0

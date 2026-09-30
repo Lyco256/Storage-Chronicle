@@ -256,6 +256,10 @@ public sealed class InstallerManifestTests
         Assert.DoesNotContain("Get-ItemProperty -Path $uninstallPaths -ErrorAction SilentlyContinue", verifier, StringComparison.Ordinal);
         Assert.Contains("AgentServiceNameAvailable", verifier, StringComparison.Ordinal);
         Assert.Contains("Get-SmbShare -ErrorAction Stop", verifier, StringComparison.Ordinal);
+        Assert.Contains("SCAcc|SC[_-]?ACCEPTANCE", verifier, StringComparison.Ordinal);
+        Assert.Contains("Win32_UserProfile", verifier, StringComparison.Ordinal);
+        Assert.Contains("UnloadedUserProfileHivesAbsent", verifier, StringComparison.Ordinal);
+        Assert.Contains("ProfilesNotSafelyInspectable", verifier, StringComparison.Ordinal);
         Assert.Contains("[IO.FileMode]::CreateNew", verifier, StringComparison.Ordinal);
         Assert.Contains("AcceptanceEligible = $false", verifier, StringComparison.Ordinal);
         Assert.DoesNotContain("Set-Content", verifier, StringComparison.OrdinalIgnoreCase);
