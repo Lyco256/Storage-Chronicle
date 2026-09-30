@@ -100,7 +100,7 @@ Wave 2統合済み`devenv`から作る。
 | 19 | `feat/integration-quality` |
 | 20 | `feat/installer-packaging` |
 
-統合品質ブランチを先にマージし、インストーラーを後にマージする。実機上で製品や特権テストを起動する前に `Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md` の静的監査、隔離領域検査、通常権限preflightを完了する。その後、同要件の段階順にWindows特権、外付け媒体、性能、障害復旧を検証する。仮想環境を構築しない。
+統合品質ブランチを先にマージし、インストーラーを後にマージする。実機上で製品や特権テストを起動する前に `Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md` の静的監査、隔離領域検査、通常権限preflightを完了する。その後、同要件の段階順にWindows特権、外付け媒体、性能、障害復旧を検証する。OS全体をゲスト化する仮想マシンは構築しない。軽量な隔離試験には、要件37の安全ゲートを通した専用fixture、file-backed VHDX等を積極的に利用してよい。
 
 ## 4. サブエージェントの完了条件
 
