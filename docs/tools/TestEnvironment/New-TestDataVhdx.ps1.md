@@ -1,5 +1,5 @@
 # New-TestDataVhdx.ps1
 
-Creates and attaches a new disposable dynamic VirtualBox VDI only under the approved TestLab root and only to `SC-Test-W11-VBox` or `SC-Test-W10-VBox`. `Workload` and `NonNtfs` default to 4 GiB; `Mft` requires at least 16 GiB. The operation is preview-only until explicit `-Apply` is supplied and never reuses an existing VDI.
+This legacy VirtualBox VDI creation/attachment helper is retired under Requirement 37. It always exits with status 2 and performs no host, VM, disk, file, or evidence operations, regardless of `-Apply`. Whole-OS guest testing is out of scope.
 
-The manifest carries the guest marker contract for both `.storage-chronicle-testlab-marker.json` and the required `StorageChronicleTestVolume.json`, including schema, test ID, role, volume label, filesystem, and VDI identity. Guest initialization must write both markers before any destructive mutation. If attachment or manifest recording fails after creation, the catch path rolls back only that exact newly-created VDI and records any rollback failure. The script never targets a host physical disk or a system/boot/pagefile/crashdump volume.
+Do not use this script to test the permitted lightweight file-backed VHDX workflow. That workflow has separate safety gates in `Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md`; no creation, attachment, initialization, formatting, or cleanup is authorized until those gates pass and the user approves the exact target.

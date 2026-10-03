@@ -2,6 +2,8 @@
 
 This inventory records the migration audit required by Requirements 32 and 36. The initial audit was performed after `git fetch --all --prune` on branch `feat/testlab-virtualbox-migration`, starting at commit `dbf167f`. The repository search excluded `.git`, `artifacts`, `bin`, and `obj` and covered `Hyper-V`, `Microsoft-Hyper-V`, `New-VM`, `Set-VM`, `Start-VM`, `Stop-VM`, `Checkpoint-VM`, `Restore-VMSnapshot`, `New-PSSession -VMName`, `Copy-VMFile`, `New-VHD`, `Mount-VHD`, `Dismount-VHD`, `vmms`, `Hyper-V Administrators`, `PowerShell Direct`, and `TestLab`.
 
+Historical-status note (2026-10-03): this inventory describes the superseded whole-OS VirtualBox migration, not an authorized current test procedure. Requirement 37 disallows whole-OS guests; `New-TestDataVhdx.ps1`, `Remove-TestDataVhdx.ps1`, and `Invoke-WindowsTestLab.ps1` are now no-I/O stubs. Lightweight, run-owned file-backed VHDX testing is a separate physical-machine workflow and remains forbidden until all Requirement 37 gates pass.
+
 ## Classification
 
 | Classification | Paths and rationale |

@@ -216,6 +216,22 @@ public sealed class InstallerManifestTests
     }
 
     [Fact]
+    public void RetiredVirtualBoxDataDiskHelperHasNoOperationalDependencies()
+    {
+        var root = FindRoot();
+        var helper = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "New-TestDataVhdx.ps1"));
+
+        Assert.Contains("This legacy VirtualBox VDI creation/attachment helper is retired", helper, StringComparison.Ordinal);
+        Assert.Contains("performs no host, VM, disk, file, or evidence operations", helper, StringComparison.Ordinal);
+        Assert.Contains("exit 2", helper, StringComparison.Ordinal);
+        Assert.DoesNotContain("TestLab.Common.ps1", helper, StringComparison.Ordinal);
+        Assert.DoesNotContain("Invoke-VBoxManage", helper, StringComparison.Ordinal);
+        Assert.DoesNotContain("New-Item", helper, StringComparison.Ordinal);
+        Assert.DoesNotContain("Remove-Item", helper, StringComparison.Ordinal);
+        Assert.DoesNotContain("Write-TestLabJson", helper, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void FinalAcceptanceCorrelationRequiresLivePhysicalRowsAndArtifacts()
     {
         var root = FindRoot();
