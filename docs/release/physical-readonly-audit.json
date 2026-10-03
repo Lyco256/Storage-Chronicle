@@ -1,6 +1,6 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "3509fde90b384f20bf2f3c7738733098b745aa24",
+  "targetCommit": "caaeb5e945d57866fe576d6ab953b91e1248282e",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -76,6 +76,8 @@
     "tools/StorageChronicle.FileMutationWorkload/Program.cs",
     "tests/StorageChronicle.Installer.Tests/InstallerManifestTests.cs",
     "tests/StorageChronicle.Architecture.Tests/ArchitectureContractTests.cs",
+    "tools/TestEnvironment/New-ExplorerCorrelationScenario.ps1",
+    "docs/tools/TestEnvironment/New-ExplorerCorrelationScenario.ps1.md",
     "docs/build/quality/Test-Privileged.ps1.md",
     "docs/build/package/Test-Installer.ps1.md",
     "docs/tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1.md",
@@ -173,7 +175,7 @@
         "status": "PARTIAL",
         "path": "tools/TestEnvironment/New-ExplorerCorrelationScenario.ps1",
         "lines": [22, 97],
-        "summary": "Preflight/evidence output can use overwrite-capable Set-Content at caller-specified paths. Similar evidence/build/package sinks require full call-chain inventory and new-only/approved-root confinement."
+        "summary": "The Explorer scenario producer now checks both markers against the live fixed-NTFS volume identity, rejects reparse paths, requires an existing in-root output parent, and uses exclusive CreateNew outputs/files; parser, source-contract, DocMirror, and the 338-test fast suite pass with no build warnings. Not executed on a physical volume; marker authenticity and path-based TOCTOU remain. Other evidence/build/package sinks still require full call-chain inventory and new-only/approved-root confinement."
       }
     ]
   },
@@ -185,7 +187,7 @@
       "Commit 3509fde adds marker-only fixture-root and live volume-identity checks in the privileged runner. The marker is still forgeable and the path-based check/use race is not closed.",
       "Commit 3509fde adds per-case user prompting in the parent installer harness and a driver-side case/PC/run phrase plus standard-input gate. The receipt/nonce/input remain caller-supplied and direct-driver negative-path execution has not been tested.",
       "The old VirtualBox VDI cleanup sink is retired by commit e0529db; the old guest runner was further reduced to a no-I/O stub by commit ddc293d. AST review found only Write-Error in both scripts. This does not address VHDX creation/attach or other runner risks.",
-      "Several evidence and build/package producers use overwrite-capable output paths; full sink inventory and approved-root/new-only policy remain open."
+      "The Explorer scenario producer no longer uses overwrite-capable output paths, but several other evidence and build/package producers may still overwrite existing paths; full sink inventory and approved-root/new-only policy remain open."
     ],
     "runtimeExecution": "NOT_EXECUTED"
   },
