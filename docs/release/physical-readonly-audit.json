@@ -1,6 +1,6 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "aeabe0f587800215aa52d68ab85303fa98ad3379",
+  "targetCommit": "e599c6e30fa5dc5d548be05d7d8b54ca908112fc",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -225,6 +225,12 @@
         "path": "build/Test-Privileged.ps1",
         "lines": [519, 524],
         "summary": "The visible preflight requires 40 GiB before VHDX creation, but Requirement 37 requires at least 60 GiB before 1M MFT seeding. The inspected runner does not establish a count-specific 60 GiB gate. No VHDX or MFT run was performed."
+      },
+      {
+        "id": "pc-bound-media-consent-end-to-end-gate",
+        "status": "FAIL",
+        "path": "src/StorageChronicle.Agent/ExternalMediaCollector.cs",
+        "summary": "Commit 02c245b adds a pure exact-binding consent policy; commit e599c6e adds a PC-local Settings record, IPC disclosure/decision contracts, and a consent UI. The live collector/import/mirror paths are not yet wired to acquire verified dedicated-root identity/NTFS ACL evidence, queue pending requests, persist the exact accepted binding through an authenticated decision handler, and deny legacy MediaMirrors-only reads/imports/appends. Therefore the first-use requirement is not implemented end-to-end and no media path is eligible to run. No physical media was accessed."
       }
     ]
   },
