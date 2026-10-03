@@ -1,7 +1,7 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "330a348",
-  "workingTreeChanges": [
+  "targetCommit": "e0529dbbb6c1edb47b140cf3ede04191c4d5de37",
+  "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
     "tests/StorageChronicle.Settings.Tests/SettingsTests.cs",
@@ -69,13 +69,114 @@
     "docs/src/StorageChronicle.Platform.Windows.FileSystem/Interop/WindowsVolumeDirectorySession.cs.md",
     "tests/StorageChronicle.Platform.Windows.FileSystem.Tests/VolumeAndMediaTests.cs"
   ],
-  "overallStatus": "NOT_EXECUTED",
+  "workingTreeChanges": [
+    "docs/release/main-readiness.md",
+    "docs/release/physical-readonly-audit.md",
+    "docs/release/physical-readonly-audit.json"
+  ],
+  "overallStatus": "FAIL",
+  "physicalAcceptanceStatus": "NOT_EXECUTED",
   "decision": "DO_NOT_RUN",
   "productStarted": false,
   "privilegedRunnerStarted": false,
   "installerStarted": false,
   "hostPreflight": "NOT_EXECUTED",
   "processWriteMonitoring": "NOT_EXECUTED",
+  "currentCommitSourceAudit": {
+    "scope": "Production src/** write/change sinks and selected call paths; excludes complete tests/build/tools/installer/external command audit, host preflight, and runtime monitor.",
+    "status": "PARTIAL",
+    "reviewedAt": "2026-10-03",
+    "findings": [
+      {
+        "id": "settings-path-write-boundary",
+        "status": "PARTIAL",
+        "path": "src/StorageChronicle.Settings/SettingsPersistence.cs",
+        "lines": [33, 55, 166, 194],
+        "summary": "Same-directory create-new temporary, atomic replace, and backup generation are used through Agent settings services. Product directory identity, ACL, and race/reparse resistance are not pinned or proven at write time."
+      },
+      {
+        "id": "settings-history-path-write-boundary",
+        "status": "PARTIAL",
+        "path": "src/StorageChronicle.Agent/AgentSettingsInfrastructure.cs",
+        "lines": [49, 122],
+        "summary": "New product folder uses a schema marker and checks unknown entries/reparse points before append+flush. Marker is forgeable and the append path is not handle-pinned after checks."
+      },
+      {
+        "id": "usn-cursor-path-write-boundary",
+        "status": "PARTIAL",
+        "path": "src/StorageChronicle.Agent/WindowsCollectorAdapters.cs",
+        "lines": [124, 177],
+        "summary": "Create-new temporary and overwrite publication are below a marked ProgramData product path. Marker is forgeable and check/write and overwrite target identity are not handle-pinned."
+      },
+      {
+        "id": "canonical-history-and-index-write-boundary",
+        "status": "PARTIAL",
+        "path": "src/StorageChronicle.Storage/AppendOnlyStorageEngine.cs",
+        "lines": [30, 49, 239, 375, 750, 789],
+        "summary": "Owned-root validation gates segment/index write and recovery paths, but configurable history root, marker authenticity, directory identity, race resistance, and SQLite/staging destructive recovery boundaries are not fully proven. Segment history deletion is not an authorized sink."
+      },
+      {
+        "id": "external-media-marker-and-filesystem-boundary",
+        "status": "PARTIAL",
+        "path": "src/StorageChronicle.Platform.Windows.FileSystem/Interop/WindowsVolumeDirectorySession.cs",
+        "summary": "Media operations use volume-bound handle-relative sessions, pinned root, create-new files, and no-replace publication. Plain JSON ownership marker is forgeable; ancestor DELETE_CHILD/ACL and non-NTFS/removable filesystem semantics remain unproven. MediaImport publishes local ledger generations with overwrite=false."
+      },
+      {
+        "id": "service-recovery-mutation-gate",
+        "status": "PARTIAL",
+        "path": "src/StorageChronicle.Agent/WindowsServiceRecoveryConfigurator.cs",
+        "lines": [19, 59],
+        "summary": "ChangeServiceConfig2 is reachable via exact command-line option, called by deferred non-impersonated MSI action after service start. Source has no UAC prompt; dedicated-PC pre-presentation/UAC gate and end-to-end installer audit remain unverified."
+      },
+      {
+        "id": "file-mutation-workload-overwrite-confinement",
+        "status": "FAIL",
+        "path": "tools/StorageChronicle.FileMutationWorkload/Program.cs",
+        "lines": [80, 385],
+        "summary": "Fixed paths and oracle use overwrite-capable sinks without consistently requiring a new empty run-owned root. Must harden before workload execution."
+      },
+      {
+        "id": "privileged-existing-root-and-reparse-confinement",
+        "status": "FAIL",
+        "path": "build/Test-Privileged.ps1",
+        "lines": [559, 576, 739, 759],
+        "summary": "Some existing acceptance-root paths can be admitted by forgeable JSON markers without proving run-owned volume identity, full reparse ancestry, and containment. Must harden before privileged lane."
+      },
+      {
+        "id": "vdi-delete-run-ownership",
+        "status": "FAIL",
+        "path": "tools/TestEnvironment/Remove-TestDataVhdx.ps1",
+        "lines": [20, 35],
+        "summary": "Expected pathname and TestId/Role do not prove this run owns the VDI; matching run-bound receipt and medium identity are absent. Deletion must remain disabled until fixed."
+      },
+      {
+        "id": "installer-driver-authorization-bypass",
+        "status": "FAIL",
+        "path": "tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1",
+        "lines": [141, 153, 428, 439],
+        "summary": "Direct driver execution can synthesize JSON receipt and process environment nonce used as the confirmation handoff. Must enforce a verifiable single-use parent authorization or refuse standalone invocation."
+      },
+      {
+        "id": "evidence-output-overwrite-isolation",
+        "status": "PARTIAL",
+        "path": "tools/TestEnvironment/New-ExplorerCorrelationScenario.ps1",
+        "lines": [22, 97],
+        "summary": "Preflight/evidence output can use overwrite-capable Set-Content at caller-specified paths. Similar evidence/build/package sinks require full call-chain inventory and new-only/approved-root confinement."
+      }
+    ]
+  },
+  "acceptanceScriptAudit": {
+    "scope": "Static review of selected build/**, tools/**, installer/** sinks and call paths; not exhaustive.",
+    "status": "PARTIAL_WITH_BLOCKING_FINDINGS",
+    "findings": [
+      "The file-mutation workload can overwrite fixed paths and an external oracle unless changed to a new, empty, run-owned fixture with create-new semantics.",
+      "Privileged acceptance accepts some existing roots based on forgeable JSON markers without complete reparse ancestry and volume containment proof.",
+      "The real-installer case driver can be invoked directly with a synthesized receipt/nonce instead of the prompted harness.",
+      "The old VirtualBox VDI cleanup sink was found unsafe; commit e0529db replaces the helper with an unconditional no-I/O fail-closed stub. Its PowerShell AST was checked; this does not address VHDX creation/attach or other runner risks.",
+      "Several evidence and build/package producers use overwrite-capable output paths; full sink inventory and approved-root/new-only policy remain open."
+    ],
+    "runtimeExecution": "NOT_EXECUTED"
+  },
   "findings": [
     {
       "id": "privileged-vhdx-identity-and-cleanup",
