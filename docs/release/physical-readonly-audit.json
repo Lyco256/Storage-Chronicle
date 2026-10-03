@@ -1,6 +1,6 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "ff6cc0dc8ff2edb59cc88290bfd8193ef7f6db79",
+  "targetCommit": "473834be62d6d7c131b45ec5afd3b99369bfd6b1",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -67,30 +67,20 @@
     "tests/StorageChronicle.Agent.Tests/ExternalMediaCollectorTests.cs",
     "src/StorageChronicle.Platform.Windows.FileSystem/Interop/WindowsVolumeDirectorySession.cs",
     "docs/src/StorageChronicle.Platform.Windows.FileSystem/Interop/WindowsVolumeDirectorySession.cs.md",
-    "tests/StorageChronicle.Platform.Windows.FileSystem.Tests/VolumeAndMediaTests.cs"
+    "tests/StorageChronicle.Platform.Windows.FileSystem.Tests/VolumeAndMediaTests.cs",
+    "build/quality/AcceptanceContracts.ps1",
+    "build/quality/Test-CorrelationMetrics.ps1",
+    "build/quality/Test-ResourceBudget.ps1",
+    "build/quality/Test-ResourceBudgetAcceptance.ps1",
+    "tools/StorageChronicle.LiveCorrelationValidator/Program.cs",
+    "tools/StorageChronicle.ResourceMonitor/Program.cs",
+    "tests/StorageChronicle.LiveCorrelationValidator.Tests/LiveCorrelationValidatorTests.cs",
+    "tests/StorageChronicle.CorrelationAcceptance.Tests/CorrelationMetricsAcceptanceTests.cs",
+    "tests/StorageChronicle.Platform.Windows.Integration.Tests/WindowsAcceptanceEnvironment.cs",
+    "tests/StorageChronicle.Platform.Windows.Integration.Tests/WindowsPrivilegedAcceptanceTests.cs",
+    "tests/StorageChronicle.Installer.Tests/InstallerManifestTests.cs"
   ],
-  "workingTreeChanges": [
-    "build/Test-Privileged.ps1",
-    "build/package/Test-Installer.ps1",
-    "tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1",
-    "tools/StorageChronicle.FileMutationWorkload/Program.cs",
-    "tests/StorageChronicle.Installer.Tests/InstallerManifestTests.cs",
-    "tests/StorageChronicle.Architecture.Tests/ArchitectureContractTests.cs",
-    "tests/StorageChronicle.Installer.Tests/InstallerManifestTests.cs",
-    "tools/TestEnvironment/New-ExplorerCorrelationScenario.ps1",
-    "tools/TestEnvironment/New-TestDataVhdx.ps1",
-    "docs/tools/TestEnvironment/New-ExplorerCorrelationScenario.ps1.md",
-    "docs/tools/TestEnvironment/New-TestDataVhdx.ps1.md",
-    "docs/build/quality/Test-Privileged.ps1.md",
-    "docs/build/package/Test-Installer.ps1.md",
-    "docs/tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1.md",
-    "docs/tools/StorageChronicle.FileMutationWorkload/Program.cs.md",
-    "tools/TestEnvironment/Invoke-WindowsTestLab.ps1",
-    "docs/tools/TestEnvironment/Invoke-WindowsTestLab.ps1.md",
-    "docs/release/main-readiness.md",
-    "docs/release/physical-readonly-audit.md",
-    "docs/release/physical-readonly-audit.json"
-  ],
+  "workingTreeChanges": [],
   "overallStatus": "FAIL",
   "physicalAcceptanceStatus": "NOT_EXECUTED",
   "decision": "DO_NOT_RUN",
@@ -160,6 +150,12 @@
         "summary": "Commit 3509fde rejects volume roots, protected/synchronized descendants, reparse paths, any fixture-root entry except the two expected run-bound markers, and marker/live-volume identity, label, and filesystem mismatches; it accepts verified local drive and volume-GUID roots. Marker JSON remains forgeable and validation is path-based with TOCTOU; no privileged lane test ran. Blocking pending race/ownership closure and full Requirement 37 review."
       },
       {
+        "id": "privileged-collision-safe-share-service-cleanup",
+        "status": "PARTIAL",
+        "path": "tests/StorageChronicle.Platform.Windows.Integration.Tests/WindowsPrivilegedAcceptanceTests.cs",
+        "summary": "Commit 473834b checks generated SMB/service names are absent before creation, records successful creation, and only cleans up when the current share path or service executable still matches the run-owned target. InstallerManifestTests statically assert these guards; the Windows integration project builds with zero warnings/errors and Fast passed 345/345. The privileged tests were not executed; hostile races and all other destructive paths remain outside this narrow result."
+      },
+      {
         "id": "vdi-delete-run-ownership",
         "status": "PASS",
         "path": "tools/TestEnvironment/Remove-TestDataVhdx.ps1",
@@ -177,7 +173,7 @@
         "status": "PARTIAL",
         "path": "tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1",
         "lines": [141, 153, 428, 439],
-        "summary": "Commit 3509fde adds a case/PC/run-bound authorization phrase shown and collected by the parent before each case; the driver independently validates it and requires a matching standard-input line before the case switch. Static contract tests and PowerShell parsing pass, but no direct-driver negative-path execution or MSI lane ran; because the receipt/nonce and input can still be supplied by a deliberate caller, independent authorization semantics require further review."
+        "summary": "Commit 3509fde adds a case/PC/run-bound phrase presented by the parent; the driver also displays it and requires an exact Console.ReadLine match before its mutation switch. The driver nevertheless requires an already elevated process; there is no operation-bound UAC prompt after the specific action is presented. A direct caller can supply the receipt/nonce and bypass the parent's externally reviewed hash-manifest check, and verified MSI paths are reopened later by msiexec. No direct-driver negative-path or MSI test ran."
       },
       {
         "id": "evidence-output-overwrite-isolation",
@@ -195,6 +191,8 @@
       "The file-mutation workload overwrite finding is narrowed by commit ddc293d: run GUID, marker-only root, no-reparse checks, create-new paths, run-bound in-root oracle, and exact deletion-tree checks are implemented and fast tests pass. Path-based TOCTOU and marker authenticity remain open, so workload execution remains gated.",
       "Commit 3509fde adds marker-only fixture-root and live volume-identity checks in the privileged runner. The marker is still forgeable and the path-based check/use race is not closed.",
       "Commit 3509fde adds per-case user prompting in the parent installer harness and a driver-side case/PC/run phrase plus standard-input gate. The receipt/nonce/input remain caller-supplied and direct-driver negative-path execution has not been tested.",
+      "Commit 473834b hardens privileged SMB/service test cleanup: collision checks precede creation, cleanup requires a successful create in this invocation, and the live share path/service executable is rechecked before removal. The project builds and the non-privileged static contract test passes; no privileged lane was run.",
+      "The physical installer case driver still requires an already elevated process and does not itself validate the externally approved hash-manifest fingerprint; msiexec reopens the path after hash checks. Operation-bound UAC sequencing and hash-to-use binding remain blockers.",
       "The old VirtualBox VDI cleanup sink was retired by commit e0529db; the old VDI creation/attachment helper is now also a no-I/O stub with a source-contract test. The old guest runner was reduced to a no-I/O stub by commit ddc293d. This does not authorize the separately gated file-backed VHDX physical workflow or close other runner risks.",
       "The Explorer scenario producer no longer uses overwrite-capable output paths, but several other evidence and build/package producers may still overwrite existing paths; full sink inventory and approved-root/new-only policy remain open."
     ],
@@ -219,7 +217,7 @@
       "id": "installer-mutation-scope",
       "status": "PARTIAL",
       "path": "tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1",
-      "summary": "Physical/local-only execution now requires a separately reviewed hash-manifest fingerprint, safe unique bundle-relative hashes, exact selected MSI/driver correspondence to fingerprinted bundle payloads even on direct harness invocation, matching Workload/NTFS markers and volume identity, fixture roots outside system/application/repository/bundle/synchronized roots, canonical Program Files/ProgramData install/history paths, a clean product/service/install/ProgramData boundary, exact dedicated-PC/run confirmation, run-owned receipt and one-case nonce; evidence uses create-new. Residuals: complete source-to-sink and installed-state discovery across profiles, trusted release signing, race/TOCTOU proof, independent runtime write monitoring, and proof of physical hardware. Installer effects are inherently mutating. Runtime remains NOT_EXECUTED; DO_NOT_RUN."
+      "summary": "The physical launcher and Test-Installer parent require an externally reviewed hash-manifest fingerprint and verify selected MSI/driver correspondence; matching Workload/NTFS markers and volume identity, fixture roots outside protected/system/repository/bundle/synchronized roots, canonical Program Files/ProgramData install/history paths, a clean product/service/install/ProgramData boundary, dedicated-PC/run confirmation, run-owned receipt, and one-case nonce are also enforced. The lower-level case driver only checks MSI hashes against the caller-supplied receipt and does not independently verify the external fingerprint; direct invocation therefore bypasses the parent's trust anchor. MSI paths are reopened after verification without an identity-pinned handle. Operation-bound UAC, full source-to-sink and installed-state discovery across profiles, trusted release signing, race/TOCTOU proof, independent runtime monitoring, and physical hardware proof remain. Runtime is NOT_EXECUTED; DO_NOT_RUN."
     },
     {
       "id": "cleanup-ownership-proof",
