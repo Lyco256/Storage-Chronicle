@@ -1,6 +1,6 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "e0529dbbb6c1edb47b140cf3ede04191c4d5de37",
+  "targetCommit": "ddc293db7144a3756d6aa36d8a8a01acf34c4660",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -70,6 +70,12 @@
     "tests/StorageChronicle.Platform.Windows.FileSystem.Tests/VolumeAndMediaTests.cs"
   ],
   "workingTreeChanges": [
+    "tools/StorageChronicle.FileMutationWorkload/Program.cs",
+    "tests/StorageChronicle.Architecture.Tests/ArchitectureContractTests.cs",
+    "tools/TestEnvironment/Invoke-WindowsTestLab.ps1",
+    "tests/StorageChronicle.Installer.Tests/InstallerManifestTests.cs",
+    "docs/tools/StorageChronicle.FileMutationWorkload/Program.cs.md",
+    "docs/tools/TestEnvironment/Invoke-WindowsTestLab.ps1.md",
     "docs/release/main-readiness.md",
     "docs/release/physical-readonly-audit.md",
     "docs/release/physical-readonly-audit.json"
@@ -130,10 +136,10 @@
       },
       {
         "id": "file-mutation-workload-overwrite-confinement",
-        "status": "FAIL",
+        "status": "PARTIAL",
         "path": "tools/StorageChronicle.FileMutationWorkload/Program.cs",
         "lines": [80, 385],
-        "summary": "Fixed paths and oracle use overwrite-capable sinks without consistently requiring a new empty run-owned root. Must harden before workload execution."
+        "summary": "Commit ddc293d requires a canonical run GUID, an existing marker-only root with matching volume markers/label/filesystem and no reparse points, uses create-new for files and a direct run-named oracle, and verifies exact known tree contents before recursive delete. Architecture source-contract tests and the full fast suite pass. Residual path-based check/use races and root/volume ownership-marker authenticity remain unproven; do not execute before the complete Requirement 37 audit and independent runtime gates."
       },
       {
         "id": "privileged-existing-root-and-reparse-confinement",
@@ -144,10 +150,10 @@
       },
       {
         "id": "vdi-delete-run-ownership",
-        "status": "FAIL",
+        "status": "PASS",
         "path": "tools/TestEnvironment/Remove-TestDataVhdx.ps1",
-        "lines": [20, 35],
-        "summary": "Expected pathname and TestId/Role do not prove this run owns the VDI; matching run-bound receipt and medium identity are absent. Deletion must remain disabled until fixed."
+        "lines": [1, 14],
+        "summary": "Commit e0529db replaces the legacy VDI deletion helper with an unconditional no-I/O fail-closed stub. PowerShell AST review confirms only Write-Error executes. VHDX creation/attach and any future cleanup remain separate unaudited paths."
       },
       {
         "id": "installer-driver-authorization-bypass",
@@ -169,10 +175,10 @@
     "scope": "Static review of selected build/**, tools/**, installer/** sinks and call paths; not exhaustive.",
     "status": "PARTIAL_WITH_BLOCKING_FINDINGS",
     "findings": [
-      "The file-mutation workload can overwrite fixed paths and an external oracle unless changed to a new, empty, run-owned fixture with create-new semantics.",
+      "The file-mutation workload overwrite finding is narrowed by commit ddc293d: run GUID, marker-only root, no-reparse checks, create-new paths, run-bound in-root oracle, and exact deletion-tree checks are implemented and fast tests pass. Path-based TOCTOU and marker authenticity remain open, so workload execution remains gated.",
       "Privileged acceptance accepts some existing roots based on forgeable JSON markers without complete reparse ancestry and volume containment proof.",
       "The real-installer case driver can be invoked directly with a synthesized receipt/nonce instead of the prompted harness.",
-      "The old VirtualBox VDI cleanup sink was found unsafe; commit e0529db replaces the helper with an unconditional no-I/O fail-closed stub. Its PowerShell AST was checked; this does not address VHDX creation/attach or other runner risks.",
+      "The old VirtualBox VDI cleanup sink is retired by commit e0529db; the old guest runner was further reduced to a no-I/O stub by commit ddc293d. AST review found only Write-Error in both scripts. This does not address VHDX creation/attach or other runner risks.",
       "Several evidence and build/package producers use overwrite-capable output paths; full sink inventory and approved-root/new-only policy remain open."
     ],
     "runtimeExecution": "NOT_EXECUTED"
