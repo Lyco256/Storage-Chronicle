@@ -88,6 +88,18 @@ public sealed class ArchitectureContractTests
         Assert.True(directDeleteCheck >= 0 && directDeleteCheck < secondRecursiveDelete, "The delete scenario must verify exact run-generated files first.");
     }
 
+    [Fact]
+    public void ExplorerScenarioPreparationUsesOnlyBoundNewOutputs()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRoot(), "tools", "TestEnvironment", "New-ExplorerCorrelationScenario.ps1"));
+        Assert.Contains("Get-Volume -FilePath", source, StringComparison.Ordinal);
+        Assert.Contains("marker.VolumeUniqueId", source, StringComparison.Ordinal);
+        Assert.Contains("Assert-NoReparsePath", source, StringComparison.Ordinal);
+        Assert.Contains("FileMode]::CreateNew", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Set-Content", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("New-Item -ItemType Directory -Force", source, StringComparison.Ordinal);
+    }
+
     private static DotNetAssembly[] LoadRequiredAssemblies()
     {
         var root = FindRoot();

@@ -12,21 +12,55 @@ Set-StrictMode -Version Latest
 
 function Fail([string]$Message) { throw $Message }
 
+function Assert-NoReparsePath([string]$Path) {
+    $full = [IO.Path]::GetFullPath($Path)
+    $rootPath = [IO.Path]::GetPathRoot($full)
+    $current = $rootPath
+    foreach ($part in $full.Substring($rootPath.Length).Split([IO.Path]::DirectorySeparatorChar, [StringSplitOptions]::RemoveEmptyEntries)) {
+        $current = Join-Path $current $part
+        if (Test-Path -LiteralPath $current) {
+            $item = Get-Item -LiteralPath $current -Force
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { Fail "Reparse points are not allowed in the approved TestLab path: $current" }
+        }
+    }
+}
+
+function Write-NewUtf8File([string]$Path, [string]$Text) {
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes($Text)
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
+}
+
+function New-EmptyFile([string]$Path) {
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try { $stream.Flush($true) } finally { $stream.Dispose() }
+}
+
 try {
     $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd('\')
     $volumeRoot = [IO.Path]::GetPathRoot($rootFull).TrimEnd('\')
     if ($rootFull.Equals($volumeRoot, [StringComparison]::OrdinalIgnoreCase)) { Fail "Refusing to use a volume root: $rootFull" }
     if (-not (Test-Path -LiteralPath $rootFull -PathType Container)) { Fail "TestLab root does not exist: $rootFull" }
     if ([string]::IsNullOrWhiteSpace($TestId)) { Fail 'TestId is required.' }
+    Assert-NoReparsePath $rootFull
+    $volume = Get-Volume -FilePath $rootFull -ErrorAction Stop
+    if ($null -eq $volume -or [string]$volume.DriveType -ne 'Fixed' -or [string]$volume.FileSystem -ne 'NTFS' -or [string]::IsNullOrWhiteSpace([string]$volume.UniqueId)) {
+        Fail 'TestLab root must resolve to a local fixed NTFS volume with a stable identity.'
+    }
 
+    $markers = @()
     foreach ($name in @('.storage-chronicle-testlab-marker.json', 'StorageChronicleTestVolume.json')) {
         $markerPath = Join-Path $rootFull $name
         if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) { Fail "Required TestLab marker is missing: $markerPath" }
+        Assert-NoReparsePath $markerPath
         $marker = Get-Content -Raw -Encoding UTF8 -LiteralPath $markerPath | ConvertFrom-Json
-        if ([string]$marker.Schema -ne 'StorageChronicle.TestLabDataMarker.v1' -or [string]$marker.TestId -ne $TestId -or [string]$marker.Role -ne 'Workload' -or [string]$marker.FileSystem -ne 'NTFS') {
+        if ([string]$marker.Schema -ne 'StorageChronicle.TestLabDataMarker.v1' -or [string]$marker.TestId -ne $TestId -or [string]$marker.Role -ne 'Workload' -or [string]$marker.FileSystem -ne 'NTFS' -or [string]$marker.VolumeUniqueId -ne [string]$volume.UniqueId -or [string]$marker.VolumeLabel -ne [string]$volume.FileSystemLabel) {
             Fail "The root is not the approved NTFS Workload TestLab volume for TestId=${TestId}: $markerPath"
         }
+        $markers += $marker
     }
+    if ([string]$markers[0].VolumeUniqueId -ne [string]$markers[1].VolumeUniqueId -or [string]$markers[0].TestId -ne [string]$markers[1].TestId) { Fail 'The two TestLab ownership markers disagree.' }
+    if ([string]$volume.FileSystemLabel -ne 'SC_TEST_VOLUME') { Fail 'TestLab volume label is not the approved workload label.' }
 
     $safeRunId = $RunId -replace '[^A-Za-z0-9_.-]', '-'
     if ([string]::IsNullOrWhiteSpace($safeRunId)) { Fail 'RunId must contain at least one safe character.' }
@@ -34,6 +68,13 @@ try {
     $output = if ([string]::IsNullOrWhiteSpace($OutputPath)) { Join-Path $scenarioRoot 'explorer-correlation-plan.json' } else { [IO.Path]::GetFullPath($OutputPath) }
     if (-not $Apply -and [string]::IsNullOrWhiteSpace($OutputPath)) { $output = Join-Path $rootFull "ExplorerCorrelation-$safeRunId.preflight.json" }
     if (-not ($output.Equals($rootFull, [StringComparison]::OrdinalIgnoreCase) -or $output.StartsWith($rootFull + '\', [StringComparison]::OrdinalIgnoreCase))) { Fail "OutputPath must remain under the approved TestLab root: $output" }
+    if ($Apply) {
+        if (Test-Path -LiteralPath $output) { Fail "Plan output already exists; refusing to overwrite it: $output" }
+        $plannedParent = Split-Path -Parent $output
+        $isDefaultPlanParent = [string]::IsNullOrWhiteSpace($OutputPath) -and $plannedParent.Equals($scenarioRoot, [StringComparison]::OrdinalIgnoreCase)
+        if (-not $isDefaultPlanParent -and -not (Test-Path -LiteralPath $plannedParent -PathType Container)) { Fail "Custom plan output parent must already exist: $plannedParent" }
+        if (-not $isDefaultPlanParent) { Assert-NoReparsePath $plannedParent }
+    }
     if (-not $Apply) {
         $preflight = [ordered]@{
             Schema = 'StorageChronicle.ExplorerCorrelationPlan.v1'
@@ -45,17 +86,18 @@ try {
             Reason = 'Pass -Apply only after confirming the marker, TestId, and disposable TestLab volume.'
         }
         $parent = Split-Path -Parent $output
-        if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-        $preflight | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $output -Encoding UTF8
+        if (-not $parent -or -not (Test-Path -LiteralPath $parent -PathType Container)) { Fail "Preflight output parent must already exist: $parent" }
+        Assert-NoReparsePath $parent
+        Write-NewUtf8File $output ($preflight | ConvertTo-Json -Depth 12)
         Write-Output ($preflight | ConvertTo-Json -Depth 12)
         exit 2
     }
 
     if (Test-Path -LiteralPath $scenarioRoot) { Fail "The scenario directory already exists; choose a new RunId: $scenarioRoot" }
-    New-Item -ItemType Directory -Force -Path $scenarioRoot | Out-Null
+    New-Item -ItemType Directory -Path $scenarioRoot | Out-Null
     $directories = @('SourceTree', 'Destination', 'SameVolumeMove', 'DragDrop', 'Recycle')
-    foreach ($directory in $directories) { New-Item -ItemType Directory -Force -Path (Join-Path $scenarioRoot $directory) | Out-Null }
-    New-Item -ItemType Directory -Force -Path (Join-Path $scenarioRoot 'SourceTree\Folder') | Out-Null
+    foreach ($directory in $directories) { New-Item -ItemType Directory -Path (Join-Path $scenarioRoot $directory) | Out-Null }
+    New-Item -ItemType Directory -Path (Join-Path $scenarioRoot 'SourceTree\Folder') | Out-Null
     $emptyFiles = @(
         'SourceTree\one.txt',
         'SourceTree\Folder\nested.txt',
@@ -64,7 +106,7 @@ try {
         'DragDrop\move-me.txt',
         'Recycle\delete-me.txt'
     )
-    foreach ($relative in $emptyFiles) { New-Item -ItemType File -Force -Path (Join-Path $scenarioRoot $relative) | Out-Null }
+    foreach ($relative in $emptyFiles) { New-EmptyFile (Join-Path $scenarioRoot $relative) }
 
     $relative = { param([string]$path) [IO.Path]::GetRelativePath($rootFull, $path).Replace('/', '\') }
     $rows = @(
@@ -92,8 +134,9 @@ try {
         CreatedUtc = [DateTimeOffset]::UtcNow
     }
     $parent = Split-Path -Parent $output
-    if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-    $plan | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $output -Encoding UTF8
+    if (-not $parent -or -not (Test-Path -LiteralPath $parent -PathType Container)) { Fail "Plan output parent must already exist: $parent" }
+    Assert-NoReparsePath $parent
+    Write-NewUtf8File $output ($plan | ConvertTo-Json -Depth 20)
     Write-Output ($plan | ConvertTo-Json -Depth 20)
     exit 0
 }
