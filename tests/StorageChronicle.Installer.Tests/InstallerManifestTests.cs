@@ -316,6 +316,7 @@ public sealed class InstallerManifestTests
             "build/quality/Test-BranchIntegration.ps1",
             "build/quality/New-ResourceQuietWitness.ps1",
             "build/quality/Test-CorrelationMetrics.ps1",
+            "build/quality/Test-ResourceBudget.ps1",
             "tools/PhysicalAcceptance/Collect-PhysicalAcceptanceResults.ps1",
             "tools/PhysicalAcceptance/Finalize-Windows10PhysicalAcceptance.ps1",
             "tools/TestEnvironment/Compose-Windows10StageA.ps1"
@@ -352,6 +353,10 @@ public sealed class InstallerManifestTests
         Assert.Contains("Write-NewJsonArtifact -Path $evidencePath -Value $fallback", resourceAcceptance, StringComparison.Ordinal);
         Assert.Contains("[guid]::NewGuid().ToString('N')", resourceAcceptance, StringComparison.Ordinal);
         Assert.Contains("[guid]::NewGuid().ToString('N')", resourceBudget, StringComparison.Ordinal);
+        Assert.Contains("$processIds = @($ProcessId -split '[,;]'", resourceBudget, StringComparison.Ordinal);
+        Assert.Contains("'--output', $rawOutput", resourceBudget, StringComparison.Ordinal);
+        Assert.Contains("Write-NewJsonArtifact -Path $output -Value $resource", resourceBudget, StringComparison.Ordinal);
+        Assert.DoesNotContain("Set-Content", resourceBudget, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("FileMode.CreateNew", resourceMonitor, StringComparison.Ordinal);
         Assert.Contains("stream.Flush(flushToDisk: true)", resourceMonitor, StringComparison.Ordinal);
         Assert.Contains("Existing resource evidence is preserved", resourceMonitor, StringComparison.Ordinal);

@@ -22,6 +22,7 @@ if ($DurationSeconds -ne 600 -and -not $Diagnostic) {
 }
 
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+. (Join-Path $PSScriptRoot 'AcceptanceContracts.ps1')
 $monitorProject = Join-Path $root 'tools/StorageChronicle.ResourceMonitor/StorageChronicle.ResourceMonitor.csproj'
 $artifactDirectory = Join-Path $root 'artifacts/quality/resources'
 New-Item -ItemType Directory -Force -Path $artifactDirectory | Out-Null
@@ -34,7 +35,7 @@ $processIds = @($ProcessId -split '[,;]' | ForEach-Object {
 
     try { [Diagnostics.Process]::GetProcessById($parsed).Dispose() } catch { throw "Process ID $parsed is not running or cannot be opened: $($_.Exception.Message)" }
     $parsed
-}) | Sort-Object -Unique
+} | Sort-Object -Unique)
 
 if ($processIds.Count -eq 0) { throw 'At least one process ID is required.' }
 if ([string]::IsNullOrWhiteSpace($AgentPipeName)) { throw 'AgentPipeName must not be empty.' }
@@ -97,11 +98,13 @@ function Get-AgentQueueDepth {
 
 $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ', [Globalization.CultureInfo]::InvariantCulture) + '-' + [guid]::NewGuid().ToString('N')
 $output = Join-Path $artifactDirectory ("process-" + ($processIds -join '-') + '-' + $stamp + '.json')
+$rawOutput = Join-Path $artifactDirectory ('.' + [IO.Path]::GetFileNameWithoutExtension($output) + '.raw.json')
+if ((Test-Path -LiteralPath $output) -or (Test-Path -LiteralPath $rawOutput)) { throw 'Resource evidence paths already exist; preserve the prior artifacts and retry with a new run ID.' }
 $monitorArguments = @(
     'run', '--project', $monitorProject, '-c', $Configuration, '--no-restore', '--',
     '--duration-seconds', $DurationSeconds,
     '--interval-ms', $IntervalMilliseconds,
-    '--output', $output,
+    '--output', $rawOutput,
     '--max-private-mib', $MaxPrivateMiB.ToString([Globalization.CultureInfo]::InvariantCulture),
     '--max-cpu-percent', $MaxCpuPercent.ToString([Globalization.CultureInfo]::InvariantCulture)
 )
@@ -153,11 +156,11 @@ try {
     $monitorExitCode = $monitor.ExitCode
     $monitorOutput = $monitor.StandardOutput.ReadToEnd()
     $monitorError = $monitor.StandardError.ReadToEnd()
-    if (-not (Test-Path -LiteralPath $output)) {
+    if (-not (Test-Path -LiteralPath $rawOutput)) {
         throw "The resource monitor did not produce its JSON result. ExitCode=$monitorExitCode; stderr=$monitorError; stdout=$monitorOutput"
     }
 
-    $resource = Get-Content -Raw -Encoding UTF8 -LiteralPath $output | ConvertFrom-Json
+    $resource = Get-Content -Raw -Encoding UTF8 -LiteralPath $rawOutput | ConvertFrom-Json
     $queueValues = @($queueSamples | ForEach-Object { [int]$_.QueueDepth })
     $expectedSamples = [Math]::Max(2, [Math]::Floor(($DurationSeconds * 1000) / $IntervalMilliseconds))
     $minimumSamples = [Math]::Max(2, [Math]::Floor($expectedSamples * 0.8))
@@ -192,7 +195,7 @@ try {
         StartedUtc = $startedUtc
         CompletedUtc = [DateTimeOffset]::UtcNow
     }) -Force
-    $resource | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -LiteralPath $output
+    Write-NewJsonArtifact -Path $output -Value $resource -Depth 8
 
     if ($monitorExitCode -ne 0 -or $resource.PrivateMemoryLimitExceeded -or $resource.CpuLimitExceeded -or $queueLimitExceeded -or -not $acceptanceEligible) {
         Write-Error "Resource budget acceptance failed or is ineligible. Result: $output"
