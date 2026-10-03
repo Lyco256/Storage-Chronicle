@@ -66,12 +66,11 @@ function Get-RequiredWindows10StageAChecks {
     )
 }
 
-function Write-NewJsonArtifact {
+function Write-NewArtifactBytes {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][object]$Value,
-        [ValidateRange(1, 100)][int]$Depth = 12
+        [Parameter(Mandatory = $true)][byte[]]$Bytes
     )
 
     $fullPath = [System.IO.Path]::GetFullPath($Path)
@@ -82,11 +81,9 @@ function Write-NewJsonArtifact {
 
     $temporaryName = '.' + [System.IO.Path]::GetFileName($fullPath) + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
     $temporaryPath = Join-Path $parent $temporaryName
-    $json = ConvertTo-Json -InputObject $Value -Depth $Depth
-    $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($json + [Environment]::NewLine)
     $stream = [System.IO.FileStream]::new($temporaryPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None, 4096, [System.IO.FileOptions]::WriteThrough)
     try {
-        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Write($Bytes, 0, $Bytes.Length)
         $stream.Flush($true)
     }
     finally {
@@ -95,4 +92,28 @@ function Write-NewJsonArtifact {
 
     # Same-directory move is atomic and the two-argument overload never replaces an existing artifact.
     [System.IO.File]::Move($temporaryPath, $fullPath)
+}
+
+function Write-NewTextArtifact {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text
+    )
+
+    $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($Text)
+    Write-NewArtifactBytes -Path $Path -Bytes $bytes
+}
+
+function Write-NewJsonArtifact {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][object]$Value,
+        [ValidateRange(1, 100)][int]$Depth = 12
+    )
+
+    $json = ConvertTo-Json -InputObject $Value -Depth $Depth
+    $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($json + [Environment]::NewLine)
+    Write-NewArtifactBytes -Path $Path -Bytes $bytes
 }

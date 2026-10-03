@@ -8,6 +8,8 @@ Continuation note (2026-10-03): the final acceptance aggregator's output sink wa
 
 Further continuation note (2026-10-03): a read-only review found the same overwrite pattern in the physical result collector, Windows 10 evidence composers, quiet-period witness, and branch integration report. Those one-shot writers now use shared `Write-NewJsonArtifact`; collision tests preserve prior evidence. The helper is included in both manual bundle variants. The manual bundle generator no longer exposes `-Force`; it refuses existing target bundles and uses create-only JSON/README outputs. Targeted tests, parser validation, DocMirror, and Fast (342 tests) passed. This still does not cover multi-phase writers such as correlation/resource acceptance, other package/build output paths, general build/test logs, all VM-era file-copy flows, directory race resistance, or the complete source-to-sink audit. The reviewed commit and JSON remain historical; static status remains partial and physical execution remains **DO NOT RUN**.
 
+Correlation follow-up (2026-10-03): the live correlation producer/wrapper had retained a TestLab-only acceptance identity despite the physical-only final gate. The contract is being aligned to Windows 11 physical Local execution with Agent Service, ComputerName, and RunId, and output collision protection is being added to producer and wrapper. This fixes a schema/path incompatibility only; no host, product, workload, service, or Explorer live run has been performed. Static audit remains partial and **DO NOT RUN** remains in force.
+
 The production source contains these intentional durable write classes:
 
 | Destination | Sink and guard observed | Residual requiring closure |

@@ -10,6 +10,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+. (Join-Path $PSScriptRoot 'AcceptanceContracts.ps1')
 $project = Join-Path $root 'tests/StorageChronicle.CorrelationAcceptance.Tests/StorageChronicle.CorrelationAcceptance.Tests.csproj'
 $defaultFixture = Join-Path $root 'tests/StorageChronicle.CorrelationAcceptance.Tests/Fixtures/r00-process-explorer-correlation.json'
 $artifactDirectory = Join-Path $root 'artifacts/quality/correlation'
@@ -17,12 +18,18 @@ New-Item -ItemType Directory -Force -Path $artifactDirectory | Out-Null
 
 if ([string]::IsNullOrWhiteSpace($FixturePath)) { $FixturePath = $defaultFixture }
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    $OutputPath = Join-Path $artifactDirectory ('correlation-metrics-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.json')
+    $OutputPath = Join-Path $artifactDirectory ('correlation-metrics-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N') + '.json')
 }
+$OutputPath = [IO.Path]::GetFullPath($OutputPath)
 if (-not [string]::IsNullOrWhiteSpace($LiveEvidencePath) -and $FixtureOnly) {
     throw '-LiveEvidencePath and -FixtureOnly cannot be combined.'
 }
 $logPath = [IO.Path]::ChangeExtension($OutputPath, '.log')
+$logPath = [IO.Path]::GetFullPath($logPath)
+if ([string]::Equals($OutputPath, $logPath, [StringComparison]::OrdinalIgnoreCase)) { throw 'OutputPath must not also be the log path.' }
+if ((Test-Path -LiteralPath $OutputPath) -or (Test-Path -LiteralPath $logPath)) { throw 'Correlation evidence or log output already exists; choose new paths and preserve prior artifacts.' }
+$rawReportPath = Join-Path (Split-Path -Parent $OutputPath) ('.' + [IO.Path]::GetFileNameWithoutExtension($OutputPath) + '.' + [guid]::NewGuid().ToString('N') + '.raw.json')
+$logLines = [System.Collections.Generic.List[string]]::new()
 
 function Write-NotExecuted([string]$Reason) {
     $directory = Split-Path -Parent ([IO.Path]::GetFullPath($OutputPath))
@@ -35,7 +42,7 @@ function Write-NotExecuted([string]$Reason) {
         FixturePath = $FixturePath
         Reason = $Reason
     }
-    $manifest | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -LiteralPath $OutputPath
+    Write-NewJsonArtifact -Path $OutputPath -Value $manifest -Depth 8
     Write-Host "CORRELATION_METRICS status=NOT_EXECUTED reason=$Reason" -ForegroundColor Yellow
     exit 2
 }
@@ -47,9 +54,12 @@ $oldFixture = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_CORRELATI
 $oldReport = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_CORRELATION_REPORT', 'Process')
 $exitCode = 1
 try {
-    & dotnet build $project --configuration $Configuration --no-restore --nologo 2>&1 | Tee-Object -FilePath $logPath
-    if ($LASTEXITCODE -ne 0) {
-        $exitCode = $LASTEXITCODE
+    $buildOutput = @(& dotnet build $project --configuration $Configuration --no-restore --nologo 2>&1)
+    $buildExitCode = $LASTEXITCODE
+    foreach ($line in $buildOutput) { [void]$logLines.Add([string]$line); Write-Output $line }
+    if ($buildExitCode -ne 0) {
+        $exitCode = $buildExitCode
+        Write-NewTextArtifact -Path $logPath -Text ($logLines -join [Environment]::NewLine)
         throw "Correlation acceptance project build failed with exit code $exitCode."
     }
     $assemblyName = [IO.Path]::GetFileNameWithoutExtension($project)
@@ -58,9 +68,11 @@ try {
         Select-Object -First 1
     if ($null -eq $testExecutable) { throw 'Correlation acceptance test executable was not produced.' }
     $env:STORAGE_CHRONICLE_CORRELATION_FIXTURE = [IO.Path]::GetFullPath($FixturePath)
-    $env:STORAGE_CHRONICLE_CORRELATION_REPORT = [IO.Path]::GetFullPath($OutputPath)
-    & $testExecutable.FullName --progress off --minimum-expected-tests 1 2>&1 | Tee-Object -FilePath $logPath
+    $env:STORAGE_CHRONICLE_CORRELATION_REPORT = $rawReportPath
+    $testOutput = @(& $testExecutable.FullName --progress off --minimum-expected-tests 1 2>&1)
     $exitCode = $LASTEXITCODE
+    foreach ($line in $testOutput) { [void]$logLines.Add([string]$line); Write-Output $line }
+    Write-NewTextArtifact -Path $logPath -Text ($logLines -join [Environment]::NewLine)
 }
 finally {
     if ($null -eq $oldFixture) { Remove-Item Env:STORAGE_CHRONICLE_CORRELATION_FIXTURE -ErrorAction SilentlyContinue } else { $env:STORAGE_CHRONICLE_CORRELATION_FIXTURE = $oldFixture }
@@ -82,11 +94,13 @@ if (-not [string]::IsNullOrWhiteSpace($LiveEvidencePath)) {
         $null -eq $live.PSObject.Properties['FalseExactCount'] -or
         [int]$live.FalseExactCount -ne 0 -or
         [string]$live.Environment.TargetOs -ne 'Windows11' -or
-        [string]$live.Environment.VmName -ne 'SC-Test-W11-VBox' -or
-        [string]$live.Environment.ExecutionMode -ne 'TestLab' -or
-        [string]$live.Environment.AgentHostMode -ne 'TestLab' -or
+        [string]$live.Environment.TargetKind -ne 'PhysicalMachine' -or
+        [string]$live.Environment.ExecutionMode -ne 'Local' -or
+        [string]$live.Environment.AgentHostMode -ne 'Service' -or
+        [string]::IsNullOrWhiteSpace([string]$live.Environment.ComputerName) -or
+        [string]$live.Environment.RunId -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' -or
         [bool]$live.Environment.Diagnostic) {
-        Write-Error 'The supplied live correlation artifact is missing the required non-diagnostic TestLab identity or zero-false-Exact proof.'
+        Write-Error 'The supplied live correlation artifact is missing the required physical Windows 11 Service identity, run identity, or zero-false-Exact proof.'
         exit 1
     }
     foreach ($path in @([string]$live.WorkloadOraclePath, [string]$live.Environment.AgentExecutablePath, [string]$live.Environment.WorkloadExecutablePath, [string]$live.Environment.WorkloadOraclePath, [string]$live.Environment.ExplorerEvidencePath)) {
@@ -114,14 +128,14 @@ if (-not [string]::IsNullOrWhiteSpace($LiveEvidencePath)) {
     if ([int]$live.FileStateCorrectness.ExpectedCount -le 0 -or [int]$live.FileStateCorrectness.VerifiedCount -ne [int]$live.FileStateCorrectness.ExpectedCount -or [int]$live.FileStateCorrectness.MissingCount -ne 0 -or [int]$live.FileStateCorrectness.DroppedEventCount -ne 0) { Write-Error 'The supplied live file/state correctness counts are incomplete.'; exit 1 }
     $live | Add-Member -NotePropertyName FixtureStatus -NotePropertyValue 'PASSED' -Force
     $live | Add-Member -NotePropertyName Status -NotePropertyValue 'PASSED' -Force
-    $live | ConvertTo-Json -Depth 20 | Set-Content -Encoding UTF8 -LiteralPath $OutputPath
+    Write-NewJsonArtifact -Path $OutputPath -Value $live -Depth 20
     Write-Host "CORRELATION_METRICS live=PASSED evidence=$LiveEvidencePath" -ForegroundColor Green
     Write-Host "Correlation report: $OutputPath" -ForegroundColor Cyan
     exit 0
 }
-if (-not (Test-Path -LiteralPath $OutputPath -PathType Leaf)) { Write-NotExecuted "The acceptance test passed without producing its measurement report: $OutputPath" }
+if (-not (Test-Path -LiteralPath $rawReportPath -PathType Leaf)) { Write-NotExecuted "The acceptance test passed without producing its measurement report: $rawReportPath" }
 
-$report = Get-Content -Raw -Encoding UTF8 -LiteralPath $OutputPath | ConvertFrom-Json
+$report = Get-Content -Raw -Encoding UTF8 -LiteralPath $rawReportPath | ConvertFrom-Json
 if ($report.FixtureId -ne 'r00-process-explorer-correlation-v1' -or
     $report.ProcessAttribution.Total -ne 3 -or
     $report.ProcessAttribution.Exact -ne 1 -or
@@ -140,7 +154,7 @@ $report | Add-Member -NotePropertyName Requirements -NotePropertyValue @('R-00 s
 if ($FixtureOnly) {
     $report | Add-Member -NotePropertyName Status -NotePropertyValue 'PASSED_FIXTURE_ONLY' -Force
     $report | Add-Member -NotePropertyName AcceptanceNote -NotePropertyValue 'Deterministic metadata-only fixture passed. No live Agent/Session/Explorer capture is claimed.' -Force
-    $report | ConvertTo-Json -Depth 12 | Set-Content -Encoding UTF8 -LiteralPath $OutputPath
+    Write-NewJsonArtifact -Path $OutputPath -Value $report -Depth 12
     Write-Host "CORRELATION_METRICS fixture=PASSED process=Exact:$($report.ProcessAttribution.Exact)/$($report.ProcessAttribution.Total),Correlated:$($report.ProcessAttribution.Correlated)/$($report.ProcessAttribution.Total),Unknown:$($report.ProcessAttribution.Unknown)/$($report.ProcessAttribution.Total) explorer=$($report.ExplorerSourceCorrelation.Correlated)/$($report.ExplorerSourceCorrelation.ExplorerCandidates) rate=$($report.ExplorerSourceCorrelation.CorrelationRate)" -ForegroundColor Green
     Write-Host 'LIVE_MACHINE_MEASUREMENT=NOT_EXECUTED (fixture-only mode)' -ForegroundColor Yellow
     Write-Host "Correlation report: $OutputPath" -ForegroundColor Cyan
@@ -149,7 +163,7 @@ if ($FixtureOnly) {
 
 $report | Add-Member -NotePropertyName Status -NotePropertyValue 'NOT_EXECUTED' -Force
 $report | Add-Member -NotePropertyName AcceptanceNote -NotePropertyValue 'The deterministic fixture passed, but live process/Explorer measurement requires a running Agent and interactive Session Agent on an acceptance machine. It was not supplied.' -Force
-$report | ConvertTo-Json -Depth 12 | Set-Content -Encoding UTF8 -LiteralPath $OutputPath
+Write-NewJsonArtifact -Path $OutputPath -Value $report -Depth 12
 Write-Host "CORRELATION_METRICS fixture=PASSED process=Exact:$($report.ProcessAttribution.Exact)/$($report.ProcessAttribution.Total),Correlated:$($report.ProcessAttribution.Correlated)/$($report.ProcessAttribution.Total),Unknown:$($report.ProcessAttribution.Unknown)/$($report.ProcessAttribution.Total) explorer=$($report.ExplorerSourceCorrelation.Correlated)/$($report.ExplorerSourceCorrelation.ExplorerCandidates) rate=$($report.ExplorerSourceCorrelation.CorrelationRate)" -ForegroundColor Green
 Write-Host 'LIVE_MACHINE_MEASUREMENT=NOT_EXECUTED; overall status is NOT_EXECUTED.' -ForegroundColor Yellow
 Write-Host "Correlation report: $OutputPath" -ForegroundColor Cyan

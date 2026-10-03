@@ -129,6 +129,71 @@ public sealed class LiveCorrelationValidatorTests
     }
 
     [Fact]
+    public async Task VirtualMachineEvidenceCannotBecomeEligibleForPhysicalAcceptance()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var historyPath = Path.Combine(root, "history");
+            var oraclePath = Path.Combine(root, "oracle.json");
+            var explorerPath = Path.Combine(root, "explorer.json");
+            var environmentPath = Path.Combine(root, "environment.json");
+            var outputPath = Path.Combine(root, "evidence.json");
+            var agentPath = Path.Combine(root, "StorageChronicle.Agent.exe");
+            var workloadPath = Path.Combine(root, "StorageChronicle.FileMutationWorkload.exe");
+            Directory.CreateDirectory(historyPath);
+            await File.WriteAllTextAsync(oraclePath, "{}");
+            await File.WriteAllTextAsync(explorerPath, "{}");
+            await File.WriteAllTextAsync(agentPath, "test artifact");
+            await File.WriteAllTextAsync(workloadPath, "test artifact");
+            WriteEnvironment(environmentPath, historyPath, oraclePath, explorerPath, agentPath, workloadPath, targetKind: "VirtualMachine", executionMode: "VM", agentHostMode: "TestLab");
+
+            var exitCode = await Program.Main(new[]
+            {
+                "--oracle", oraclePath, "--history", historyPath, "--explorer", explorerPath,
+                "--environment", environmentPath, "--output", outputPath
+            });
+
+            Assert.Equal(2, exitCode);
+            using var evidence = JsonDocument.Parse(await File.ReadAllTextAsync(outputPath));
+            Assert.False(evidence.RootElement.GetProperty("AcceptanceEligible").GetBoolean());
+            Assert.Contains("physical-machine", evidence.RootElement.GetProperty("Failure").GetString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteTempRoot(root);
+        }
+    }
+
+    [Fact]
+    public async Task ExistingCorrelationOutputIsPreservedAndRejected()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var outputPath = Path.Combine(root, "evidence.json");
+            const string sentinel = "preserve-existing-evidence";
+            await File.WriteAllTextAsync(outputPath, sentinel);
+
+            var exitCode = await Program.Main(new[]
+            {
+                "--oracle", Path.Combine(root, "missing-oracle.json"),
+                "--history", Path.Combine(root, "missing-history"),
+                "--explorer", Path.Combine(root, "missing-explorer.json"),
+                "--environment", Path.Combine(root, "missing-environment.json"),
+                "--output", outputPath
+            });
+
+            Assert.Equal(2, exitCode);
+            Assert.Equal(sentinel, await File.ReadAllTextAsync(outputPath));
+        }
+        finally
+        {
+            DeleteTempRoot(root);
+        }
+    }
+
+    [Fact]
     public async Task MissingFinalStateCannotBecomeEligibleEvenWhenCanonicalEvidenceExists()
     {
         var root = CreateTempRoot();
@@ -225,12 +290,14 @@ public sealed class LiveCorrelationValidatorTests
         Rows = new[] { new { ScenarioId = "copy-1", Operation = "Copy", DestinationRelativePath = "folder\\copy.txt", SourceRelativePath = "source.txt", ExpectedCorrelation = "Correlated", ExpectedSourceFileId = "source-file" } }
     }));
 
-    private static void WriteEnvironment(string path, string history, string oracle, string explorer, string agent, string workload, bool diagnostic = false) => File.WriteAllText(path, JsonSerializer.Serialize(new
+    private static void WriteEnvironment(string path, string history, string oracle, string explorer, string agent, string workload, bool diagnostic = false, string targetKind = "PhysicalMachine", string executionMode = "Local", string agentHostMode = "Service") => File.WriteAllText(path, JsonSerializer.Serialize(new
     {
         TargetOs = "Windows11",
-        VmName = "SC-Test-W11-VBox",
-        ExecutionMode = "TestLab",
-        AgentHostMode = "TestLab",
+        TargetKind = targetKind,
+        ComputerName = "SC-Correlation-Contract-Test",
+        RunId = Guid.NewGuid(),
+        ExecutionMode = executionMode,
+        AgentHostMode = agentHostMode,
         Diagnostic = diagnostic,
         AgentHistoryPath = history,
         AgentExecutablePath = agent,

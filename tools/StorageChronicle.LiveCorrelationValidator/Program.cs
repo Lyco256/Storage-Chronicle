@@ -24,6 +24,13 @@ public static class Program
             return 2;
         }
 
+        var outputFullPath = Path.GetFullPath(options.OutputPath);
+        if (File.Exists(outputFullPath) || Directory.Exists(outputFullPath))
+        {
+            Console.Error.WriteLine($"Existing correlation evidence is preserved; choose a new output path: {outputFullPath}");
+            return 2;
+        }
+
         try
         {
             var oracle = Load<OracleDocument>(options.OraclePath, "workload oracle");
@@ -81,6 +88,12 @@ public static class Program
         }
         catch (Exception exception) when (exception is IOException or JsonException or InvalidDataException or InvalidOperationException or NullReferenceException)
         {
+            var failureOutputPath = Path.GetFullPath(options.OutputPath);
+            if (File.Exists(failureOutputPath) || Directory.Exists(failureOutputPath))
+            {
+                Console.Error.WriteLine($"FAIL_CLOSED: {exception.Message}; existing or partial evidence is preserved at {failureOutputPath}");
+                return 2;
+            }
             var failure = new
             {
                 Schema = "StorageChronicle.AgentExplorerCorrelationEvidence.v1",
@@ -308,7 +321,16 @@ public static class Program
 
     private static void ValidateEnvironment(CorrelationEnvironment environment, string history, string oracle, string explorer)
     {
-        if (!string.Equals(environment.TargetOs, "Windows11", StringComparison.Ordinal) || !string.Equals(environment.VmName, "SC-Test-W11-VBox", StringComparison.Ordinal) || !string.Equals(environment.ExecutionMode, "TestLab", StringComparison.Ordinal) || !string.Equals(environment.AgentHostMode, "TestLab", StringComparison.Ordinal) || environment.Diagnostic) throw new InvalidDataException("The correlation environment is not a non-diagnostic SC-Test-W11-VBox TestLab run.");
+        if (!string.Equals(environment.TargetOs, "Windows11", StringComparison.Ordinal) ||
+            !string.Equals(environment.TargetKind, "PhysicalMachine", StringComparison.Ordinal) ||
+            !string.Equals(environment.ExecutionMode, "Local", StringComparison.Ordinal) ||
+            !string.Equals(environment.AgentHostMode, "Service", StringComparison.Ordinal) ||
+            string.IsNullOrWhiteSpace(environment.ComputerName) ||
+            !Guid.TryParseExact(environment.RunId, "D", out _) ||
+            environment.Diagnostic)
+        {
+            throw new InvalidDataException("Correlation evidence requires a non-diagnostic Windows 11 physical-machine run with Local execution, the Agent service, a computer name, and a valid run GUID.");
+        }
         if (!File.Exists(history) && !Directory.Exists(history)) throw new DirectoryNotFoundException($"Agent history does not exist: {history}");
         if (!Path.GetFullPath(environment.AgentHistoryPath ?? string.Empty).Equals(Path.GetFullPath(history), StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Agent history path does not match the validator input.");
         if (!Path.GetFullPath(environment.WorkloadOraclePath ?? string.Empty).Equals(Path.GetFullPath(oracle), StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Workload oracle path does not match the validator input.");
@@ -324,7 +346,10 @@ public static class Program
         var full = Path.GetFullPath(path);
         var parent = Path.GetDirectoryName(full) ?? throw new InvalidOperationException("The output path has no parent directory.");
         Directory.CreateDirectory(parent);
-        File.WriteAllText(full, JsonSerializer.Serialize(value, JsonOptions));
+        var bytes = System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value, JsonOptions) + Environment.NewLine);
+        using var stream = new FileStream(full, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough);
+        stream.Write(bytes);
+        stream.Flush(flushToDisk: true);
     }
 
     private static bool TryParse(string[] args, out Options options, out string error)
@@ -347,7 +372,7 @@ public static class Program
     private sealed record OracleOperation(long Sequence, string Operation, string RelativePath, string? OldRelativePath, DateTimeOffset StartedUtc, DateTimeOffset CompletedUtc);
     private sealed record ExplorerDocument(string Schema, IReadOnlyList<ExplorerScenario> Rows);
     private sealed record ExplorerScenario(string ScenarioId, string Operation, string DestinationRelativePath, string? SourceRelativePath, string? ExpectedCorrelation, string? ExpectedSourceFileId);
-    private sealed record CorrelationEnvironment(string? TargetOs, string? VmName, string? ExecutionMode, string? AgentHostMode, bool Diagnostic, string? AgentHistoryPath, string? AgentExecutablePath, string? WorkloadExecutablePath, string? WorkloadOraclePath, string? ExplorerEvidencePath);
+    private sealed record CorrelationEnvironment(string? TargetOs, string? TargetKind, string? ComputerName, string? RunId, string? ExecutionMode, string? AgentHostMode, bool Diagnostic, string? AgentHistoryPath, string? AgentExecutablePath, string? WorkloadExecutablePath, string? WorkloadOraclePath, string? ExplorerEvidencePath);
     private sealed record ProcessMeasurement(int Total, int Exact, int Correlated, int Unknown, int FalseExactCount, decimal ExactRate, decimal CorrelatedRate, decimal UnknownRate, IReadOnlyList<object> Rows);
     private sealed record ExplorerMeasurement(int CopyIntentCount, int SourceCorrelatedCount, int SourceUnknownCount, int NotIdentifiedCount, int FalseAttributionCount, IReadOnlyList<object> Rows);
     private sealed record FileStateCorrectness(int ExpectedCount, int VerifiedCount, int MissingCount, int DroppedEventCount, int DistinctPathCount);

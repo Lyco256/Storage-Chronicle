@@ -22,12 +22,25 @@ public static class Program
 
         try
         {
+            var outputPath = options.OutputPath is null ? null : Path.GetFullPath(options.OutputPath);
+            if (outputPath is not null && (File.Exists(outputPath) || Directory.Exists(outputPath)))
+            {
+                Console.Error.WriteLine($"Existing resource evidence is preserved; choose a new output path: {outputPath}");
+                return 2;
+            }
+
             using var processes = new ProcessSet(options.ProcessIds);
             var samples = Sample(processes, options.Duration, options.IntervalMilliseconds);
             var result = BuildResult(options, samples);
             var json = JsonSerializer.Serialize(result, JsonOptions);
-            if (options.OutputPath is null) Console.WriteLine(json);
-            else File.WriteAllText(options.OutputPath, json + Environment.NewLine);
+            if (outputPath is null) Console.WriteLine(json);
+            else
+            {
+                var bytes = System.Text.Encoding.UTF8.GetBytes(json + Environment.NewLine);
+                using var stream = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough);
+                stream.Write(bytes);
+                stream.Flush(flushToDisk: true);
+            }
 
             return result.PrivateMemoryLimitExceeded || result.CpuLimitExceeded ? 1 : 0;
         }
@@ -40,6 +53,11 @@ public static class Program
         {
             Console.Error.WriteLine($"measurement failed: {exception.Message}");
             return 4;
+        }
+        catch (IOException exception)
+        {
+            Console.Error.WriteLine($"resource evidence output failed without replacing existing data: {exception.Message}");
+            return 5;
         }
     }
 

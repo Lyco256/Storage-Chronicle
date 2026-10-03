@@ -2,11 +2,11 @@
 
 ## Role
 
-This executable is the fail-closed producer for the real Agent/process/Explorer correlation acceptance artifact. It consumes a workload oracle, durable Agent history, a separately recorded Explorer scenario, and the TestLab environment manifest. It never reads target file contents or content hashes.
+This executable is the fail-closed producer for the real Agent/process/Explorer correlation acceptance artifact. It consumes a workload oracle, durable Agent history, a separately recorded Explorer scenario, and a Windows 11 physical-machine environment manifest. It requires `PhysicalMachine`, `Local`, Agent `Service`, a computer name, a valid run GUID, and a non-diagnostic run; it never accepts TestLab/VM evidence and never reads target file contents or content hashes.
 
 ## Public types and entry point
 
-`StorageChronicle.LiveCorrelationValidator.Program.Main` accepts `--oracle`, `--history`, `--explorer`, `--environment`, and `--output`. It returns zero only when the evidence is a non-diagnostic Windows 11 `SC-Test-W11-VBox` TestLab run with complete workload state, zero false exact process attributions, and zero false Explorer source attributions.
+`StorageChronicle.LiveCorrelationValidator.Program.Main` accepts `--oracle`, `--history`, `--explorer`, `--environment`, and `--output`. It returns zero only when the evidence is a non-diagnostic Windows 11 physical run with complete workload state, zero false exact process attributions, and zero false Explorer source attributions. Output uses `FileMode.CreateNew` with write-through; pre-existing evidence is preserved and rejected.
 
 ## Invariants
 
@@ -24,4 +24,4 @@ The validator depends on `StorageChronicle.Domain` contracts and `StorageChronic
 
 ## Relevant tests
 
-`tests/StorageChronicle.LiveCorrelationValidator.Tests/LiveCorrelationValidatorTests.cs` covers the real-shaped pass path and fail-closed environment/path and attribution failures. The repository final acceptance scripts additionally validate the serialized schema, row/count consistency, TestLab identity, and artifact existence.
+`tests/StorageChronicle.LiveCorrelationValidator.Tests/LiveCorrelationValidatorTests.cs` covers the physical pass-shaped path, VM/diagnostic rejection, create-only collision preservation, and fail-closed environment/path and attribution failures. The repository final acceptance scripts additionally validate the serialized schema, row/count consistency, physical identity, run identity, and artifact existence.

@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text;
 using System.Text.Json;
 using StorageChronicle.Application;
 using StorageChronicle.Contracts;
@@ -187,10 +188,14 @@ public sealed class CorrelationMetricsAcceptanceTests
     {
         var path = Environment.GetEnvironmentVariable("STORAGE_CHRONICLE_CORRELATION_REPORT");
         if (string.IsNullOrWhiteSpace(path)) return;
-        var directory = Path.GetDirectoryName(Path.GetFullPath(path));
+        var fullPath = Path.GetFullPath(path);
+        var directory = Path.GetDirectoryName(fullPath);
         if (string.IsNullOrWhiteSpace(directory)) throw new InvalidOperationException("The correlation report path has no parent directory.");
         Directory.CreateDirectory(directory);
-        File.WriteAllText(path, JsonSerializer.Serialize(report, ReportJsonOptions));
+        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(report, ReportJsonOptions) + Environment.NewLine);
+        using var stream = new FileStream(fullPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough);
+        stream.Write(bytes);
+        stream.Flush(flushToDisk: true);
     }
 
     private sealed class FixtureCollector(IReadOnlyList<SourceEvent> values) : ISourceEventCollector

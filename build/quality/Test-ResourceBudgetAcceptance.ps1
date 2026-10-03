@@ -17,6 +17,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+. (Join-Path $PSScriptRoot 'AcceptanceContracts.ps1')
 $existingScript = Join-Path $PSScriptRoot 'Test-ResourceBudget.ps1'
 $artifactDirectory = Join-Path $root 'artifacts/quality/resources'
 
@@ -93,10 +94,11 @@ if ($ValidateOnly) {
 }
 
 New-Item -ItemType Directory -Force -Path $artifactDirectory | Out-Null
-$stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ', [Globalization.CultureInfo]::InvariantCulture)
+$stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ', [Globalization.CultureInfo]::InvariantCulture) + '-' + [guid]::NewGuid().ToString('N')
 $evidencePath = Join-Path $artifactDirectory ("acceptance-" + ($processIds -join '-') + '-' + $stamp + '.json')
 $stdoutPath = Join-Path $artifactDirectory ("acceptance-" + ($processIds -join '-') + '-' + $stamp + '.stdout.log')
 $stderrPath = Join-Path $artifactDirectory ("acceptance-" + ($processIds -join '-') + '-' + $stamp + '.stderr.log')
+if ((Test-Path -LiteralPath $evidencePath) -or (Test-Path -LiteralPath $stdoutPath) -or (Test-Path -LiteralPath $stderrPath)) { throw 'Resource acceptance output already exists; preserve it and retry with a new run ID.' }
 
 function Get-ProcessIdentity {
     param([int]$Id)
@@ -197,8 +199,8 @@ try {
     $runnerExitCode = $runner.ExitCode
     $stdout = $runner.StandardOutput.ReadToEnd()
     $stderr = $runner.StandardError.ReadToEnd()
-    Set-Content -Encoding UTF8 -LiteralPath $stdoutPath -Value $stdout
-    Set-Content -Encoding UTF8 -LiteralPath $stderrPath -Value $stderr
+    Write-NewTextArtifact -Path $stdoutPath -Text $stdout
+    Write-NewTextArtifact -Path $stderrPath -Text $stderr
 
     $finalIdentities = @($processIds | ForEach-Object { Get-ProcessIdentity -Id $_ })
     $lifecycleSamples.Add([pscustomobject]@{ RecordedUtc = [DateTimeOffset]::UtcNow; Processes = $finalIdentities })
@@ -337,7 +339,7 @@ try {
         StandardErrorPath = $stderrPath
         Failure = $failure
     }
-    $evidence | ConvertTo-Json -Depth 12 | Set-Content -Encoding UTF8 -LiteralPath $evidencePath
+    Write-NewJsonArtifact -Path $evidencePath -Value $evidence -Depth 12
     Write-Host "Resource acceptance evidence: $evidencePath"
 }
 catch {
@@ -357,7 +359,7 @@ catch {
         CompletedUtc = [DateTimeOffset]::UtcNow
         Failure = $failure
     }
-    $fallback | ConvertTo-Json -Depth 12 | Set-Content -Encoding UTF8 -LiteralPath $evidencePath
+    Write-NewJsonArtifact -Path $evidencePath -Value $fallback -Depth 12
     Write-Error "Resource acceptance supervision failed: $failure"
     exit 1
 }

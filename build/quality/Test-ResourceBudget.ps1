@@ -95,7 +95,7 @@ function Get-AgentQueueDepth {
     }
 }
 
-$stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ', [Globalization.CultureInfo]::InvariantCulture)
+$stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ', [Globalization.CultureInfo]::InvariantCulture) + '-' + [guid]::NewGuid().ToString('N')
 $output = Join-Path $artifactDirectory ("process-" + ($processIds -join '-') + '-' + $stamp + '.json')
 $monitorArguments = @(
     'run', '--project', $monitorProject, '-c', $Configuration, '--no-restore', '--',

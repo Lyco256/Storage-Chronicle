@@ -284,6 +284,8 @@ public sealed class InstallerManifestTests
         Assert.Contains("status --porcelain", finalGate, StringComparison.Ordinal);
         Assert.Contains("independentWriteMonitoring", finalGate, StringComparison.Ordinal);
         Assert.Contains("overallStatus -ne 'PASS'", finalGate, StringComparison.Ordinal);
+        Assert.Contains("Environment.RunId -notmatch", finalGate, StringComparison.Ordinal);
+        Assert.Contains("Environment.ComputerName", finalGate, StringComparison.Ordinal);
         Assert.Contains("Physical safety audit does not declare AcceptanceEligible=true", finalGate, StringComparison.Ordinal);
         Assert.Contains("Validation failed: $($_.Exception.Message)", finalGate, StringComparison.Ordinal);
         Assert.Contains("Write-NewJsonArtifact -Path $OutputPath -Value $evidence", finalGate, StringComparison.Ordinal);
@@ -313,12 +315,15 @@ public sealed class InstallerManifestTests
             "build/quality/Test-FinalAcceptance.ps1",
             "build/quality/Test-BranchIntegration.ps1",
             "build/quality/New-ResourceQuietWitness.ps1",
+            "build/quality/Test-CorrelationMetrics.ps1",
             "tools/PhysicalAcceptance/Collect-PhysicalAcceptanceResults.ps1",
             "tools/PhysicalAcceptance/Finalize-Windows10PhysicalAcceptance.ps1",
             "tools/TestEnvironment/Compose-Windows10StageA.ps1"
         };
 
         Assert.Contains("function Write-NewJsonArtifact", contracts, StringComparison.Ordinal);
+        Assert.Contains("function Write-NewTextArtifact", contracts, StringComparison.Ordinal);
+        Assert.Contains("function Write-NewArtifactBytes", contracts, StringComparison.Ordinal);
         Assert.Contains("The JSON artifact destination already exists", contracts, StringComparison.Ordinal);
         Assert.Contains("[System.IO.FileMode]::CreateNew", contracts, StringComparison.Ordinal);
         Assert.Contains("$stream.Flush($true)", contracts, StringComparison.Ordinal);
@@ -328,6 +333,29 @@ public sealed class InstallerManifestTests
             var source = File.ReadAllText(Path.Combine(root, writer.Replace('/', Path.DirectorySeparatorChar)));
             Assert.Contains("Write-NewJsonArtifact", source, StringComparison.Ordinal);
         }
+
+        var correlation = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-CorrelationMetrics.ps1"));
+        var correlationProducer = File.ReadAllText(Path.Combine(root, "tests", "StorageChronicle.CorrelationAcceptance.Tests", "CorrelationMetricsAcceptanceTests.cs"));
+        var liveValidator = File.ReadAllText(Path.Combine(root, "tools", "StorageChronicle.LiveCorrelationValidator", "Program.cs"));
+        Assert.Contains("Write-NewTextArtifact", correlation, StringComparison.Ordinal);
+        Assert.Contains("rawReportPath", correlation, StringComparison.Ordinal);
+        Assert.DoesNotContain("SC-Test-W11-VBox", correlation, StringComparison.Ordinal);
+        Assert.Contains("FileMode.CreateNew", correlationProducer, StringComparison.Ordinal);
+        Assert.Contains("FileMode.CreateNew", liveValidator, StringComparison.Ordinal);
+        Assert.DoesNotContain("SC-Test-W11-VBox", liveValidator, StringComparison.Ordinal);
+
+        var resourceAcceptance = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-ResourceBudgetAcceptance.ps1"));
+        var resourceBudget = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-ResourceBudget.ps1"));
+        var resourceMonitor = File.ReadAllText(Path.Combine(root, "tools", "StorageChronicle.ResourceMonitor", "Program.cs"));
+        Assert.Contains("Write-NewTextArtifact -Path $stdoutPath", resourceAcceptance, StringComparison.Ordinal);
+        Assert.Contains("Write-NewJsonArtifact -Path $evidencePath", resourceAcceptance, StringComparison.Ordinal);
+        Assert.Contains("Write-NewJsonArtifact -Path $evidencePath -Value $fallback", resourceAcceptance, StringComparison.Ordinal);
+        Assert.Contains("[guid]::NewGuid().ToString('N')", resourceAcceptance, StringComparison.Ordinal);
+        Assert.Contains("[guid]::NewGuid().ToString('N')", resourceBudget, StringComparison.Ordinal);
+        Assert.Contains("FileMode.CreateNew", resourceMonitor, StringComparison.Ordinal);
+        Assert.Contains("stream.Flush(flushToDisk: true)", resourceMonitor, StringComparison.Ordinal);
+        Assert.Contains("Existing resource evidence is preserved", resourceMonitor, StringComparison.Ordinal);
+        Assert.DoesNotContain("File.WriteAllText", resourceMonitor, StringComparison.Ordinal);
     }
 
     [Fact]

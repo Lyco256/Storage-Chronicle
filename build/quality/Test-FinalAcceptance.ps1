@@ -230,6 +230,8 @@ function Assert-GroupEvidence {
                 [string]$Value.Environment.TargetKind -ne 'PhysicalMachine' -or
                 [string]$Value.Environment.ExecutionMode -ne 'Local' -or
                 [string]$Value.Environment.AgentHostMode -ne 'Service' -or
+                [string]::IsNullOrWhiteSpace([string]$Value.Environment.ComputerName) -or
+                [string]$Value.Environment.RunId -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' -or
                 [bool]$Value.Environment.Diagnostic) { throw 'Agent/Explorer evidence does not prove a non-diagnostic Windows 11 physical Agent run.' }
             foreach ($path in @([string]$Value.WorkloadOraclePath, [string]$Value.Environment.AgentExecutablePath, [string]$Value.Environment.WorkloadExecutablePath, [string]$Value.Environment.WorkloadOraclePath, [string]$Value.Environment.ExplorerEvidencePath)) {
                 if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Agent/Explorer evidence references a missing real artifact: $path" }
