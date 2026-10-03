@@ -87,16 +87,15 @@ public sealed class WindowsVolumeDirectorySession : IVolumeBoundMediaFileSystem
         {
             EnsureExpectedVolume(handle, expected);
             EnsureDirectoryNotReparsePoint(handle);
-            if (TryOpenEntryHandle(handle, ProductDirectoryName, expected, out var productRootHandle))
+            try
             {
-                using (productRootHandle)
-                {
-                    if ((GetAttributes(productRootHandle) & FileAttributes.Directory) == 0)
-                        throw new IOException("The existing media storage path is not a directory.");
-                    pinnedProductRoot = OpenDirectoryCore(handle, ProductDirectoryName, FileOpen, expected, FileAddFile | FileAddSubdirectory);
-                    EnsureOwnedProductRoot(pinnedProductRoot, expected);
-                }
+                // Open once with delete sharing disabled, then validate ownership through this same
+                // handle. Reopening by name after a separate validation would permit a rename/swap
+                // between validation and pinning.
+                pinnedProductRoot = OpenDirectoryCore(handle, ProductDirectoryName, FileOpen, expected, FileAddFile | FileAddSubdirectory);
+                EnsureOwnedProductRoot(pinnedProductRoot, expected);
             }
+            catch (FileNotFoundException) { }
             return new WindowsVolumeDirectorySession(expected, handle, productRootHandle: pinnedProductRoot);
         }
         catch

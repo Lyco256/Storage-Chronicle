@@ -229,6 +229,44 @@ public sealed class VolumeAndMediaTests
     }
 
     [Fact]
+    public void PinnedProductDirectoryCannotBeRenamedOrDeletedWhileSessionIsOpen()
+    {
+        var fixture = CreateOwnedFixture("storage-chronicle-pinned-media-root-", out var runId);
+        var productRoot = Path.Combine(fixture.FullName, ".StorageChronicle");
+        var renamedRoot = Path.Combine(fixture.FullName, ".StorageChronicle-renamed");
+        try
+        {
+            var mountPoint = new char[1024];
+            Assert.True(GetVolumePathName(fixture.FullName, mountPoint, (uint)mountPoint.Length));
+            var volumeGuid = new char[1024];
+            var mount = new string(mountPoint).TrimEnd('\0');
+            Assert.True(GetVolumeNameForVolumeMountPoint(mount, volumeGuid, (uint)volumeGuid.Length));
+            using (var session = WindowsVolumeDirectorySession.OpenAtExistingDirectory(
+                       new string(volumeGuid).TrimEnd('\0'), mount, fixture.FullName))
+            {
+                Assert.True(session.TryCreateDirectory(".StorageChronicle"));
+                using (var marker = session.CreateNew(".StorageChronicle\\.storage-chronicle-owner.json"))
+                {
+                    marker.Write("{\"schema\":\"StorageChronicle.MediaOwnership.v1\",\"writerId\":null}"u8);
+                    marker.Flush();
+                }
+
+                Assert.Throws<IOException>(() => Directory.Move(productRoot, renamedRoot));
+
+                // Empty the run-owned fixture directory so the delete attempt tests the pinned
+                // directory handle's delete-sharing mode, rather than failing because it is non-empty.
+                File.Delete(Path.Combine(productRoot, ".storage-chronicle-owner.json"));
+                Assert.Throws<IOException>(() => Directory.Delete(productRoot));
+                Assert.True(Directory.Exists(productRoot));
+            }
+        }
+        finally
+        {
+            DeleteOwnedFixture(fixture.FullName, "storage-chronicle-pinned-media-root-", runId);
+        }
+    }
+
+    [Fact]
     public async Task BoundedNotificationOverflowProducesAnExplicitContinuityGap()
     {
         var native = new FakeDeviceNative();

@@ -72,7 +72,7 @@
 | V-147 | 50 MiB and 0.5% background gate | `Test-ResourceBudget.ps1`, `Test-ResourceBudgetAcceptance.ps1`, `New-ResourceQuietWitness.ps1`, and `docs/release/performance-baseline.md` | wrapper enforces a 600-second dual-process run, fixed thresholds, lifecycle identity, queue gaps, and a schema-validated independent final-five-minute quiet witness; the formal run remains pending |
 | V-148 | xUnit, Headless, ArchUnit, Benchmark | solution test projects, quality scripts, BenchmarkDotNet harness | frameworks/harness present; current bounded-batch BenchmarkDotNet matrix passed six non-MFT suites and 12/12 methods; configured MFT acceptance remains pending |
 | V-149 | Mirrored source documentation | `Test-DocMirror.ps1` | verified |
-| V-150 | main/devenv/feat and worktree separation | `TOP_CODEX.md`, `AGENTS.md`, `git worktree list`, handoffs | policy verified; Windows 10 preflight feature is clean and merged to local `devenv` (`b6343ba`); local `devenv` remains ahead of its remote and all `main` promotion gates remain pending |
+| V-150 | main/devenv/feat and worktree separation | `TOP_CODEX.md`, `AGENTS.md`, `git worktree list`, handoffs | policy verified; current top-agent safety hardening is local on `devenv` and not yet pushed; all `main` promotion gates remain pending |
 | V-151 | Staged top-agent foundation and delegated waves | branch/worktree history and handoff documents | delegation evidence exists; final top-agent merge sequence pending |
 | V-152 | Ownership matrix and shared-contract synchronization | `Requirements/06_AGENT_OWNERSHIP_MATRIX.md`, handoffs, architecture tests | verified |
 | V-153 | Normal installer, one product, retained data | WiX manifest test and successful MSI build | MSI build verified; physical install matrix pending |
@@ -82,11 +82,11 @@
 
 | ID | Technical requirement | Verification evidence | Status |
 |---|---|---|---|
-| V-155 | C# language version uses the .NET 10 SDK default | `Directory.Build.props`, Release build | fixed in the current feature branch; `LangVersion=preview` was removed |
+| V-155 | C# language version uses the .NET 10 SDK default | `Directory.Build.props`, Release build | fixed in integrated `devenv`; `LangVersion=preview` was removed |
 | V-156 | Native AOT compatibility publication configuration exists for Agent and Session Agent | `build/Test-AotCompatibility.ps1`, conditional common properties | configuration present; publication is opt-in and not an MVP acceptance gate |
 | V-157 | Unsigned development and signed release procedures are separate without SmartScreen weakening | `docs/installer/signing-procedure.md` | documented; actual release signing remains an external release operation |
 | V-158 | Scoped backup privilege and OS low-priority reconciliation I/O | `WindowsReconciliationInfrastructure`, `ConfirmedReconciliationRunner`, confirmed runner tests, and requirement 24 artifact gate | implemented with a dedicated reconciliation task, synchronous candidate-only thread scope, explicit privilege/ACL fallback and low-priority/I/O-hint/elapsed telemetry, and no event dropping; real privileged matrix evidence remains pending |
-| V-159 | Agent diagnostic mode and Session Agent Clipboard-only IPC role | Agent entry point, named-pipe server identity, `NamedPipeServerTests`, and requirement 17 | verified in current feature branch; diagnostic mode is explicit, role/session hello is source-generated and validated, Session Agent is ClipboardCandidate-only, and an unpublished Session Agent process is rejected |
+| V-159 | Agent diagnostic mode and Session Agent Clipboard-only IPC role | Agent entry point, named-pipe server identity, `NamedPipeServerTests`, and requirement 17 | verified in integrated `devenv`; diagnostic mode is explicit, role/session hello is source-generated and validated, Session Agent is ClipboardCandidate-only, and an unpublished Session Agent process is rejected |
 
 ## Explicit measured or environment-bound items
 
