@@ -33,3 +33,40 @@ Architecture tests, headless UI tests, golden and end-to-end fixtures, CodeCover
 ## Shared-contract requests
 
 None. All current changes use existing platform-neutral contracts or top-agent-owned integration seams.
+
+## Output-safety remediation (2026-10-03, `feat/integration-quality-r37`)
+
+### Owned changes
+
+- `tools/StorageChronicle.TestDataGenerator/Program.cs`: `--output` now rejects empty paths, UNC/device paths, drive-relative and alternate-data-stream paths, `.`/`..` segments, missing parent directories, and reparse-point ancestors. It does not create parent directories. The final file is opened with `FileMode.CreateNew`, `FileAccess.Write`, and `FileShare.None`; an existing target is rejected without replacement. Output-path and filesystem errors return exit code 1.
+- `tests/StorageChronicle.Architecture.Tests/`: added a project reference and CLI tests covering successful new-file creation, preservation of an existing sentinel, missing-parent refusal, traversal refusal, and reparse-point-parent refusal (link test returns without exercising the assertion if the host cannot create a symlink).
+- Matching tool/test documentation mirrors were updated/added.
+
+`CreateNew` prevents replacement of an existing final target. It does **not** prove that the caller-selected directory is an approved, isolated evidence root, and checking parent components cannot eliminate every concurrent parent-path race. The CLI has no evidence-root authorization contract; callers remain responsible for selecting an approved location. Physical/product/privileged workflows were not run.
+
+### Top-agent handoff request — `RealIoOracleValidator`
+
+Ownership boundary: `tools/StorageChronicle.RealIoOracleValidator/**` and its test project are top-agent-owned/unassigned for this task. No changes were made there.
+
+The static audit reported that `tools/StorageChronicle.RealIoOracleValidator/Program.cs` creates the caller-supplied output's parent directory and writes via `WriteAllTextAsync` (previously observed around lines 338–343), so an existing caller-selected file can be overwritten. Please remediate within the top-owned paths:
+
+1. Accept only an evidence output path that is proven to be a new direct child of a run-specific evidence root created/authorized by the harness; establish the root/run identity and reject traversal, UNC/device paths, reparse points, and volume/root escape before writing.
+2. Require the output target not to exist and use exclusive create-new semantics; never create arbitrary parent directories from the untrusted output argument and never replace an existing target. Preserve partial evidence on write failure rather than deleting an ambiguous target.
+3. Add focused tests for successful new evidence, existing-target preservation, invalid/missing root, traversal/root escape, reparse parents, I/O failure, and recovery/cancellation where applicable. Do not treat `CreateNew` by itself as proof of root isolation.
+
+### Verification on this branch
+
+- `dotnet restore StorageChronicle.Architecture.Tests/StorageChronicle.Architecture.Tests.csproj --nologo`: passed.
+- Initial focused `dotnet test ... -c Debug --no-restore`: rejected by repo policy because `global.json` requires Microsoft.Testing.Platform and this command selected VSTest. The matching focused `dotnet build` initially needed restore assets; after restore, the focused build succeeded with 0 warnings/errors.
+- Before building the full Debug solution, three pre-existing architecture tests could not load dependency assemblies in this fresh worktree; after the full Debug build, the Architecture test executable passed 12/12, including all five output-safety scenarios.
+- `dotnet restore StorageChronicle.slnx --nologo`: passed.
+- `dotnet build StorageChronicle.slnx -c Debug --no-restore --nologo`: passed, 0 warnings, 0 errors.
+- `tests/StorageChronicle.Architecture.Tests/bin/Debug/net10.0/StorageChronicle.Architecture.Tests.exe --progress off --minimum-expected-tests 1 --filter-not-trait 'Category=WindowsPrivileged'`: passed, 12/12.
+- `dotnet run --project tools/StorageChronicle.DocMirrorValidator --no-restore -- .`: passed.
+- `./build/Test-Fast.ps1 -NoRestore`: passed all 24 discovered non-privileged test projects; all reported 0 failures. The test suite includes safe unit/contract tests for the separately owned Oracle Validator, but no source in that area was edited. No physical/product/privileged workflow was run.
+
+### Limitations
+
+- This handoff does not resolve the Oracle Validator overwrite finding; the top-agent request above remains open.
+- This change does not establish or authorize an evidence root. It only makes TestDataGenerator output new-only and rejects unsafe path forms observed before the create operation.
+- Changes are committed on this feature branch. No merge, rebase, or push has been performed.

@@ -17,17 +17,26 @@ public static class Program
             return 2;
         }
 
-        var records = Enumerable.Range(1, count).Select(sequence => new GeneratedRecord(sequence, sequence % 7 == 0 ? "MetadataChanged" : "DataWrite", $"file-{(sequence + seed) % Math.Max(1, count):D8}", sequence % 13 == 0 ? "ExistenceOnly" : "Exact"));
-        if (string.Equals(format, "golden", StringComparison.OrdinalIgnoreCase))
+        try
         {
-            var golden = new GoldenDocument("generated-v1", records.ToArray(), new GoldenExpected(count, count));
-            Write(JsonSerializer.Serialize(golden, JsonOptions), outputPath);
+            var safeOutputPath = outputPath is null ? null : ValidateNewOutputPath(outputPath);
+            var records = Enumerable.Range(1, count).Select(sequence => new GeneratedRecord(sequence, sequence % 7 == 0 ? "MetadataChanged" : "DataWrite", $"file-{(sequence + seed) % Math.Max(1, count):D8}", sequence % 13 == 0 ? "ExistenceOnly" : "Exact"));
+            if (string.Equals(format, "golden", StringComparison.OrdinalIgnoreCase))
+            {
+                var golden = new GoldenDocument("generated-v1", records.ToArray(), new GoldenExpected(count, count));
+                Write(JsonSerializer.Serialize(golden, JsonOptions), safeOutputPath);
+            }
+            else
+            {
+                Write(string.Join(Environment.NewLine, records.Select(record => JsonSerializer.Serialize(record, JsonOptions))), safeOutputPath);
+            }
+            return 0;
         }
-        else
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
-            Write(string.Join(Environment.NewLine, records.Select(record => JsonSerializer.Serialize(record, JsonOptions))), outputPath);
+            Console.Error.WriteLine($"output rejected: {exception.Message}");
+            return 1;
         }
-        return 0;
     }
 
     private static bool TryParse(string[] args, out int count, out string? outputPath, out string format, out int seed)
@@ -50,10 +59,48 @@ public static class Program
         return countProvided;
     }
 
+    private static string ValidateNewOutputPath(string outputPath)
+    {
+        if (string.IsNullOrWhiteSpace(outputPath)) throw new ArgumentException("The output path must not be empty.", nameof(outputPath));
+        if (outputPath.StartsWith("\\\\", StringComparison.Ordinal) || outputPath.StartsWith("//", StringComparison.Ordinal))
+            throw new ArgumentException("Network and device paths are not accepted.", nameof(outputPath));
+        var colonIndex = outputPath.IndexOf(':');
+        if (colonIndex >= 0 && !(colonIndex == 1 && char.IsAsciiLetter(outputPath[0]) && outputPath.Length > 2 && outputPath[2] is '\\' or '/'))
+            throw new ArgumentException("Drive-relative paths and alternate data streams are not accepted.", nameof(outputPath));
+
+        var pathSegments = outputPath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
+        if (pathSegments.Any(segment => segment is "." or ".."))
+            throw new ArgumentException("Relative traversal path segments are not accepted.", nameof(outputPath));
+
+        var fullPath = Path.GetFullPath(outputPath);
+        var parentPath = Path.GetDirectoryName(fullPath);
+        var fileName = Path.GetFileName(fullPath);
+        if (string.IsNullOrEmpty(parentPath) || string.IsNullOrEmpty(fileName))
+            throw new ArgumentException("The output must name a file inside an existing parent directory.", nameof(outputPath));
+
+        var current = new DirectoryInfo(parentPath);
+        if (!current.Exists) throw new DirectoryNotFoundException("The output parent directory must already exist.");
+        while (current is not null)
+        {
+            if ((current.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Output paths through symbolic links, junctions, or other reparse points are not accepted.");
+            current = current.Parent;
+        }
+
+        return fullPath;
+    }
+
     private static void Write(string value, string? outputPath)
     {
-        if (outputPath is null) Console.WriteLine(value);
-        else File.WriteAllText(outputPath, value + Environment.NewLine);
+        if (outputPath is null)
+        {
+            Console.WriteLine(value);
+            return;
+        }
+
+        using var stream = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        using var writer = new StreamWriter(stream);
+        writer.WriteLine(value);
     }
 
     private sealed record GeneratedRecord(int Sequence, string Operation, string Name, string Quality);
