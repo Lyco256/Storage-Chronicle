@@ -599,6 +599,11 @@ public sealed class ConfirmedReconciliationRunnerTests
             true,
             true);
 
+        public NativeFileMetadataRecord ReadMetadata(SafeFileHandle handle, string path, string? parentPath = null) => ReadMetadata(path, parentPath);
+        public NativeFileMetadataRecord ReadMetadataRelative(SafeFileHandle handle, string path, SafeFileHandle? parentDirectoryHandle) => ReadMetadata(path);
+        public IEnumerable<NativeDirectoryEntry> EnumerateDirectory(SafeFileHandle directoryHandle) => Array.Empty<NativeDirectoryEntry>();
+        public SafeFileHandle OpenChild(SafeFileHandle parentDirectoryHandle, string childName, FileAttributes enumeratedAttributes) => new(new IntPtr(-1), ownsHandle: false);
+
         public SafeFileHandle OpenMetadata(string path, bool directory) => new(new IntPtr(-1), ownsHandle: false);
 
         public SafeFileHandle OpenDirectory(string path) => new(new IntPtr(-1), ownsHandle: false);
@@ -606,6 +611,9 @@ public sealed class ConfirmedReconciliationRunnerTests
 
     private sealed class FakeMetadataNative : IWindowsFileMetadataNative
     {
+        private readonly Dictionary<nint, string> handlePaths = [];
+        private int nextHandle = 2000;
+
         public NativeFileMetadataRecord ReadMetadata(string path, string? parentPath = null)
         {
             var attributes = File.GetAttributes(path);
@@ -614,8 +622,42 @@ public sealed class ConfirmedReconciliationRunnerTests
             return new NativeFileMetadataRecord(FileId.Create("fake:" + Path.GetFullPath(path)), string.IsNullOrWhiteSpace(parentPath) ? null : FileId.Create("fake:" + Path.GetFullPath(parentPath)), info.Name, kind, kind == FileKind.Directory ? null : info.Length, null, info.CreationTimeUtc, info.LastAccessTimeUtc, info.LastWriteTimeUtc, info.LastWriteTimeUtc, attributes, null, true, false);
         }
 
+        public NativeFileMetadataRecord ReadMetadata(SafeFileHandle handle, string path, string? parentPath = null) => ReadMetadata(path, parentPath);
+        public NativeFileMetadataRecord ReadMetadataRelative(SafeFileHandle handle, string path, SafeFileHandle? parentDirectoryHandle)
+        {
+            var parentPath = parentDirectoryHandle is null ? null : handlePaths[parentDirectoryHandle.DangerousGetHandle()];
+            return ReadMetadata(path, parentPath);
+        }
+
+        public IEnumerable<NativeDirectoryEntry> EnumerateDirectory(SafeFileHandle directoryHandle)
+        {
+            var path = handlePaths[directoryHandle.DangerousGetHandle()];
+            return Directory.Exists(path)
+                ? Directory.EnumerateFileSystemEntries(path).Select(entry => new NativeDirectoryEntry(Path.GetFileName(entry), File.GetAttributes(entry))).ToArray()
+                : Array.Empty<NativeDirectoryEntry>();
+        }
+
+        public SafeFileHandle OpenChild(SafeFileHandle parentDirectoryHandle, string childName, FileAttributes enumeratedAttributes)
+        {
+            var parentPath = handlePaths[parentDirectoryHandle.DangerousGetHandle()];
+            var path = Path.Combine(parentPath, childName);
+            if (!File.Exists(path) && !Directory.Exists(path)) throw new FileNotFoundException(path);
+            return CreateHandle(path);
+        }
+
         public SafeFileHandle OpenMetadata(string path, bool directory) => new(new IntPtr(-1), ownsHandle: false);
 
-        public SafeFileHandle OpenDirectory(string path) => new(new IntPtr(-1), ownsHandle: false);
+        public SafeFileHandle OpenDirectory(string path)
+        {
+            if (!Directory.Exists(path)) throw new DirectoryNotFoundException(path);
+            return CreateHandle(path);
+        }
+
+        private SafeFileHandle CreateHandle(string path)
+        {
+            var handle = new SafeFileHandle(new IntPtr(Interlocked.Increment(ref nextHandle)), ownsHandle: false);
+            handlePaths.Add(handle.DangerousGetHandle(), path);
+            return handle;
+        }
     }
 }

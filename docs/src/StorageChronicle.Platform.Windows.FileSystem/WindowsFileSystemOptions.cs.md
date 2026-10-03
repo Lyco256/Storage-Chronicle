@@ -1,6 +1,6 @@
 # WindowsFileSystemOptions
 
-Defines bounded snapshot batches, initial-scan notification capacity, native notification buffer size, exclusion roots, and filesystem delegation via `SkipFileSystems`. Validation prevents unbounded memory or invalid ReadDirectoryChangesW buffers. It has no platform I/O dependency. Tests cover policy and bounded-buffer behavior.
+Defines the maximum snapshot batch, initial-scan notification retention, the `PipelineChannelCapacity` shared by bounded source/native/live handoffs, native notification buffer size, exclusion roots, and filesystem delegation via `SkipFileSystems`. Validation rejects out-of-range capacities and invalid ReadDirectoryChangesW buffers. It has no platform I/O dependency. Tests cover policy, ordering under capacity-one backpressure, and bounded-buffer behavior.
 
 ## Role
 

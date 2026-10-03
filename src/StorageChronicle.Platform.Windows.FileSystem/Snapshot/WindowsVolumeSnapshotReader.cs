@@ -1,13 +1,15 @@
 using System.ComponentModel;
+using Microsoft.Win32.SafeHandles;
 using StorageChronicle.Contracts;
 using StorageChronicle.Domain.Contracts;
 using StorageChronicle.Platform.Abstractions;
 using StorageChronicle.Platform.Windows.FileSystem.Interop;
 using StorageChronicle.Platform.Windows.FileSystem.Policy;
+using StorageChronicle.Platform.Windows.FileSystem.Volumes;
 
 namespace StorageChronicle.Platform.Windows.FileSystem.Snapshot;
 
-/// <summary>Enumerates accessible metadata in directory batches and never traverses a reparse target.</summary>
+/// <summary>Enumerates accessible metadata in bounded batches through a pinned, handle-relative directory tree.</summary>
 public sealed class WindowsVolumeSnapshotReader : IVolumeSnapshotReader
 {
     private readonly IWindowsFileMetadataNative native;
@@ -21,7 +23,7 @@ public sealed class WindowsVolumeSnapshotReader : IVolumeSnapshotReader
     /// <summary>Initializes a snapshot reader.</summary>
     public WindowsVolumeSnapshotReader(IWindowsFileMetadataNative native, WindowsExclusionPolicy? exclusionPolicy = null, WindowsFileSystemOptions? options = null)
     {
-        this.native = native;
+        this.native = native ?? throw new ArgumentNullException(nameof(native));
         this.exclusionPolicy = exclusionPolicy ?? new WindowsExclusionPolicy(options);
         this.options = (options ?? new WindowsFileSystemOptions()).Validate();
     }
@@ -30,167 +32,273 @@ public sealed class WindowsVolumeSnapshotReader : IVolumeSnapshotReader
     public async IAsyncEnumerable<SourceEvent> ReadInitialSnapshotAsync(VolumeDescriptor volume, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(volume);
+        await Task.Yield();
+        cancellationToken.ThrowIfCancellationRequested();
         var sequence = 0L;
         if (!volume.IsDirectoryReadable)
         {
-            yield return WindowsSourceEventFactory.Gap(volume.Id, "Volume cannot be enumerated as a directory", sequence++, volume.FileSystem);
+            yield return WindowsSourceEventFactory.Gap(volume.Id, "Volume cannot be enumerated as a directory", sequence, volume.FileSystem);
             yield break;
         }
 
-        var mountRoot = volume.MountPoints.Count == 0 ? volume.Id.Value + Path.DirectorySeparatorChar : volume.MountPoints[0];
-        var root = exclusionPolicy.ResolveMonitoringRoot(mountRoot);
-        if (root is null) yield break;
-        var pendingDirectories = new Stack<(string Path, FileId? ParentFileId)>();
-        pendingDirectories.Push((root, null));
-        while (pendingDirectories.Count > 0)
+        var requestedRoot = volume.MountPoints.Count == 0 ? volume.Id.Value + Path.DirectorySeparatorChar : volume.MountPoints[0];
+        var selectedRoot = exclusionPolicy.ResolveMonitoringRoot(requestedRoot);
+        if (selectedRoot is null) yield break;
+        var normalizedRequestedRoot = NormalizePath(requestedRoot);
+        var normalizedSelectedRoot = NormalizePath(selectedRoot);
+        var volumeRootPath = WindowsVolumePath.GetRootPath(volume);
+        var rootPath = normalizedRequestedRoot;
+        var rootComponents = Array.Empty<string>();
+        if (IsSameOrDescendant(normalizedSelectedRoot, normalizedRequestedRoot))
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var (directoryPath, parentFileId) = pendingDirectories.Pop();
-            if (exclusionPolicy.ShouldExclude(directoryPath)) continue;
-
-            await foreach (var batch in ReadDirectoryBatches(volume, directoryPath, parentFileId, sequence, pendingDirectories, cancellationToken).ConfigureAwait(false))
+            var relativeRoot = Path.GetRelativePath(normalizedRequestedRoot, normalizedSelectedRoot);
+            if (!string.Equals(relativeRoot, ".", StringComparison.Ordinal))
             {
-                sequence = batch.NextSequence;
-                foreach (var sourceEvent in batch.Events) yield return sourceEvent;
+                rootComponents = relativeRoot.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
+                rootPath = normalizedSelectedRoot;
             }
         }
-    }
-
-    private async IAsyncEnumerable<SnapshotDirectoryBatch> ReadDirectoryBatches(
-        VolumeDescriptor volume,
-        string directoryPath,
-        FileId? parentFileId,
-        long sequence,
-        Stack<(string Path, FileId? ParentFileId)> pendingDirectories,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        var entries = new List<SourceEvent>(options.SnapshotBatchSize);
-        var directoryEnumerator = TryCreateDirectoryEnumerator(directoryPath, out var enumerationError);
-        var directory = ReadEntry(volume, directoryPath, parentFileId, isRoot: true);
-        entries.Add(WindowsSourceEventFactory.Snapshot(volume, directory, sequence++));
-        if (entries.Count == options.SnapshotBatchSize)
+        else if (!IsSameOrDescendant(normalizedRequestedRoot, normalizedSelectedRoot))
         {
-            yield return new SnapshotDirectoryBatch(entries, sequence);
-            entries = new List<SourceEvent>(options.SnapshotBatchSize);
+            yield break;
         }
+        if (exclusionPolicy.ShouldExclude(rootPath)) yield break;
 
-        if (directoryEnumerator is not null)
+        var outputBatch = new List<SourceEvent>(options.SnapshotBatchSize);
+        var directories = new Stack<DirectoryFrame>();
+        SafeFileHandle? rootHandle = null;
+        IEnumerator<NativeDirectoryEntry>? rootEntries = null;
+        try
         {
-            using (directoryEnumerator)
+            Exception? rootFailure = null;
+            NativeSnapshotEntry? rootEntry = null;
+            try
             {
-                while (enumerationError is null && TryMoveNext(directoryEnumerator, out var entryPath, out enumerationError))
+                rootHandle = native.OpenDirectory(volumeRootPath);
+                var openedPath = normalizedRequestedRoot;
+                foreach (var component in rootComponents)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    if (entryPath is null || exclusionPolicy.ShouldExclude(entryPath)) continue;
-                    var entry = ReadEntry(volume, entryPath, directory.FileId, isRoot: false);
-                    entries.Add(WindowsSourceEventFactory.Snapshot(volume, entry, sequence++));
-                    if (entry.Kind == FileKind.Directory && !WindowsExclusionPolicy.IsReparsePoint(entry.Attributes))
+                    var nextHandle = native.OpenChild(rootHandle, component, FileAttributes.Directory);
+                    var openedComponentPath = Path.Combine(openedPath, component);
+                    var componentEntry = native.ReadMetadataRelative(nextHandle, openedComponentPath, rootHandle);
+                    if (componentEntry.Kind != FileKind.Directory || WindowsExclusionPolicy.IsReparsePoint(componentEntry.Attributes))
                     {
-                        pendingDirectories.Push((entryPath, entry.FileId));
+                        nextHandle.Dispose();
+                        throw new IOException($"Configured snapshot root contains a reparse point or non-directory component: {component}");
                     }
 
-                    if (entries.Count == options.SnapshotBatchSize)
+                    rootHandle.Dispose();
+                    rootHandle = nextHandle;
+                    openedPath = openedComponentPath;
+                }
+
+                rootEntry = ReadEntry(volume, rootHandle, rootPath, null, null, FileKind.Directory);
+                rootEntries = native.EnumerateDirectory(rootHandle).GetEnumerator();
+            }
+            catch (Exception exception) when (IsAcquisitionFailure(exception))
+            {
+                rootFailure = exception;
+            }
+
+            if (rootFailure is not null || rootHandle is null || rootEntry is null || rootEntries is null)
+            {
+                rootHandle?.Dispose();
+                rootHandle = null;
+                rootEntries?.Dispose();
+                rootEntries = null;
+                yield return WindowsSourceEventFactory.Gap(volume.Id,
+                    $"Volume root could not be safely opened or enumerated: {rootFailure?.Message ?? "native root acquisition returned no result"}", sequence++, volume.FileSystem);
+                yield break;
+            }
+
+            outputBatch.Add(WindowsSourceEventFactory.Snapshot(volume, rootEntry, sequence++));
+            if (outputBatch.Count >= options.SnapshotBatchSize)
+            {
+                foreach (var sourceEvent in outputBatch) yield return sourceEvent;
+                outputBatch.Clear();
+            }
+
+            directories.Push(new DirectoryFrame(rootHandle, rootPath, rootEntry.FileId, rootEntries));
+            rootHandle = null;
+            rootEntries = null;
+
+            while (directories.Count > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var current = directories.Peek();
+                NativeDirectoryEntry? child = null;
+                Exception? enumerationFailure = null;
+                var hasNext = false;
+                try
+                {
+                    hasNext = current.Entries.MoveNext();
+                    if (hasNext) child = current.Entries.Current;
+                }
+                catch (Exception exception) when (IsAcquisitionFailure(exception))
+                {
+                    enumerationFailure = exception;
+                }
+
+                if (enumerationFailure is not null)
+                {
+                    directories.Pop().Dispose();
+                    outputBatch.Add(WindowsSourceEventFactory.Gap(volume.Id,
+                        $"Directory enumeration failed for {current.Path}: {enumerationFailure.Message}", sequence++, volume.FileSystem));
+                    if (outputBatch.Count >= options.SnapshotBatchSize)
                     {
-                        yield return new SnapshotDirectoryBatch(entries, sequence);
-                        entries = new List<SourceEvent>(options.SnapshotBatchSize);
+                        foreach (var sourceEvent in outputBatch) yield return sourceEvent;
+                        outputBatch.Clear();
                     }
+                    continue;
+                }
+
+                if (!hasNext)
+                {
+                    directories.Pop().Dispose();
+                    continue;
+                }
+
+                if (child is null || child.Name is "." or "..") continue;
+                var childPath = Path.Combine(current.Path, child.Name);
+                if (exclusionPolicy.ShouldExclude(childPath)) continue;
+
+                SafeFileHandle? childHandle = null;
+                try
+                {
+                    Exception? childFailure = null;
+                    NativeSnapshotEntry childEntry;
+                    try
+                    {
+                        childHandle = native.OpenChild(current.Handle, child.Name, child.Attributes);
+                        childEntry = ReadEntry(volume, childHandle, childPath, current.FileId, current.Handle, GetFallbackKind(child.Attributes));
+                    }
+                    catch (Exception exception) when (IsAcquisitionFailure(exception))
+                    {
+                        childFailure = exception;
+                        childEntry = MinimalEntry(volume, childPath, current.FileId, GetFallbackKind(child.Attributes));
+                    }
+
+                    outputBatch.Add(WindowsSourceEventFactory.Snapshot(volume, childEntry, sequence++));
+                    if (outputBatch.Count >= options.SnapshotBatchSize)
+                    {
+                        foreach (var sourceEvent in outputBatch) yield return sourceEvent;
+                        outputBatch.Clear();
+                    }
+
+                    if (childFailure is not null && childEntry.Kind == FileKind.Directory && !WindowsExclusionPolicy.IsReparsePoint(childEntry.Attributes))
+                    {
+                        outputBatch.Add(WindowsSourceEventFactory.Gap(volume.Id,
+                            $"Directory could not be safely opened through its parent handle: {childPath}: {childFailure.Message}", sequence++, volume.FileSystem));
+                        if (outputBatch.Count >= options.SnapshotBatchSize)
+                        {
+                            foreach (var sourceEvent in outputBatch) yield return sourceEvent;
+                            outputBatch.Clear();
+                        }
+                    }
+
+                    if (childHandle is not null && childEntry.Kind == FileKind.Directory && !WindowsExclusionPolicy.IsReparsePoint(childEntry.Attributes))
+                    {
+                        IEnumerator<NativeDirectoryEntry>? childEntries = null;
+                        Exception? childEnumerationFailure = null;
+                        try { childEntries = native.EnumerateDirectory(childHandle).GetEnumerator(); }
+                        catch (Exception exception) when (IsAcquisitionFailure(exception)) { childEnumerationFailure = exception; }
+                        if (childEntries is not null)
+                        {
+                            directories.Push(new DirectoryFrame(childHandle, childPath, childEntry.FileId, childEntries));
+                            childHandle = null;
+                        }
+                        else
+                        {
+                            outputBatch.Add(WindowsSourceEventFactory.Gap(volume.Id,
+                                $"Directory could not be enumerated through its pinned handle: {childPath}: {childEnumerationFailure?.Message ?? "native enumeration returned no result"}", sequence++, volume.FileSystem));
+                            if (outputBatch.Count >= options.SnapshotBatchSize)
+                            {
+                                foreach (var sourceEvent in outputBatch) yield return sourceEvent;
+                                outputBatch.Clear();
+                            }
+                        }
+                    }
+                }
+                finally
+                {
+                    childHandle?.Dispose();
                 }
             }
         }
-
-        if (enumerationError is not null)
+        finally
         {
-            entries.Add(WindowsSourceEventFactory.Gap(volume.Id, enumerationError, sequence++, volume.FileSystem));
+            rootHandle?.Dispose();
+            rootEntries?.Dispose();
+            while (directories.Count > 0) directories.Pop().Dispose();
         }
 
-        if (entries.Count > 0) yield return new SnapshotDirectoryBatch(entries, sequence);
+        foreach (var sourceEvent in outputBatch) yield return sourceEvent;
     }
 
-    private static IEnumerator<string>? TryCreateDirectoryEnumerator(string directoryPath, out string? error)
+    private NativeSnapshotEntry ReadEntry(VolumeDescriptor volume, SafeFileHandle handle, string path, FileId? parentFileId, SafeFileHandle? parentDirectoryHandle, FileKind fallbackKind)
     {
         try
         {
-            error = null;
-            return Directory.EnumerateFileSystemEntries(directoryPath, "*", new EnumerationOptions { RecurseSubdirectories = false, IgnoreInaccessible = false, ReturnSpecialDirectories = false, AttributesToSkip = 0 }).GetEnumerator();
+            var nativeEntry = native.ReadMetadataRelative(handle, path, parentDirectoryHandle);
+            return new NativeSnapshotEntry(nativeEntry.FileId, nativeEntry.ParentFileId ?? parentFileId, nativeEntry.Name, nativeEntry.Kind,
+                nativeEntry.LogicalSize, nativeEntry.AllocatedSize, nativeEntry.CreatedUtc, nativeEntry.LastAccessUtc, nativeEntry.LastWriteUtc,
+                nativeEntry.FileSystemChangeUtc, nativeEntry.Attributes, nativeEntry.ReparsePointKind,
+                nativeEntry.IsAccessDenied ? EventQuality.ExistenceOnly : EventQuality.Exact, nativeEntry.Exists);
         }
-        catch (UnauthorizedAccessException)
-        {
-            error = $"Access denied while enumerating {directoryPath}";
-        }
-        catch (DirectoryNotFoundException)
-        {
-            error = $"Directory disappeared while enumerating {directoryPath}";
-        }
-        catch (IOException)
-        {
-            error = $"I/O failure while enumerating {directoryPath}";
-        }
-
-        return null;
-    }
-
-    private static bool TryMoveNext(IEnumerator<string> directoryEnumerator, out string? path, out string? error)
-    {
-        try
-        {
-            if (!directoryEnumerator.MoveNext())
-            {
-                path = null;
-                error = null;
-                return false;
-            }
-
-            path = directoryEnumerator.Current;
-            error = null;
-            return true;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            path = null;
-            error = "Access denied while enumerating a directory.";
-        }
-        catch (DirectoryNotFoundException)
-        {
-            path = null;
-            error = "A directory disappeared while enumerating a directory.";
-        }
-        catch (IOException)
-        {
-            path = null;
-            error = "I/O failure while enumerating a directory.";
-        }
-
-        return false;
-    }
-
-    private NativeSnapshotEntry ReadEntry(VolumeDescriptor volume, string path, FileId? parentFileId, bool isRoot)
-    {
-        try
-        {
-            var nativeEntry = native.ReadMetadata(path, isRoot ? null : Directory.GetParent(path)?.FullName);
-            return new NativeSnapshotEntry(nativeEntry.FileId, nativeEntry.ParentFileId ?? parentFileId, nativeEntry.Name, nativeEntry.Kind, nativeEntry.LogicalSize, nativeEntry.AllocatedSize, nativeEntry.CreatedUtc, nativeEntry.LastAccessUtc, nativeEntry.LastWriteUtc, nativeEntry.FileSystemChangeUtc, nativeEntry.Attributes, nativeEntry.ReparsePointKind, nativeEntry.IsAccessDenied ? EventQuality.ExistenceOnly : EventQuality.Exact, nativeEntry.Exists);
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return MinimalEntry(volume, path, parentFileId, FileKind.Unknown);
-        }
-        catch (Win32Exception)
-        {
-            return MinimalEntry(volume, path, parentFileId, FileKind.Unknown);
-        }
-        catch (IOException)
-        {
-            return MinimalEntry(volume, path, parentFileId, FileKind.Unknown);
-        }
+        catch (UnauthorizedAccessException) { return MinimalEntry(volume, path, parentFileId, fallbackKind); }
+        catch (Win32Exception) { return MinimalEntry(volume, path, parentFileId, fallbackKind); }
+        catch (IOException) { return MinimalEntry(volume, path, parentFileId, fallbackKind); }
     }
 
     private static NativeSnapshotEntry MinimalEntry(VolumeDescriptor volume, string path, FileId? parentFileId, FileKind kind)
     {
         var name = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         if (string.IsNullOrEmpty(name)) name = volume.Id.Value;
-        return new NativeSnapshotEntry(FileId.Create("path:" + path), parentFileId, name, kind, null, null, null, null, null, null, 0, null, EventQuality.ExistenceOnly, true);
+        var attributes = kind switch
+        {
+            FileKind.Directory => FileAttributes.Directory,
+            FileKind.Junction or FileKind.SymbolicLink or FileKind.ReparsePoint => FileAttributes.ReparsePoint,
+            _ => FileAttributes.Normal
+        };
+        return new NativeSnapshotEntry(FileId.Create("path:" + path), parentFileId, name, kind, null, null, null, null, null, null,
+            attributes, null, EventQuality.ExistenceOnly, true);
     }
 
-}
+    private static FileKind GetFallbackKind(FileAttributes attributes)
+    {
+        if ((attributes & FileAttributes.ReparsePoint) != 0) return FileKind.ReparsePoint;
+        return (attributes & FileAttributes.Directory) != 0 ? FileKind.Directory : FileKind.File;
+    }
 
-internal sealed record SnapshotDirectoryBatch(IReadOnlyList<SourceEvent> Events, long NextSequence);
+    private static bool IsAcquisitionFailure(Exception exception) => exception is UnauthorizedAccessException or Win32Exception or IOException or ArgumentException;
+
+    private static string NormalizePath(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var pathRoot = Path.GetPathRoot(fullPath);
+        return string.Equals(fullPath, pathRoot, StringComparison.OrdinalIgnoreCase)
+            ? fullPath
+            : fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    }
+
+    private static bool IsSameOrDescendant(string path, string root)
+    {
+        return string.Equals(path, root, StringComparison.OrdinalIgnoreCase) ||
+               path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+               path.StartsWith(root + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class DirectoryFrame(SafeFileHandle handle, string path, FileId fileId, IEnumerator<NativeDirectoryEntry> entries) : IDisposable
+    {
+        public SafeFileHandle Handle { get; } = handle;
+        public string Path { get; } = path;
+        public FileId FileId { get; } = fileId;
+        public IEnumerator<NativeDirectoryEntry> Entries { get; } = entries;
+
+        public void Dispose()
+        {
+            try { Entries.Dispose(); }
+            finally { Handle.Dispose(); }
+        }
+    }
+}

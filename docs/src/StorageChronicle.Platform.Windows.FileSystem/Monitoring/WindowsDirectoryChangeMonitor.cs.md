@@ -1,6 +1,6 @@
 # WindowsDirectoryChangeMonitor
 
-Runs the event-driven ReadDirectoryChangesW loop for one mounted root with subtree notifications enabled, so normal monitoring does not perform periodic full scans. Native overflow (`ERROR_NOTIFY_ENUM_DIR`), malformed buffers, access denial, invalid handles, path loss, and device removal produce `ContinuityGap` with `UnverifiedGap` handling upstream. Cancellation is a normal shutdown path and does not create a false gap. The handoff channel is bounded and applies backpressure instead of retaining an unbounded notification queue.
+Runs the event-driven ReadDirectoryChangesW loop for one selected root with subtree notifications enabled, so normal monitoring does not perform periodic full scans. Production monitors open the direct volume root and reach a configured subdirectory through pinned, handle-relative opens; a reparse or non-directory component produces a gap before notification reads begin. Native overflow (`ERROR_NOTIFY_ENUM_DIR`), malformed buffers, access denial, invalid handles, path loss, and device removal produce `ContinuityGap` with `UnverifiedGap` handling upstream. Its bounded handoff applies backpressure. Early consumer disposal cancels and awaits the producer; terminal gap writes use the linked token so a full channel cannot hold shutdown open. The native API cancels the exact overlapped request and retains its pinned state until completion.
 
 ## Role
 
@@ -32,7 +32,7 @@ Failure, corruption, cancellation, and recovery remain observable and are not co
 
 ## Tests
 
-Validated by tests/StorageChronicle.Integration.Tests and the affected integration tests.
+Validated by `tests/StorageChronicle.Platform.Windows.FileSystem.Tests/ReadDirectoryChangesTests.cs` and the collector pipeline tests, including rejection of a configured-root reparse component before native notification reads.
 
 ## OS constraints
 

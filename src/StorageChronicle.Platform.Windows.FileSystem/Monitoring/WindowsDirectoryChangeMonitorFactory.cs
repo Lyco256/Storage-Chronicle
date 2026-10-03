@@ -8,6 +8,9 @@ public interface IWindowsDirectoryChangeMonitorFactory
 {
     /// <summary>Creates a monitor rooted at a mount point.</summary>
     WindowsDirectoryChangeMonitor Create(VolumeId volumeId, string rootPath, int bufferSize);
+
+    /// <summary>Creates a monitor by opening the volume root and walking configured root components through pinned directory handles.</summary>
+    WindowsDirectoryChangeMonitor Create(VolumeId volumeId, string rootPath, string volumeRootPath, IReadOnlyList<string> rootComponents, int bufferSize);
 }
 
 /// <summary>Creates monitors backed by the Windows native ReadDirectoryChangesW boundary.</summary>
@@ -26,4 +29,8 @@ public sealed class WindowsDirectoryChangeMonitorFactory : IWindowsDirectoryChan
 
     /// <inheritdoc />
     public WindowsDirectoryChangeMonitor Create(VolumeId volumeId, string rootPath, int bufferSize) => new(volumeId, rootPath, fileNative, changeNative, bufferSize);
+
+    /// <inheritdoc />
+    public WindowsDirectoryChangeMonitor Create(VolumeId volumeId, string rootPath, string volumeRootPath, IReadOnlyList<string> rootComponents, int bufferSize)
+        => new(volumeId, rootPath, fileNative, changeNative, bufferSize, volumeRootPath: volumeRootPath, rootComponents: rootComponents);
 }

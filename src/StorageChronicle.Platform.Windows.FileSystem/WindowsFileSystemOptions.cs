@@ -23,6 +23,9 @@ public sealed record WindowsFileSystemOptions
     /// <summary>Gets the maximum number of live notifications retained during an initial scan.</summary>
     public int InitialNotificationCapacity { get; init; } = 4096;
 
+    /// <summary>Gets the maximum number of queued items in each collector handoff channel; full channels apply backpressure.</summary>
+    public int PipelineChannelCapacity { get; init; } = 256;
+
     /// <summary>Gets the notification buffer size passed to ReadDirectoryChangesW.</summary>
     public int NotificationBufferSize { get; init; } = 64 * 1024;
 
@@ -37,6 +40,11 @@ public sealed record WindowsFileSystemOptions
         if (InitialNotificationCapacity is < 1 or > 1_000_000)
         {
             throw new ArgumentOutOfRangeException(nameof(InitialNotificationCapacity));
+        }
+
+        if (PipelineChannelCapacity is < 1 or > 65_536)
+        {
+            throw new ArgumentOutOfRangeException(nameof(PipelineChannelCapacity));
         }
 
         if (NotificationBufferSize is < 4096 or > 1024 * 1024 || NotificationBufferSize % 4096 != 0)

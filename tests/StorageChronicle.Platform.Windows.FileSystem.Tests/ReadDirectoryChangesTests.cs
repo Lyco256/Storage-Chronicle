@@ -11,6 +11,82 @@ namespace StorageChronicle.Platform.Windows.FileSystem.Tests;
 public sealed class ReadDirectoryChangesTests
 {
     [Fact]
+    [Trait("Category", "WindowsApi")]
+    public async Task MonitorReportsGapWhenFinalRootComponentIsReparsePoint()
+    {
+        if (!OperatingSystem.IsWindows()) Assert.Skip("This test requires Windows directory-handle semantics.");
+        var root = Directory.CreateTempSubdirectory("storage-chronicle-reparse-root");
+        var target = Path.Combine(root.FullName, "target");
+        var link = Path.Combine(root.FullName, "link");
+        Directory.CreateDirectory(target);
+        Directory.CreateDirectory(Path.Combine(target, "must-not-be-watched"));
+        try
+        {
+            try
+            {
+                Directory.CreateSymbolicLink(link, target);
+            }
+            catch (Exception exception) when (exception is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+            {
+                Assert.Skip($"The host cannot create an unprivileged directory symbolic link: {exception.GetType().Name}.");
+            }
+
+            var monitor = new WindowsDirectoryChangeMonitorFactory().Create(VolumeId.Create("test-volume"), link, 4096);
+            var reads = await ReadAllAsync(monitor.ReadChangesAsync(TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
+
+            Assert.Contains(reads, read => read.Gap is not null && read.MonitorLost);
+            Assert.DoesNotContain(reads.SelectMany(read => read.Notifications), notification => notification.RelativePath.Contains("must-not-be-watched", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            root.Delete(true);
+        }
+    }
+
+    [Fact]
+    public async Task MonitorRejectsConfiguredRootReparseComponentBeforeStartingNativeReads()
+    {
+        var fileNative = new FakeFileNative(path =>
+        {
+            var isReparseRoot = path.EndsWith("\\junction", StringComparison.OrdinalIgnoreCase);
+            return new NativeFileMetadataRecord(FileId.Create(path), null, Path.GetFileName(path),
+                isReparseRoot ? FileKind.Junction : FileKind.Directory, null, null, null, null, null, null,
+                isReparseRoot ? FileAttributes.Directory | FileAttributes.ReparsePoint : FileAttributes.Directory,
+                isReparseRoot ? "Junction" : null, true, false);
+        });
+        var monitor = new WindowsDirectoryChangeMonitor(VolumeId.Create("V"), "C:\\volume\\junction\\nested", fileNative,
+            new FakeChangeNative(new NativeDirectoryChangeReadResult(Array.Empty<byte>(), 0, 1022)),
+            volumeRootPath: "C:\\volume", rootComponents: ["junction", "nested"]);
+
+        var reads = await ReadAllAsync(monitor.ReadChangesAsync(TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
+
+        Assert.Contains(reads, read => read.MonitorLost && read.Gap is not null);
+        Assert.Collection(fileNative.OpenedChildren, child => Assert.Equal("junction", child.Name));
+    }
+
+    [Fact]
+    [Trait("Category", "WindowsApi")]
+    public async Task NativeDirectoryReadCancelsPromptlyOnTemporaryDirectory()
+    {
+        if (!OperatingSystem.IsWindows()) Assert.Skip("This test requires Windows overlapped directory notifications.");
+        var directory = Directory.CreateTempSubdirectory("storage-chronicle-cancel-read");
+        try
+        {
+            var monitor = new WindowsDirectoryChangeMonitorFactory().Create(VolumeId.Create("temporary-test-volume"), directory.FullName, 4096);
+            using var cancellation = new CancellationTokenSource();
+            var read = ReadAllAsync(monitor.ReadChangesAsync(cancellation.Token), cancellation.Token);
+            await Task.Delay(TimeSpan.FromMilliseconds(100), TestContext.Current.CancellationToken);
+            cancellation.Cancel();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => read.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            directory.Delete(true);
+        }
+    }
+
+    [Fact]
     public void ParserPairsRenameAndPreservesSequence()
     {
         var buffer = BuildBuffer((4, "old.txt"), (5, "new.txt"), (1, "created.txt"));

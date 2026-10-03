@@ -35,7 +35,7 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
     public async IAsyncEnumerable<SourceEvent> CollectAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var volumes = await volumeEnumerator.EnumerateAsync(cancellationToken).ConfigureAwait(false);
-        var output = Channel.CreateBounded<SourceEvent>(new BoundedChannelOptions(Math.Max(options.InitialNotificationCapacity, options.SnapshotBatchSize))
+        var output = Channel.CreateBounded<SourceEvent>(new BoundedChannelOptions(options.PipelineChannelCapacity)
         {
             SingleReader = true,
             SingleWriter = false,
@@ -57,7 +57,7 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
         finally
         {
             linkedCancellation.Cancel();
-            try { await completion.ConfigureAwait(false); } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+            try { await completion.ConfigureAwait(false); } catch (OperationCanceledException) when (linkedCancellation.IsCancellationRequested) { }
         }
     }
 
@@ -67,8 +67,9 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
         var volumeToken = volumeCancellation.Token;
         try
         {
-            var rootPath = ResolveRootPath(volume);
-            if (rootPath is null) return;
+            var selectedRoot = ResolveRootPath(volume);
+            if (selectedRoot is null) return;
+            var rootPath = selectedRoot.DisplayPath;
 
             if (string.Equals(volume.FileSystem, "NTFS", StringComparison.OrdinalIgnoreCase) && exclusionPolicy.IsWholeVolumeMonitored(ResolveVolumeRoot(volume))) return;
             if (options.SkipFileSystems.Contains(volume.FileSystem)) return;
@@ -79,12 +80,12 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
                 return;
             }
 
-            var monitor = monitorFactory.Create(volume.Id, rootPath, options.NotificationBufferSize);
-            var nativeReads = Channel.CreateBounded<DirectoryChangeRead>(new BoundedChannelOptions(options.InitialNotificationCapacity)
+            var monitor = monitorFactory.Create(volume.Id, rootPath, selectedRoot.VolumeRootPath, selectedRoot.Components, options.NotificationBufferSize);
+            var nativeReads = Channel.CreateBounded<DirectoryChangeRead>(new BoundedChannelOptions(options.PipelineChannelCapacity)
             {
                 SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait
             });
-            var liveReads = Channel.CreateBounded<DirectoryChangeRead>(new BoundedChannelOptions(options.InitialNotificationCapacity)
+            var liveReads = Channel.CreateBounded<DirectoryChangeRead>(new BoundedChannelOptions(options.PipelineChannelCapacity)
             {
                 SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait
             });
@@ -229,6 +230,19 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
         }
     }
 
+    private static async ValueTask WriteFailureGapAsync(ChannelWriter<SourceEvent> output, VolumeId volumeId, string reason, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested) return;
+        try
+        {
+            await output.WriteAsync(WindowsSourceEventFactory.Gap(volumeId, reason, 0), cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The caller canceled collection; do not hold shutdown open trying to report a terminal gap.
+        }
+    }
+
     private bool IsExcluded(string rootPath, DirectoryChangeNotification notification)
     {
         var newPath = Path.Combine(rootPath, notification.RelativePath);
@@ -236,11 +250,45 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
         return exclusionPolicy.ShouldExclude(newPath) || (oldPath is not null && exclusionPolicy.ShouldExclude(oldPath));
     }
 
-    private string? ResolveRootPath(VolumeDescriptor volume)
+    private MonitoringRoot? ResolveRootPath(VolumeDescriptor volume)
     {
         var mountRoot = ResolveVolumeRoot(volume);
-        return exclusionPolicy.ResolveMonitoringRoot(mountRoot);
+        var selectedRoot = exclusionPolicy.ResolveMonitoringRoot(mountRoot);
+        if (selectedRoot is null) return null;
+        var normalizedMountRoot = NormalizePath(mountRoot);
+        var normalizedSelectedRoot = NormalizePath(selectedRoot);
+        var components = Array.Empty<string>();
+        var displayPath = normalizedMountRoot;
+        if (IsSameOrDescendant(normalizedSelectedRoot, normalizedMountRoot))
+        {
+            var relative = Path.GetRelativePath(normalizedMountRoot, normalizedSelectedRoot);
+            if (!string.Equals(relative, ".", StringComparison.Ordinal))
+            {
+                components = relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
+                displayPath = normalizedSelectedRoot;
+            }
+        }
+        else if (!IsSameOrDescendant(normalizedMountRoot, normalizedSelectedRoot))
+        {
+            return null;
+        }
+
+        return new MonitoringRoot(displayPath, WindowsVolumePath.GetRootPath(volume), components);
     }
+
+    private static string NormalizePath(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var pathRoot = Path.GetPathRoot(fullPath);
+        return string.Equals(fullPath, pathRoot, StringComparison.OrdinalIgnoreCase)
+            ? fullPath
+            : fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    }
+
+    private static bool IsSameOrDescendant(string path, string root)
+        => string.Equals(path, root, StringComparison.OrdinalIgnoreCase) ||
+           path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+           path.StartsWith(root + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 
     private static string ResolveVolumeRoot(VolumeDescriptor volume)
         => volume.MountPoints.Count == 0 ? volume.Id.Value + Path.DirectorySeparatorChar : volume.MountPoints[0];
@@ -259,5 +307,7 @@ public sealed class WindowsFileSystemCollector : ISourceEventCollector
         var properties = ImmutableDictionary<string, string>.Empty.Add("source", "ReadDirectoryChangesW");
         return new SourceEvent(EventId.New(), EventSchemaVersion.Current, EventOrigin.DirectoryReconciliation, volume.Id, null, null, notification.RelativePath, notification.OldRelativePath, operation, null, new EventTime(now, TimeSpan.Zero, null, now, new SourceSequence(sequence), new MountSequence(sequence)), EventQuality.Exact, null, ProcessAttributionQuality.Unknown, null, null, properties);
     }
+
+    private sealed record MonitoringRoot(string DisplayPath, string VolumeRootPath, IReadOnlyList<string> Components);
 
 }

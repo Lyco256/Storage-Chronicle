@@ -31,7 +31,7 @@ foreach ($project in $projects) {
     try {
         # Some tests intentionally write their expected diagnostics to stderr; capture it without turning a passing process into a PowerShell error.
         $ErrorActionPreference = 'Continue'
-        & $testExecutable.FullName --progress off --minimum-expected-tests 1 2>&1 | Tee-Object -FilePath $log
+        & $testExecutable.FullName --progress off --minimum-expected-tests 1 --filter-not-trait 'Category=WindowsPrivileged' 2>&1 | Tee-Object -FilePath $log
     }
     finally { $ErrorActionPreference = $previousErrorActionPreference }
     $exitCode = $LASTEXITCODE

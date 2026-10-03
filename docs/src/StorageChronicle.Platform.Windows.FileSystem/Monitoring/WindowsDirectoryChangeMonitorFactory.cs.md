@@ -1,6 +1,6 @@
 # WindowsDirectoryChangeMonitorFactory
 
-Supplies the monitor with separate metadata/handle and notification native interfaces. This preserves the P/Invoke boundary and enables deterministic synthetic-notification tests without changing shared contracts.
+Supplies the monitor with separate metadata/handle and notification native interfaces. Its production creation overload carries the direct volume root and validated relative root components so the monitor opens the selected directory through pinned handles instead of resolving configured subdirectory ancestors by path. The path-only overload remains for isolated direct-monitor tests and explicit roots.
 
 ## Role
 
@@ -8,7 +8,7 @@ This mirror documents the source boundary for this file and explains how it part
 
 ## Public types and responsibilities
 
-Public types preserve source facts and the explicitly owned responsibility; UI interpretation and correlation remain outside this boundary.
+`IWindowsDirectoryChangeMonitorFactory` creates a monitor either from a direct root path or from a display path plus volume root and root components. `WindowsDirectoryChangeMonitorFactory` binds injectable native interfaces to that contract.
 
 ## Inputs and outputs
 
@@ -32,7 +32,7 @@ Failure, corruption, cancellation, and recovery remain observable and are not co
 
 ## Tests
 
-Validated by tests/StorageChronicle.Integration.Tests and the affected integration tests.
+Validated by `tests/StorageChronicle.Platform.Windows.FileSystem.Tests/CollectorPipelineTests.cs` and `ReadDirectoryChangesTests.cs`.
 
 ## OS constraints
 
