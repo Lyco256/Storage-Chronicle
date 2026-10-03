@@ -1,5 +1,42 @@
 # External Media handoff
 
+## Bounded PC-local consent-binding policy
+
+### Implementation
+
+- Added `MediaMirrorConsentPolicy.Evaluate` as the one pure policy entry point. It compares PC identity, logical media ID, live volume identity, dedicated media-root identity, filesystem classification, and ACL/protection classification with exact ordinal identity matching.
+- An exact complete saved binding returns `AuthorizedByExistingBinding`. Absent/legacy, incomplete, or changed bindings require approval. Only an explicit accepted UI decision returns `AcceptedBindingReadyToPersist` with the current binding; the caller must persist it through the canonical Settings/Agent layer before import or mirror writes. Cancellation, unknown current evidence, and invalid decisions fail closed and return no binding.
+- NTFS ACL verified and NTFS ACL unavailable are distinct classifications. FAT/FAT32/exFAT/other filesystems must use `NotProvidedByFileSystem`; policy validation rejects any attempt to label them NTFS ACL protected.
+- The binding is an in-memory policy evidence value, not a new serializer/settings contract. No UI, storage, or shared-contract changes were made, and this work does not acquire or verify real identities itself.
+
+### Shared Settings/Agent handoff request
+
+Persist one canonical PC-local consent record in the existing Settings model/store; do not add a second serialized binding type in ExternalMedia. It must preserve, without lossy normalization:
+
+1. PC identity;
+2. logical media ID;
+3. authoritative live volume identity (not drive letter or mount path alone);
+4. identity of the verified, owned dedicated `.StorageChronicle` root;
+5. filesystem classification; and
+6. protection classification (`NtfsAclVerified`, `NtfsAclUnavailable`, or `NotProvidedByFileSystem` as applicable).
+
+The Settings/Agent layer must obtain fresh evidence on each connection, call `Evaluate`, and refuse both existing-history import and future mirror appends unless the result is an exact match or an explicitly accepted replacement has been durably saved. The UI must separately explain and present existing-history read/import and future dedicated-root append, disclose the actual filesystem/ACL limitation, and only pass `ExplicitlyAccepted` after the required user action. Legacy `MediaMirrors` values must map to no saved consent. Any changed field requires reapproval. Unknown identity, volume/root mismatch, unknown protection classification, or cancellation must leave existing media history untouched and stop import and writes.
+
+### Validation
+
+Commands run from the repository root:
+
+```text
+dotnet test tests\StorageChronicle.ExternalMedia.Tests\StorageChronicle.ExternalMedia.Tests.csproj --no-restore --verbosity minimal -p:UseMicrosoftTestingPlatformRunner=true -p:TestingPlatformDotnetTestSupport=true
+dotnet build src\StorageChronicle.ExternalMedia\StorageChronicle.ExternalMedia.csproj --no-restore --verbosity minimal
+dotnet tools\StorageChronicle.DocMirrorValidator\bin\Debug\net10.0\StorageChronicle.DocMirrorValidator.dll .
+git diff --check
+```
+
+Results: ExternalMedia tests passed (55 passed, 0 failed, 0 skipped); ExternalMedia project build succeeded with 0 warnings and 0 errors; DocMirror validation passed; `git diff --check` passed. The repository pins SDK 10.0.302 while this host has SDK 10.0.401, so the test runner properties are passed explicitly to honor the repository's Microsoft.Testing.Platform selection. The first default `dotnet test` invocation without these properties was rejected by the runner-selection guard and was not counted as a test run.
+
+No physical volume, existing media, UI, product settings, or filesystem paths are accessed by the policy or its tests. This bounded feature is ready for top-agent Settings/Agent integration; by itself it does not implement the UI, persist consent, establish authentic live identities/ACLs, or authorize an import/write until the accepted binding is durably saved.
+
 ## Branch and ownership
 
 - Branch: `feat/external-media`
