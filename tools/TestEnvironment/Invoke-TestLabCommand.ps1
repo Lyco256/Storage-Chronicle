@@ -8,21 +8,5 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Set-StrictMode -Version Latest
-. (Join-Path $PSScriptRoot 'TestLab.Common.ps1')
-try {
-    $config = Get-TestLabConfig -ConfigPath $ConfigPath
-    $root = Assert-TestLabRoot $config.Root
-    $vm = Assert-ExactTestLabVm $VmName
-    if ([string]$vm.State -ne 'running') { throw "Approved VirtualBox VM is not running: $VmName" }
-    $reference = if (-not [string]::IsNullOrWhiteSpace($CredentialReference)) { $CredentialReference } else { [string]$config.GuestCredentialReference }
-    $guestCredential = Get-TestLabGuestCredential -Credential $Credential -CredentialReference $reference
-    $result = Invoke-VBoxGuestControl -VmName $VmName -Credential $guestCredential -Executable 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -Arguments @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', $Command) -TempRoot $root
-    if ($result.ExitCode -ne 0) { throw "VirtualBox guestcontrol PowerShell command failed with exit code $($result.ExitCode): $($result.Error.Trim())" }
-    Write-Output $result.Output
-    exit 0
-}
-catch {
-    Write-Error $_.Exception.Message
-    exit 2
-}
+Write-Error 'Retired under Requirement 37: guest command execution is not part of physical acceptance. This entry point performs no host, VM, guest, disk, filesystem, credential, or evidence I/O. Use only the separately audited lightweight fixture workflow after all safety gates pass.'
+exit 2

@@ -140,7 +140,15 @@ public sealed class StateEngine : IStateEngine
     private long _stateSequence;
 
     /// <inheritdoc />
-    public ValueTask ApplyAsync(CanonicalEvent value, CancellationToken cancellationToken = default)
+    public ValueTask ApplyAsync(CanonicalEvent value, CancellationToken cancellationToken = default) => ApplyCore(value, allowSequenceGaps: false, cancellationToken);
+
+    /// <summary>Applies an existing canonical log during offline reconstruction while preserving, but not concealing, sequence gaps.</summary>
+    /// <remarks>The caller must separately report gaps; this method only relaxes continuity, never monotonic-order or event-integrity checks.</remarks>
+    /// <param name="value">The original canonical event from the append log.</param>
+    /// <param name="cancellationToken">A token that can cancel before state mutation.</param>
+    public ValueTask ApplyForReconstructionAsync(CanonicalEvent value, CancellationToken cancellationToken = default) => ApplyCore(value, allowSequenceGaps: true, cancellationToken);
+
+    private ValueTask ApplyCore(CanonicalEvent value, bool allowSequenceGaps, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         lock (_gate)
@@ -153,7 +161,8 @@ public sealed class StateEngine : IStateEngine
 
             ValidateEvent(value);
             var cursorKey = SourceCursorKey.Create(value);
-            ValidateSourceSequence(cursorKey, value.Time.SourceSequence.Value);
+            if (allowSequenceGaps) ValidateSourceSequenceOrder(cursorKey, value.Time.SourceSequence.Value);
+            else ValidateSourceSequence(cursorKey, value.Time.SourceSequence.Value);
             var effectiveUtc = GetEffectiveUtc(value.Time.RecordedUtc);
             var nextSequence = checked(_stateSequence + 1);
 
@@ -286,6 +295,14 @@ public sealed class StateEngine : IStateEngine
         }
 
         throw new SourceSequenceOrderException(key.ToString(), cursor.LastSequence, actual);
+    }
+
+    private void ValidateSourceSequenceOrder(SourceCursorKey key, long actual)
+    {
+        if (_sourceCursors.TryGetValue(key, out var cursor) && actual <= cursor.LastSequence)
+        {
+            throw new SourceSequenceOrderException(key.ToString(), cursor.LastSequence, actual);
+        }
     }
 
     private DateTimeOffset GetEffectiveUtc(DateTimeOffset recordedUtc)

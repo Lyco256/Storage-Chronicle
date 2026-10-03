@@ -22,10 +22,10 @@ internal sealed class SegmentLog : IAsyncDisposable
     private long _currentLastSequence;
     private int _currentRecordCount;
 
-    internal SegmentLog(StorageEngineOptions options)
+    internal SegmentLog(StorageEngineOptions options, bool createDirectory = true)
     {
         _options = options;
-        Directory.CreateDirectory(options.StorageDirectory);
+        if (createDirectory) Directory.CreateDirectory(options.StorageDirectory);
     }
 
     internal event Action<SegmentIssue>? SegmentSkipped;

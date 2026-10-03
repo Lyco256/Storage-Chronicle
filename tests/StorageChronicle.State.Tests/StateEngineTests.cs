@@ -138,6 +138,23 @@ public sealed class StateEngineTests
     }
 
     [Fact]
+    public async Task ReconstructionPathPreservesMonotonicEventsAcrossExplicitSequenceGaps()
+    {
+        var engine = new StateEngine();
+        var create = Event(1, CanonicalOperation.Create, Child, null, "child.txt", FileKind.File, Utc(1), parentKnown: true);
+        var writeAfterGap = Event(3, CanonicalOperation.DataWrite, Child, null, null, FileKind.File, Utc(3), logicalSize: 99);
+        await Apply(engine, create);
+
+        await engine.ApplyForReconstructionAsync(writeAfterGap, TestContext.Current.CancellationToken);
+        await Assert.ThrowsAsync<SourceSequenceOrderException>(async () => await engine.ApplyForReconstructionAsync(
+            Event(2, CanonicalOperation.DataWrite, Child, null, null, FileKind.File, Utc(4)), TestContext.Current.CancellationToken));
+
+        var snapshot = await SnapshotAt(engine, 2);
+        Assert.Equal(99, Assert.Single(snapshot.Entries).Metadata.LogicalSize);
+        Assert.Equal(writeAfterGap.Time.SourceSequence, engine.GetAppliedEvents()[1].SourceSequence);
+    }
+
+    [Fact]
     public async Task ClockRegressionIsClampedToMonotonicEffectiveTime()
     {
         var engine = new StateEngine();

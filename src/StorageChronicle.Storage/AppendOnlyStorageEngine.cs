@@ -811,7 +811,7 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
         }
     }
 
-    private static void ValidateOwnedHistoryEntries(string directory)
+    internal static void ValidateOwnedHistoryEntries(string directory)
     {
         foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
         {

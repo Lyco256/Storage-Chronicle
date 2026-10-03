@@ -1,5 +1,7 @@
 # Test-VirtualBoxTestLab.ps1
 
+This non-privileged contract test uses fake VirtualBox command responses and a run-owned temporary fixture; it never launches VBoxManage or creates a VM. It now also asserts that the legacy initializer, guest-command bridge, and snapshot-reset entry points are inert retired stubs with no filesystem/process/guest mutation helper calls. The temporary fixture is removed only after its exact run GUID, expected parent, and marker are verified.
+
 This is a provider-boundary contract test, not a fake acceptance run. It dot-sources `tools/TestEnvironment/VirtualBox.Common.ps1` and replaces only the `VBoxManage` process seam with deterministic machine-readable responses so the safety boundary can be tested without claiming a real guest. It verifies exact Windows 11 profile enforcement (4 GiB, 2 vCPU, EFI, TPM 2.0, dynamic VDI and 80 GiB logical size), missing safety properties, wrong memory, non-VDI disks, simultaneous VM rejection, and temporary guest password-file cleanup. Its temp root has a unique run GUID and owner marker; final recursive cleanup is permitted only after the expected temp parent, exact root name, schema, and run ID all match.
 
 The real VirtualBox host/guest smoke, privileged matrix, installer matrix, MFT 10K/100K/1M runs, performance, and resource acceptance remain separate physical acceptance requirements and are never satisfied by this contract test.

@@ -11,6 +11,54 @@ namespace StorageChronicle.Storage.Tests;
 public sealed class StorageEngineTests
 {
     [Fact]
+    public async Task ReadOnlyHistoryReaderDoesNotRepairOrChangeExistingHistory()
+    {
+        var directory = CreateDirectory();
+        try
+        {
+            await using (var store = CreateStore(directory))
+            {
+                var source = CreateSource(1);
+                await store.AppendSourceAsync(source);
+                var canonical = CreateCanonical(source);
+                await store.AppendCanonicalAsync(canonical);
+                await store.ApplyAsync(canonical);
+                await store.StopAsync();
+            }
+
+            var before = Directory.EnumerateFiles(directory).Order(StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(path => Path.GetFileName(path), File.ReadAllBytes, StringComparer.OrdinalIgnoreCase);
+
+            var snapshot = new ReadOnlyStorageHistoryReader().Read(directory);
+
+            Assert.Single(snapshot.SourceEvents);
+            Assert.Single(snapshot.CanonicalEvents);
+            Assert.Empty(snapshot.Issues);
+            var after = Directory.EnumerateFiles(directory).Order(StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(path => Path.GetFileName(path), File.ReadAllBytes, StringComparer.OrdinalIgnoreCase);
+            Assert.Equal(before.Keys.Order(StringComparer.OrdinalIgnoreCase), after.Keys.Order(StringComparer.OrdinalIgnoreCase));
+            foreach (var name in before.Keys) Assert.Equal(before[name], after[name]);
+
+            var damagedIndex = Path.Combine(directory, "index.sqlite");
+            await File.WriteAllTextAsync(damagedIndex, "pre-existing damaged index sentinel");
+            var beforeCorruptRead = Directory.EnumerateFiles(directory).Order(StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(path => Path.GetFileName(path), File.ReadAllBytes, StringComparer.OrdinalIgnoreCase);
+            var snapshotWithCorruptIndex = new ReadOnlyStorageHistoryReader().Read(directory);
+            Assert.Single(snapshotWithCorruptIndex.SourceEvents);
+            Assert.Single(snapshotWithCorruptIndex.CanonicalEvents);
+            Assert.Equal("pre-existing damaged index sentinel", await File.ReadAllTextAsync(damagedIndex));
+            var afterCorruptRead = Directory.EnumerateFiles(directory).Order(StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(path => Path.GetFileName(path), File.ReadAllBytes, StringComparer.OrdinalIgnoreCase);
+            Assert.Equal(beforeCorruptRead.Keys.Order(StringComparer.OrdinalIgnoreCase), afterCorruptRead.Keys.Order(StringComparer.OrdinalIgnoreCase));
+            foreach (var name in beforeCorruptRead.Keys) Assert.Equal(beforeCorruptRead[name], afterCorruptRead[name]);
+        }
+        finally
+        {
+            RemoveDirectory(directory);
+        }
+    }
+
+    [Fact]
     public async Task RoundTripUsesClosedCompressedSegmentsAndRealSqliteState()
     {
         var directory = CreateDirectory();

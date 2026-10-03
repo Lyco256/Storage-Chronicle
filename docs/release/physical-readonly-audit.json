@@ -1,6 +1,6 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "879a934c150891659609a054795c6204c1849598",
+  "targetCommit": "a267ad8ff5142210b5a643be071df3f614845677",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -93,7 +93,7 @@
   "hostPreflight": "NOT_EXECUTED",
   "processWriteMonitoring": "NOT_EXECUTED",
   "currentCommitSourceAudit": {
-    "scope": "Production src/** write/change sinks and selected call paths, plus a narrow review of the resource-budget evidence writer; excludes complete tests/build/tools/installer/external command audit, host preflight, and independent runtime write monitor.",
+    "scope": "Partial source-to-sink review of Agent/Application/Windows NTFS/Session calls plus selected build/tools/installer flows and their service/OS-command reachability. Does not exhaustively audit every source/test/script/external command, perform host preflight, or run an independent runtime write monitor.",
     "status": "PARTIAL",
     "reviewedAt": "2026-10-03",
     "findings": [
@@ -190,6 +190,41 @@
         "status": "PARTIAL",
         "path": "build/quality/Test-ResourceBudget.ps1",
         "summary": "Commit 444565d separates the ResourceMonitor raw samples from the queue-augmented final report, and both JSON artifacts are create-only; the PID list is also kept as an array for the single-process case. Script AST parsing, DocMirror, static contract tests, and Fast passed. A one-second diagnostic sampled only the current shell and confirmed distinct raw/final files with matching process ID and sample count; diagnostic mode is explicitly ineligible and is not the independent, application-attributed write monitor or formal 600-second acceptance."
+      },
+      {
+        "id": "service-recovery-direct-command-entry",
+        "status": "PARTIAL",
+        "path": "src/StorageChronicle.Agent/Program.cs",
+        "lines": [25, 26],
+        "summary": "The --configure-service-recovery verb directly reaches ChangeServiceConfig2 through WindowsServiceRecoveryConfigurator. The MSI uses this mode, but source code does not establish that it can only be invoked by the MSI or that every direct invocation receives the required prior disclosure/UAC authorization. The target service executable is checked; end-to-end authorization remains unproven."
+      },
+      {
+        "id": "test-output-arbitrary-overwrite",
+        "status": "FAIL",
+        "path": "tools/StorageChronicle.TestDataGenerator/Program.cs",
+        "lines": [44, 56],
+        "summary": "--output accepts any caller-supplied path and File.WriteAllText overwrites/truncates an existing file. RealIoOracleValidator has the same class of issue and also creates arbitrary parent directories. A feature-owned remediation is in progress; no unsafe CLI was executed."
+      },
+      {
+        "id": "legacy-virtualbox-mutators-callable",
+        "status": "FAIL",
+        "path": "tools/TestEnvironment/Initialize-TestLab.ps1",
+        "lines": [21, 43],
+        "summary": "Although newer Requirement 37 entry points are retired, this legacy script still contains callable VirtualBox VM/VDI creation/configuration when -Apply is supplied. Invoke-TestLabCommand can run caller-supplied guest commands and Reset-TestVm can restore snapshots. These whole-OS VM paths conflict with the current acceptance strategy and must become no-I/O retired entry points."
+      },
+      {
+        "id": "installer-registry-run-collision",
+        "status": "PARTIAL",
+        "path": "installer/StorageChronicle.wxs",
+        "lines": [27, 30],
+        "summary": "MSI authoring writes HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\StorageChronicleSessionAgent, but the physical installer preflight does not check for a pre-existing value at that exact name. Whether MSI install/uninstall overwrites or removes an unrelated pre-existing value depends on the built MSI transaction and remains unverified; preflight should fail closed on collision."
+      },
+      {
+        "id": "mft-million-entry-free-space-gate",
+        "status": "FAIL",
+        "path": "build/Test-Privileged.ps1",
+        "lines": [519, 524],
+        "summary": "The visible preflight requires 40 GiB before VHDX creation, but Requirement 37 requires at least 60 GiB before 1M MFT seeding. The inspected runner does not establish a count-specific 60 GiB gate. No VHDX or MFT run was performed."
       }
     ]
   },
@@ -330,6 +365,33 @@
       "id": "runtime-write-audit",
       "status": "NOT_EXECUTED",
       "summary": "No independent process-attributed runtime write monitor or before/after inventory has run."
+    },
+    {
+      "id": "installer-run-value-collision",
+      "status": "PARTIAL",
+      "path": "tools/PhysicalAcceptance/Run-RealMachineInstallerAcceptance.ps1",
+      "summary": "The preflight checks product registration/service/data roots but not the HKLM Run value authored by the MSI. Existing-value collision behavior is not proven; fail closed before UAC until added and tested."
+    },
+    {
+      "id": "test-output-arbitrary-overwrite",
+      "status": "FAIL",
+      "path": "tools/StorageChronicle.RealIoOracleValidator/Program.cs",
+      "lines": [338, 343],
+      "summary": "Evidence writer creates arbitrary parent directories and overwrites the requested output. The TestDataGenerator has the same unsafe overwrite behavior. Do not run with user-supplied paths until new-only and run-owned confinement are implemented."
+    },
+    {
+      "id": "legacy-virtualbox-mutators-callable",
+      "status": "FAIL",
+      "path": "tools/TestEnvironment/Initialize-TestLab.ps1",
+      "lines": [21, 43],
+      "summary": "Legacy VirtualBox initialization still creates/configures VMs and VDIs; guest command and snapshot restore scripts also remain callable. Retire all guest-mutating paths under Requirement 37; no VM was created."
+    },
+    {
+      "id": "mft-million-entry-free-space-gate",
+      "status": "FAIL",
+      "path": "build/Test-Privileged.ps1",
+      "lines": [519, 524],
+      "summary": "Only a 40 GiB VHDX creation gate is visible; the required 60 GiB precondition for 1M MFT seeding is absent from the reviewed path."
     }
   ]
 }

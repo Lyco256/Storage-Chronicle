@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\StorageChronicle.Domain\StorageChronicle.Domain.csproj" />
+    <ProjectReference Include="..\..\src\StorageChronicle.State\StorageChronicle.State.csproj" />
     <ProjectReference Include="..\..\src\StorageChronicle.Storage\StorageChronicle.Storage.csproj" />
   </ItemGroup>
 </Project>

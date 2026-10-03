@@ -1,5 +1,6 @@
 using System.Text.Json;
 using StorageChronicle.Domain.Contracts;
+using StorageChronicle.State;
 using StorageChronicle.Storage;
 
 namespace StorageChronicle.RealIoOracleValidator;
@@ -20,10 +21,13 @@ public static class Program
         }
 
         var failures = new List<string>();
+        var evidenceOutputValidated = false;
         try
         {
             using var oracleDocument = JsonDocument.Parse(await File.ReadAllTextAsync(oraclePath).ConfigureAwait(false));
             var oracle = oracleDocument.RootElement;
+            ValidateEvidenceOutput(oraclePath, outputPath, oracle);
+            evidenceOutputValidated = true;
             var schema = GetString(oracle, "Schema");
             if (!string.Equals(schema, "StorageChronicle.FileMutationWorkload.v2", StringComparison.Ordinal)) failures.Add($"Unexpected oracle schema: {schema}");
             var operations = oracle.TryGetProperty("Operations", out var operationArray) && operationArray.ValueKind == JsonValueKind.Array
@@ -40,23 +44,38 @@ public static class Program
                 else if (completed < started) failures.Add($"Operation {operationName} has a completion time before its start time.");
             }
 
-            var sourceEvents = new List<SourceEvent>();
-            var canonicalEvents = new List<CanonicalEvent>();
-            await using (var storage = new AppendOnlyStorageEngine(new StorageEngineOptions(historyPath) { FlushInterval = TimeSpan.FromMinutes(10) }))
+            var history = new ReadOnlyStorageHistoryReader().Read(historyPath);
+            if (history.Issues.Count > 0) failures.AddRange(history.Issues.Select(issue => $"Unreadable history segment {issue.Path}: {issue.Reason}"));
+            var sourceEvents = history.SourceEvents;
+            var canonicalEvents = history.CanonicalEvents;
+            var stateEngine = new StateEngine();
+            foreach (var value in canonicalEvents)
             {
-                await foreach (var value in storage.ReadSourceAsync()) sourceEvents.Add(value);
-                await foreach (var value in storage.ReadCanonicalAsync()) canonicalEvents.Add(value);
-                var state = await storage.GetSnapshotAsync(DateTimeOffset.UtcNow).ConfigureAwait(false);
-                var checks = BuildChecks(operations, operationKinds, sourceEvents, canonicalEvents, state, failures);
-                var evidence = CreateEvidence(oracle, historyPath, operations, sourceEvents, canonicalEvents, state.Entries.Count + state.UnplacedEntries.Count, checks, failures);
-                await WriteEvidenceAsync(outputPath, evidence).ConfigureAwait(false);
-                Console.WriteLine(JsonSerializer.Serialize(evidence, JsonOptions));
-                return failures.Count == 0 ? 0 : 2;
+                try
+                {
+                    await stateEngine.ApplyAsync(value).ConfigureAwait(false);
+                }
+                catch (SourceSequenceGapException exception)
+                {
+                    failures.Add($"State reconstruction encountered a source-sequence gap: {exception.Message}");
+                    await stateEngine.ApplyForReconstructionAsync(value).ConfigureAwait(false);
+                }
             }
+            var state = await stateEngine.GetSnapshotAsync(DateTimeOffset.UtcNow).ConfigureAwait(false);
+            var checks = BuildChecks(operations, operationKinds, sourceEvents, canonicalEvents, state, failures);
+            var evidence = CreateEvidence(oracle, historyPath, operations, sourceEvents, canonicalEvents, state.Entries.Count + state.UnplacedEntries.Count, checks, failures);
+            await WriteEvidenceAsync(outputPath, evidence).ConfigureAwait(false);
+            Console.WriteLine(JsonSerializer.Serialize(evidence, JsonOptions));
+            return failures.Count == 0 ? 0 : 2;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or StateEventValidationException)
         {
             failures.Add(exception.Message);
+            if (!evidenceOutputValidated)
+            {
+                Console.Error.WriteLine($"FAIL_CLOSED: {exception.Message}");
+                return 1;
+            }
             var evidence = new
             {
                 Schema = "StorageChronicle.WindowsTestLabRealIoEvidence.v1",
@@ -67,7 +86,15 @@ public static class Program
                 FailureReasons = failures,
                 GeneratedUtc = DateTimeOffset.UtcNow
             };
-            await WriteEvidenceAsync(outputPath, evidence).ConfigureAwait(false);
+            try
+            {
+                await WriteEvidenceAsync(outputPath, evidence).ConfigureAwait(false);
+            }
+            catch (Exception writeException) when (writeException is IOException or UnauthorizedAccessException)
+            {
+                Console.Error.WriteLine($"FAIL_CLOSED: {exception.Message}; failure evidence was not written because its new-only destination was unavailable: {writeException.Message}");
+                return 1;
+            }
             Console.Error.WriteLine(exception.Message);
             return 1;
         }
@@ -337,10 +364,68 @@ public static class Program
 
     private static async Task WriteEvidenceAsync(string outputPath, object evidence)
     {
-        var fullPath = Path.GetFullPath(outputPath);
-        var parent = Path.GetDirectoryName(fullPath) ?? throw new IOException("The evidence output has no parent directory.");
-        Directory.CreateDirectory(parent);
-        await File.WriteAllTextAsync(fullPath, JsonSerializer.Serialize(evidence, JsonOptions)).ConfigureAwait(false);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(evidence, JsonOptions);
+        await using var stream = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous | FileOptions.WriteThrough);
+        await stream.WriteAsync(bytes).ConfigureAwait(false);
+        await stream.FlushAsync().ConfigureAwait(false);
+        stream.Flush(flushToDisk: true);
+    }
+
+    private static void ValidateEvidenceOutput(string oraclePath, string outputPath, JsonElement oracle)
+    {
+        var runId = GetString(oracle, "RunId");
+        if (!Guid.TryParseExact(runId, "D", out var parsedRunId) || parsedRunId.ToString("D") != runId)
+            throw new InvalidDataException("The workload oracle must contain a canonical run GUID before evidence can be written.");
+
+        var oracleFullPath = Path.GetFullPath(oraclePath);
+        var outputFullPath = Path.GetFullPath(outputPath);
+        var fixtureRoot = Path.GetDirectoryName(oracleFullPath) ?? throw new IOException("The workload oracle has no fixture root.");
+        var pathComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (!string.Equals(Path.GetDirectoryName(outputFullPath), fixtureRoot, pathComparison))
+            throw new IOException("Validation evidence must be a direct child of the same marked run-owned fixture as the workload oracle.");
+        var expectedName = $"real-io-evidence-{runId}.json";
+        if (!string.Equals(Path.GetFileName(outputFullPath), expectedName, pathComparison))
+            throw new IOException($"Validation evidence must use the run-bound filename {expectedName}.");
+        EnsureNoReparsePoints(fixtureRoot);
+        EnsureNoReparsePoints(oracleFullPath);
+        if (File.Exists(outputFullPath) || Directory.Exists(outputFullPath))
+            throw new IOException("The run-bound validation evidence already exists; refusing to overwrite it.");
+
+        var markerPath = Path.Combine(fixtureRoot, ".storage-chronicle-testlab-marker.json");
+        var volumeMarkerPath = Path.Combine(fixtureRoot, "StorageChronicleTestVolume.json");
+        EnsureNoReparsePoints(markerPath);
+        EnsureNoReparsePoints(volumeMarkerPath);
+        using var marker = JsonDocument.Parse(File.ReadAllBytes(markerPath));
+        using var volumeMarker = JsonDocument.Parse(File.ReadAllBytes(volumeMarkerPath));
+        var markerRoot = marker.RootElement;
+        var volumeRoot = volumeMarker.RootElement;
+        var role = GetString(markerRoot, "Role");
+        if (GetString(markerRoot, "Schema") != "StorageChronicle.TestLabDataMarker.v1" ||
+            GetString(volumeRoot, "Schema") != "StorageChronicle.TestLabDataMarker.v1" ||
+            GetString(markerRoot, "TestId") != runId ||
+            GetString(volumeRoot, "TestId") != runId ||
+            role is not ("Workload" or "Mft" or "AclDenied") ||
+            GetString(volumeRoot, "Role") != role ||
+            GetString(markerRoot, "FileSystem") != "NTFS" ||
+            GetString(volumeRoot, "FileSystem") != "NTFS" ||
+            string.IsNullOrWhiteSpace(GetString(markerRoot, "VolumeUniqueId")) ||
+            GetString(markerRoot, "VolumeUniqueId") != GetString(volumeRoot, "VolumeUniqueId"))
+        {
+            throw new InvalidDataException("The workload and volume markers do not prove one matching run-owned NTFS fixture for the oracle run.");
+        }
+    }
+
+    private static void EnsureNoReparsePoints(string path)
+    {
+        var current = Path.GetFullPath(path);
+        while (!string.IsNullOrEmpty(current))
+        {
+            if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException($"The validator refuses paths that traverse reparse points: {current}");
+            var parent = Directory.GetParent(current)?.FullName;
+            if (string.IsNullOrEmpty(parent) || string.Equals(parent, current, StringComparison.OrdinalIgnoreCase)) break;
+            current = parent;
+        }
     }
 
     private static string GetString(JsonElement value, string property) => value.TryGetProperty(property, out var item) && item.ValueKind == JsonValueKind.String ? item.GetString() ?? string.Empty : string.Empty;

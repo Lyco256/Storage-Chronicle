@@ -20,7 +20,7 @@ public sealed class OracleValidatorTests
             var file = FileId.Create("file");
             await CreateHistoryAsync(root, volume, parent, file, includeWrite: true, deleteMetadata: false, moveFileId: null);
 
-            var resultPath = Path.Combine(root, "evidence.json");
+            var resultPath = OutputPath(root);
             var exitCode = await Program.Main(new[] { "--oracle", WriteOracle(root, new[]
             {
                 Operation("DirectoryCreate", "folder", null, 1),
@@ -49,7 +49,7 @@ public sealed class OracleValidatorTests
             var file = FileId.Create("file");
             await CreateHistoryAsync(root, volume, parent, file, includeWrite: true, deleteMetadata: false, moveFileId: null);
 
-            var resultPath = Path.Combine(root, "evidence.json");
+            var resultPath = OutputPath(root);
             var exitCode = await Program.Main(new[] { "--oracle", WriteOracle(root, new[]
             {
                 Operation("DataWrite", "other\\same.txt", null, 1)
@@ -78,7 +78,7 @@ public sealed class OracleValidatorTests
             var wrongFile = FileId.Create("wrong-file");
             await CreateHistoryAsync(root, volume, parent, file, includeWrite: false, deleteMetadata: false, moveFileId: wrongFile);
 
-            var resultPath = Path.Combine(root, "evidence.json");
+            var resultPath = OutputPath(root);
             var exitCode = await Program.Main(new[] { "--oracle", WriteOracle(root, new[]
             {
                 Operation("Rename", "folder\\renamed.txt", "folder\\same.txt", 1)
@@ -105,7 +105,7 @@ public sealed class OracleValidatorTests
             var file = FileId.Create("file");
             await CreateHistoryAsync(root, volume, parent, file, includeWrite: false, deleteMetadata: true, moveFileId: null);
 
-            var resultPath = Path.Combine(root, "evidence.json");
+            var resultPath = OutputPath(root);
             var exitCode = await Program.Main(new[] { "--oracle", WriteOracle(root, new[]
             {
                 Operation("Delete", "folder\\same.txt", null, 1)
@@ -114,6 +114,105 @@ public sealed class OracleValidatorTests
             Assert.Equal(2, exitCode);
             using var document = JsonDocument.Parse(await File.ReadAllTextAsync(resultPath));
             Assert.Contains(document.RootElement.GetProperty("FailureReasons").EnumerateArray(), value => value.GetString() == "OracleCoverage.Delete");
+        }
+        finally
+        {
+            DeleteTempRoot(root);
+        }
+    }
+
+    [Fact]
+    public async Task ExistingEvidenceFileIsPreservedAndNeverOverwritten()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var volume = VolumeId.Create("test-volume");
+            var parent = FileId.Create("parent");
+            var file = FileId.Create("file");
+            await CreateHistoryAsync(root, volume, parent, file, includeWrite: true, deleteMetadata: false, moveFileId: null);
+            var resultPath = OutputPath(root);
+            byte[] existing = [0x53, 0x41, 0x46, 0x45];
+            await File.WriteAllBytesAsync(resultPath, existing);
+
+            var exitCode = await Program.Main(new[] { "--oracle", WriteOracle(root, new[] { Operation("Create", "file.txt", null, 1) }), "--history", Path.Combine(root, "history"), "--output", resultPath });
+
+            Assert.Equal(1, exitCode);
+            Assert.Equal(existing, await File.ReadAllBytesAsync(resultPath));
+        }
+        finally
+        {
+            DeleteTempRoot(root);
+        }
+    }
+
+    [Fact]
+    public async Task EvidenceOutsideRunOwnedOracleRootIsRejectedWithoutCreatingParent()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var volume = VolumeId.Create("test-volume");
+            var parent = FileId.Create("parent");
+            var file = FileId.Create("file");
+            await CreateHistoryAsync(root, volume, parent, file, includeWrite: true, deleteMetadata: false, moveFileId: null);
+            var outputParent = Path.Combine(root, "unapproved-output");
+            var outputPath = Path.Combine(outputParent, "evidence.json");
+
+            var exitCode = await Program.Main(new[] { "--oracle", WriteOracle(root, new[] { Operation("Create", "file.txt", null, 1) }), "--history", Path.Combine(root, "history"), "--output", outputPath });
+
+            Assert.Equal(1, exitCode);
+            Assert.False(Directory.Exists(outputParent));
+        }
+        finally
+        {
+            DeleteTempRoot(root);
+        }
+    }
+
+    [Fact]
+    public async Task MissingRunMarkerRejectsEvidenceWithoutCreatingOutput()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var volume = VolumeId.Create("test-volume");
+            var parent = FileId.Create("parent");
+            var file = FileId.Create("file");
+            await CreateHistoryAsync(root, volume, parent, file, includeWrite: true, deleteMetadata: false, moveFileId: null);
+            var oraclePath = WriteOracle(root, new[] { Operation("Create", "file.txt", null, 1) });
+            File.Delete(Path.Combine(root, ".storage-chronicle-testlab-marker.json"));
+            var outputPath = OutputPath(root);
+
+            var exitCode = await Program.Main(new[] { "--oracle", oraclePath, "--history", Path.Combine(root, "history"), "--output", outputPath });
+
+            Assert.Equal(1, exitCode);
+            Assert.False(File.Exists(outputPath));
+        }
+        finally
+        {
+            DeleteTempRoot(root);
+        }
+    }
+
+    [Fact]
+    public async Task EvidenceDirectoryCollisionIsRejectedAndPreserved()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var volume = VolumeId.Create("test-volume");
+            var parent = FileId.Create("parent");
+            var file = FileId.Create("file");
+            await CreateHistoryAsync(root, volume, parent, file, includeWrite: true, deleteMetadata: false, moveFileId: null);
+            var outputPath = OutputPath(root);
+            Directory.CreateDirectory(outputPath);
+
+            var exitCode = await Program.Main(new[] { "--oracle", WriteOracle(root, new[] { Operation("Create", "file.txt", null, 1) }), "--history", Path.Combine(root, "history"), "--output", outputPath });
+
+            Assert.Equal(1, exitCode);
+            Assert.True(Directory.Exists(outputPath));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(outputPath));
         }
         finally
         {
@@ -188,10 +287,14 @@ public sealed class OracleValidatorTests
     private static string WriteOracle(string root, IReadOnlyList<object> operations)
     {
         var path = Path.Combine(root, "oracle.json");
-        var payload = new { Schema = "StorageChronicle.FileMutationWorkload.v2", RunId = "test-run", Scenario = "full", CompletedUtc = DateTimeOffset.UtcNow, Process = new { ProcessId = 1, StartTimeUtc = DateTime.UtcNow, ExecutablePath = "test" }, RecordCount = operations.Count, Operations = operations };
+        var payload = new { Schema = "StorageChronicle.FileMutationWorkload.v2", RunId = GetRunGuid(root), Scenario = "full", CompletedUtc = DateTimeOffset.UtcNow, Process = new { ProcessId = 1, StartTimeUtc = DateTime.UtcNow, ExecutablePath = "test" }, RecordCount = operations.Count, Operations = operations };
         File.WriteAllText(path, JsonSerializer.Serialize(payload));
         return path;
     }
+
+    private static string OutputPath(string root) => Path.Combine(root, $"real-io-evidence-{GetRunGuid(root)}.json");
+
+    private static string GetRunGuid(string root) => Guid.ParseExact(Path.GetFileName(root), "N").ToString("D");
 
     private static object Operation(string operation, string path, string? oldPath, long sequence) => new { Sequence = sequence, Operation = operation, RelativePath = path, OldRelativePath = oldPath, StartedUtc = DateTimeOffset.UtcNow, CompletedUtc = DateTimeOffset.UtcNow };
 
@@ -202,6 +305,10 @@ public sealed class OracleValidatorTests
         Directory.CreateDirectory(path);
         using var marker = new FileStream(Path.Combine(path, ".test-owner.json"), FileMode.CreateNew, FileAccess.Write, FileShare.Read);
         JsonSerializer.Serialize(marker, new { Schema = "StorageChronicle.TestFixtureOwner.v1", RunId = runId });
+        var workloadRunId = Guid.ParseExact(runId, "N").ToString("D");
+        var workloadMarker = new { Schema = "StorageChronicle.TestLabDataMarker.v1", TestId = workloadRunId, Role = "Workload", VolumeLabel = "SC_TEST_VOLUME", FileSystem = "NTFS", VolumeUniqueId = "test-volume-" + runId };
+        File.WriteAllText(Path.Combine(path, ".storage-chronicle-testlab-marker.json"), JsonSerializer.Serialize(workloadMarker));
+        File.WriteAllText(Path.Combine(path, "StorageChronicleTestVolume.json"), JsonSerializer.Serialize(workloadMarker));
         return path;
     }
 

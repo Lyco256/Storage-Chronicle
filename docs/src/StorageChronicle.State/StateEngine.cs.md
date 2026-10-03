@@ -16,6 +16,8 @@ Contains the state-engine read models, public state API, typed continuity/corrup
 
 Source cursors are scoped by volume, mount session, and event origin. A repeated event ID is idempotent; a missing, reversed, or conflicting source sequence throws before mutation. Effective timestamps are monotonic even if the PC clock regresses. Directory moves do not enumerate or write descendant events. Ancestor traversal detects cycles and returns a corruption exception before applying a bad relationship. `parentKnown=true` preserves a null parent as a known volume root, while an explicit unknown-parent marker remains unplaced.
 
+Offline history reconstruction may use `ApplyForReconstructionAsync` after detecting and recording an explicit source-sequence gap. This method preserves strict monotonic ordering, event validation, cycle checks, and the original event sequence; it does not fabricate missing facts. Its caller must report the gap and must not mark the reconstructed acceptance as fully eligible when continuity is required.
+
 ## Failure, cancellation, and lifetime
 
 The implementation is thread-safe for concurrent readers and one or more writers through a private lock. Invalid events, sequence discontinuities, and cycles preserve the pre-call state. Cancellation is checked before locking, after locking, and while building a snapshot. The engine is process-lifetime state and has no I/O or recovery side effects; callers recover by applying the missing event and retrying.

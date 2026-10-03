@@ -83,7 +83,26 @@ function Assert-ContractCase {
     catch { [void]$script:failed.Add("${Name}: $($_.Exception.Message)") }
 }
 
+function Assert-RetiredVirtualBoxEntryPoint {
+    param([Parameter(Mandatory = $true)][string]$RelativePath)
+    $path = Join-Path $repositoryRoot $RelativePath
+    $source = Get-Content -Raw -LiteralPath $path
+    if ($source -notmatch 'Retired under Requirement 37') { throw "Legacy VM entry point is not marked retired: $RelativePath" }
+    foreach ($forbidden in @('Invoke-VBoxManage', 'Invoke-VBoxGuestControl', 'Restore-TestLabBaseline', 'Add-VirtualBoxVm', 'New-Item', 'Remove-Item', 'Set-Content', 'Start-Process', 'Get-TestLabConfig')) {
+        if ($source.Contains($forbidden)) { throw "Retired VM entry point contains an executable-I/O helper '$forbidden': $RelativePath" }
+    }
+}
+
 try {
+    Assert-ContractCase 'legacy VM creation entry point is inert' {
+        Assert-RetiredVirtualBoxEntryPoint 'tools/TestEnvironment/Initialize-TestLab.ps1'
+    }
+    Assert-ContractCase 'legacy guest command entry point is inert' {
+        Assert-RetiredVirtualBoxEntryPoint 'tools/TestEnvironment/Invoke-TestLabCommand.ps1'
+    }
+    Assert-ContractCase 'legacy snapshot reset entry point is inert' {
+        Assert-RetiredVirtualBoxEntryPoint 'tools/TestEnvironment/Reset-TestVm.ps1'
+    }
     Assert-ContractCase 'exact dynamic Windows 11 profile passes' {
         Assert-TestLabVmProfile -Name 'SC-Test-W11-VBox' -Root $testRoot | Out-Null
         Assert-TestLabVmDisks -Vm (Assert-ExactTestLabVm -Name 'SC-Test-W11-VBox') -Root $testRoot
