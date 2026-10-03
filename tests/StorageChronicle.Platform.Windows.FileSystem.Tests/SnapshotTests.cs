@@ -13,21 +13,34 @@ namespace StorageChronicle.Platform.Windows.FileSystem.Tests;
 public sealed class SnapshotTests
 {
     [Fact]
-    public async Task SnapshotUsesTheOpenedDirectoryObjectAfterItsPathIsReplaced()
+    public async Task SnapshotOpensEveryDescendantRelativeToItsPinnedParentHandle()
     {
-        var root = Directory.CreateTempSubdirectory("storage-chronicle-snapshot-handle");
+        var root = Directory.CreateTempSubdirectory("storage-chronicle-snapshot-relative");
         try
         {
-            var native = new ReplacedPathFileNative(root.FullName);
+            var childDirectory = Directory.CreateDirectory(Path.Combine(root.FullName, "child"));
+            File.WriteAllText(Path.Combine(childDirectory.FullName, "visible.txt"), "not read by collector");
+            var native = new FakeFileNative(path =>
+            {
+                var attributes = File.GetAttributes(path);
+                var kind = (attributes & FileAttributes.ReparsePoint) != 0
+                    ? FileKind.ReparsePoint
+                    : (attributes & FileAttributes.Directory) != 0 ? FileKind.Directory : FileKind.File;
+                return new NativeFileMetadataRecord(FileId.Create("id:" + path), null, Path.GetFileName(path), kind,
+                    kind == FileKind.File ? new FileInfo(path).Length : null, null, null, null, null, null, attributes,
+                    kind == FileKind.ReparsePoint ? "ReparsePoint" : null, true, false);
+            });
             var volume = new VolumeDescriptor(VolumeId.Create("V"), "FAT32", [root.FullName], false, true, false, false, true);
             var reader = new WindowsVolumeSnapshotReader(native);
 
             var events = await ReadAllAsync(reader.ReadInitialSnapshotAsync(volume, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
 
-            Assert.Contains(events, value => value.Name == "candidate" && value.Metadata?.Kind == FileKind.Directory);
-            Assert.Contains(events, value => value.Hint == CanonicalOperation.UnverifiedGap);
-            Assert.DoesNotContain(events, value => value.Name == "target-child");
-            Assert.Equal(2, native.OpenedPaths.Count);
+            Assert.Contains(events, value => value.Name == "child" && value.Metadata?.Kind == FileKind.Directory);
+            Assert.Contains(events, value => value.Name == "visible.txt" && value.Metadata?.Kind == FileKind.File);
+            Assert.Single(native.OpenedPaths);
+            Assert.Equal(2, native.OpenedChildren.Count);
+            Assert.Equal(0, native.PathMetadataReadCount);
+            Assert.NotEqual(native.OpenedChildren[0].Parent, native.OpenedChildren[1].Parent);
         }
         finally
         {
@@ -88,6 +101,46 @@ public sealed class SnapshotTests
         }
         finally
         {
+            sandbox.Delete(true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "WindowsApi")]
+    public async Task NativeSnapshotDoesNotTraverseDirectoryReparsePointSwappedAfterEnumeration()
+    {
+        if (!OperatingSystem.IsWindows()) Assert.Skip("This test requires Windows handle-relative file opens.");
+        var sandbox = Directory.CreateTempSubdirectory("storage-chronicle-snapshot-swap");
+        var root = Directory.CreateDirectory(Path.Combine(sandbox.FullName, "root"));
+        var target = Directory.CreateDirectory(Path.Combine(sandbox.FullName, "target"));
+        var candidatePath = Path.Combine(root.FullName, "candidate");
+        _ = Directory.CreateDirectory(candidatePath);
+        var movedOriginal = Path.Combine(sandbox.FullName, "original-candidate");
+        File.WriteAllText(Path.Combine(target.FullName, "outside.txt"), "fixture only; collector must not read content");
+        var swapped = false;
+        try
+        {
+            var nativeType = typeof(WindowsVolumeSnapshotReader).Assembly.GetType("StorageChronicle.Platform.Windows.FileSystem.Interop.WindowsNativeApi", throwOnError: true)!;
+            var inner = Assert.IsAssignableFrom<IWindowsFileMetadataNative>(Activator.CreateInstance(nativeType, nonPublic: true));
+            var native = new SwapDirectoryEntryNative(inner, candidatePath, movedOriginal, target.FullName);
+            var volume = new VolumeDescriptor(VolumeId.Create("V"), "NTFS", [root.FullName], false, false, false, true, true);
+            var reader = new WindowsVolumeSnapshotReader(native);
+            var events = await ReadAllAsync(reader.ReadInitialSnapshotAsync(volume, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
+            if (native.SwapFailed)
+            {
+                Assert.Skip("The host cannot create an unprivileged directory symbolic link during enumeration.");
+                return;
+            }
+
+            swapped = native.SwapCompleted;
+            Assert.True(swapped, "The test must replace the enumerated entry before its handle-relative open.");
+            Assert.Contains(events, value => value.Name == "candidate" && value.Metadata?.Kind == FileKind.SymbolicLink && (value.Metadata.Attributes & FileAttributes.ReparsePoint) != 0);
+            Assert.DoesNotContain(events, value => value.Name == "outside.txt");
+        }
+        finally
+        {
+            if (Directory.Exists(Path.Combine(root.FullName, "candidate"))) Directory.Delete(Path.Combine(root.FullName, "candidate"));
+            if (Directory.Exists(movedOriginal)) Directory.Delete(movedOriginal, recursive: true);
             sandbox.Delete(true);
         }
     }
@@ -171,35 +224,40 @@ public sealed class SnapshotTests
         return result;
     }
 
-    private sealed class ReplacedPathFileNative(string rootPath) : IWindowsFileMetadataNative
+    private sealed class SwapDirectoryEntryNative(IWindowsFileMetadataNative inner, string candidatePath, string movedOriginalPath, string targetPath) : IWindowsFileMetadataNative
     {
-        private readonly Dictionary<nint, string> opened = [];
-        private int nextHandle = 10;
-        public List<string> OpenedPaths { get; } = [];
+        private int swapState;
+        public bool SwapCompleted => Volatile.Read(ref swapState) == 1;
+        public bool SwapFailed => Volatile.Read(ref swapState) == 2;
 
-        public SafeFileHandle OpenDirectory(string path)
-        {
-            OpenedPaths.Add(path);
-            if (OpenedPaths.Count > 1) throw new IOException("The queued final component was replaced by a reparse point before it could be opened.");
-            var handle = new SafeFileHandle(new IntPtr(nextHandle++), ownsHandle: false);
-            opened.Add(handle.DangerousGetHandle(), path);
-            return handle;
-        }
+        public NativeFileMetadataRecord ReadMetadata(string path, string? parentPath = null) => inner.ReadMetadata(path, parentPath);
+        public NativeFileMetadataRecord ReadMetadata(SafeFileHandle handle, string path, string? parentPath = null) => inner.ReadMetadata(handle, path, parentPath);
+        public NativeFileMetadataRecord ReadMetadataRelative(SafeFileHandle handle, string path, SafeFileHandle? parentDirectoryHandle) => inner.ReadMetadataRelative(handle, path, parentDirectoryHandle);
+        public SafeFileHandle OpenDirectory(string path) => inner.OpenDirectory(path);
+        public SafeFileHandle OpenChild(SafeFileHandle parentDirectoryHandle, string childName, FileAttributes enumeratedAttributes) => inner.OpenChild(parentDirectoryHandle, childName, enumeratedAttributes);
 
         public IEnumerable<NativeDirectoryEntry> EnumerateDirectory(SafeFileHandle directoryHandle)
         {
-            Assert.Equal(rootPath, opened[directoryHandle.DangerousGetHandle()]);
-            return [new NativeDirectoryEntry("candidate", FileAttributes.Directory)];
-        }
+            foreach (var entry in inner.EnumerateDirectory(directoryHandle))
+            {
+                if (entry.Name.Equals("candidate", StringComparison.OrdinalIgnoreCase) && Interlocked.CompareExchange(ref swapState, -1, 0) == 0)
+                {
+                    try
+                    {
+                        Directory.Move(candidatePath, movedOriginalPath);
+                        Directory.CreateSymbolicLink(candidatePath, targetPath);
+                        Volatile.Write(ref swapState, 1);
+                    }
+                    catch (Exception exception) when (exception is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+                    {
+                        Volatile.Write(ref swapState, 2);
+                        throw;
+                    }
+                }
 
-        public NativeFileMetadataRecord ReadMetadata(string path, string? parentPath = null) => CreateMetadata(path);
-        public NativeFileMetadataRecord ReadMetadata(SafeFileHandle handle, string path, string? parentPath = null) => CreateMetadata(path);
-
-        private NativeFileMetadataRecord CreateMetadata(string path)
-        {
-            var isRoot = string.Equals(path, rootPath, StringComparison.OrdinalIgnoreCase);
-            var name = isRoot ? Path.GetFileName(rootPath) : Path.GetFileName(path);
-            return new NativeFileMetadataRecord(FileId.Create(isRoot ? "root" : "candidate"), isRoot ? null : FileId.Create("root"), name, FileKind.Directory, null, null, null, null, null, null, FileAttributes.Directory, null, true, false);
+                yield return entry;
+            }
         }
     }
+
 }

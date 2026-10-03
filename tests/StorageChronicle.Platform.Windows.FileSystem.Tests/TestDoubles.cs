@@ -27,13 +27,49 @@ internal sealed class FakeFileNative(Func<string, NativeFileMetadataRecord>? met
     private readonly Func<string, NativeFileMetadataRecord> metadata = metadata is null
         ? static path => new NativeFileMetadataRecord(FileId.Create("id:" + path), null, Path.GetFileName(path), FileKind.Directory, null, null, null, null, null, null, FileAttributes.Directory, null, true, false)
         : metadata;
+    private readonly Dictionary<nint, string> handlePaths = [];
+    private int nextHandle = 1000;
     public List<string> OpenedPaths { get; } = [];
-    public NativeFileMetadataRecord ReadMetadata(string path, string? parentPath = null) => metadata(path);
-    public NativeFileMetadataRecord ReadMetadata(SafeFileHandle handle, string path, string? parentPath = null) => metadata(path);
-    public IEnumerable<NativeDirectoryEntry> EnumerateDirectory(SafeFileHandle directoryHandle) => OpenedPaths.Count == 0
-        ? Array.Empty<NativeDirectoryEntry>()
-        : Directory.EnumerateFileSystemEntries(OpenedPaths[^1]).Select(path => new NativeDirectoryEntry(Path.GetFileName(path), File.GetAttributes(path)));
-    public SafeFileHandle OpenDirectory(string path) { OpenedPaths.Add(path); return new SafeFileHandle(new IntPtr(1234), ownsHandle: false); }
+    public List<(nint Parent, string Name)> OpenedChildren { get; } = [];
+    public int PathMetadataReadCount { get; private set; }
+    public NativeFileMetadataRecord ReadMetadata(string path, string? parentPath = null)
+    {
+        PathMetadataReadCount++;
+        return metadata(path);
+    }
+
+    public NativeFileMetadataRecord ReadMetadata(SafeFileHandle handle, string path, string? parentPath = null)
+    {
+        PathMetadataReadCount++;
+        return metadata(path);
+    }
+    public NativeFileMetadataRecord ReadMetadataRelative(SafeFileHandle handle, string path, SafeFileHandle? parentDirectoryHandle) => metadata(path);
+    public IEnumerable<NativeDirectoryEntry> EnumerateDirectory(SafeFileHandle directoryHandle)
+    {
+        var path = handlePaths[directoryHandle.DangerousGetHandle()];
+        return Directory.Exists(path)
+            ? Directory.EnumerateFileSystemEntries(path).Select(entry => new NativeDirectoryEntry(Path.GetFileName(entry), File.GetAttributes(entry))).ToArray()
+            : Array.Empty<NativeDirectoryEntry>();
+    }
+
+    public SafeFileHandle OpenDirectory(string path)
+    {
+        OpenedPaths.Add(path);
+        return CreateHandle(path);
+    }
+
+    public SafeFileHandle OpenChild(SafeFileHandle parentDirectoryHandle, string childName, FileAttributes enumeratedAttributes)
+    {
+        OpenedChildren.Add((parentDirectoryHandle.DangerousGetHandle(), childName));
+        return CreateHandle(Path.Combine(handlePaths[parentDirectoryHandle.DangerousGetHandle()], childName));
+    }
+
+    private SafeFileHandle CreateHandle(string path)
+    {
+        var handle = new SafeFileHandle(new IntPtr(Interlocked.Increment(ref nextHandle)), ownsHandle: false);
+        handlePaths.Add(handle.DangerousGetHandle(), path);
+        return handle;
+    }
 }
 
 internal sealed class FakeChangeNative(params NativeDirectoryChangeReadResult[] reads) : IWindowsDirectoryChangeNative

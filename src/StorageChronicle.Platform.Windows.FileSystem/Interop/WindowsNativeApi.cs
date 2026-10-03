@@ -9,9 +9,17 @@ namespace StorageChronicle.Platform.Windows.FileSystem.Interop;
 internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetadataNative, IWindowsDirectoryChangeNative, IWindowsDeviceNotificationNative
 {
     private const uint FileListDirectory = 0x0001;
+    private const uint FileReadAttributes = 0x0080;
+    private const uint Synchronize = 0x00100000;
     private const uint FileShareRead = 0x00000001;
     private const uint FileShareWrite = 0x00000002;
     private const uint FileShareDelete = 0x00000004;
+    private const uint FileOpen = 1;
+    private const uint FileDirectoryFile = 0x00000001;
+    private const uint FileNonDirectoryFile = 0x00000040;
+    private const uint FileSynchronousIoNonAlert = 0x00000020;
+    private const uint FileOpenReparsePoint = 0x00200000;
+    private const uint ObjectCaseInsensitive = 0x00000040;
     private const uint OpenExisting = 3;
     private const uint FileFlagBackupSemantics = 0x02000000;
     private const uint FileFlagOpenReparsePoint = 0x00200000;
@@ -23,7 +31,6 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
     private const uint FileNotifyChangeLastWrite = 0x00000010;
     private const uint FileNotifyChangeCreation = 0x00000040;
     private const uint FileNotifyChangeSecurity = 0x00000100;
-    private const uint FileReadAttributes = 0x00000080;
     private const int FileBasicInfoClass = 0;
     private const int FileStandardInfoClass = 1;
     private const int FileAttributeTagInfoClass = 9;
@@ -102,6 +109,33 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
         ArgumentNullException.ThrowIfNull(handle);
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         EnsureHandle(handle);
+        FileId? parentId = null;
+        if (!string.IsNullOrWhiteSpace(parentPath))
+        {
+            using var parentHandle = OpenMetadataPath(parentPath);
+            if (TryReadFileId(parentHandle, out var parentValue)) parentId = new FileId(parentValue);
+        }
+
+        return ReadMetadataCore(handle, path, parentId);
+    }
+
+    public NativeFileMetadataRecord ReadMetadataRelative(SafeFileHandle handle, string path, SafeFileHandle? parentDirectoryHandle)
+    {
+        ArgumentNullException.ThrowIfNull(handle);
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        EnsureHandle(handle);
+        FileId? parentId = null;
+        if (parentDirectoryHandle is not null)
+        {
+            EnsureHandle(parentDirectoryHandle);
+            if (TryReadFileId(parentDirectoryHandle, out var parentValue)) parentId = new FileId(parentValue);
+        }
+
+        return ReadMetadataCore(handle, path, parentId);
+    }
+
+    private static NativeFileMetadataRecord ReadMetadataCore(SafeFileHandle handle, string path, FileId? parentId)
+    {
         var basic = new FileBasicInfo();
         var standard = new FileStandardInfo();
         var attributeTag = new FileAttributeTagInfo();
@@ -115,13 +149,6 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
         var attributes = (FileAttributes)attributeTag.FileAttributes;
         var kind = GetFileKind(attributes, attributeTag.ReparseTag);
         var fileId = TryReadFileId(handle, out var id) ? new FileId(id) : new FileId("path:" + path);
-        FileId? parentId = null;
-        if (!string.IsNullOrWhiteSpace(parentPath))
-        {
-            using var parentHandle = OpenMetadataPath(parentPath);
-            if (TryReadFileId(parentHandle, out var parentValue)) parentId = new FileId(parentValue);
-        }
-
         var name = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         if (string.IsNullOrEmpty(name)) name = path;
         return new NativeFileMetadataRecord(
@@ -202,6 +229,36 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
         {
             handle.Dispose();
             throw new IOException("The final path component is not a traversable non-reparse directory.");
+        }
+
+        return handle;
+    }
+
+    public SafeFileHandle OpenChild(SafeFileHandle parentDirectoryHandle, string childName, FileAttributes enumeratedAttributes)
+    {
+        ArgumentNullException.ThrowIfNull(parentDirectoryHandle);
+        EnsureHandle(parentDirectoryHandle);
+        ArgumentException.ThrowIfNullOrWhiteSpace(childName);
+        if (childName is "." or ".." || childName.IndexOfAny([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar, ':', '\0']) >= 0 || childName.Length > ushort.MaxValue / sizeof(char) - 1)
+            throw new ArgumentException("Only one valid directory-entry component may be opened relative to its parent handle.", nameof(childName));
+
+        var isDirectory = (enumeratedAttributes & FileAttributes.Directory) != 0;
+        var access = FileReadAttributes | Synchronize | (isDirectory ? FileListDirectory : 0);
+        var createOptions = FileOpenReparsePoint | FileSynchronousIoNonAlert | (isDirectory ? FileDirectoryFile : FileNonDirectoryFile);
+        var handle = NtOpenRelative(parentDirectoryHandle, childName, access, FileShareRead | FileShareWrite | FileShareDelete, FileOpen, createOptions);
+        var tag = new FileAttributeTagInfo();
+        if (!GetFileInformationByHandleEx(handle, FileAttributeTagInfoClass, ref tag, (uint)Marshal.SizeOf<FileAttributeTagInfo>()))
+        {
+            var error = Marshal.GetLastWin32Error();
+            handle.Dispose();
+            throw new Win32Exception(error, "The handle-relative child attributes could not be verified.");
+        }
+
+        var actualIsDirectory = ((FileAttributes)tag.FileAttributes & FileAttributes.Directory) != 0;
+        if (actualIsDirectory != isDirectory)
+        {
+            handle.Dispose();
+            throw new IOException("A directory entry changed type while being opened relative to its parent; traversal stopped for this entry.");
         }
 
         return handle;
@@ -360,6 +417,54 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
         return handle;
     }
 
+    private static SafeFileHandle NtOpenRelative(SafeFileHandle parent, string name, uint desiredAccess, uint shareAccess, uint disposition, uint options)
+    {
+        var parentReference = false;
+        var nameBuffer = IntPtr.Zero;
+        var unicodeNamePointer = IntPtr.Zero;
+        var attributesPointer = IntPtr.Zero;
+        try
+        {
+            parent.DangerousAddRef(ref parentReference);
+            nameBuffer = Marshal.StringToHGlobalUni(name);
+            var unicodeName = new UnicodeString
+            {
+                Length = checked((ushort)(name.Length * sizeof(char))),
+                MaximumLength = checked((ushort)((name.Length + 1) * sizeof(char))),
+                Buffer = nameBuffer
+            };
+            unicodeNamePointer = Marshal.AllocHGlobal(Marshal.SizeOf<UnicodeString>());
+            Marshal.StructureToPtr(unicodeName, unicodeNamePointer, false);
+            var attributes = new ObjectAttributes
+            {
+                Length = Marshal.SizeOf<ObjectAttributes>(),
+                RootDirectory = parent.DangerousGetHandle(),
+                ObjectName = unicodeNamePointer,
+                Attributes = ObjectCaseInsensitive
+            };
+            attributesPointer = Marshal.AllocHGlobal(Marshal.SizeOf<ObjectAttributes>());
+            Marshal.StructureToPtr(attributes, attributesPointer, false);
+            var status = NtCreateFile(out var rawHandle, desiredAccess, attributesPointer, out _, IntPtr.Zero,
+                0x00000080, shareAccess, disposition, options, IntPtr.Zero, 0);
+            if (status < 0)
+            {
+                var error = unchecked((int)RtlNtStatusToDosError(status));
+                if (error == 2) throw new FileNotFoundException("The handle-relative directory entry was not found.", name);
+                if (error == 3) throw new DirectoryNotFoundException("The handle-relative parent directory was not found.");
+                throw new Win32Exception(error, $"The handle-relative child open failed (NTSTATUS 0x{status:X8}).");
+            }
+
+            return new SafeFileHandle(rawHandle, ownsHandle: true);
+        }
+        finally
+        {
+            if (attributesPointer != IntPtr.Zero) Marshal.FreeHGlobal(attributesPointer);
+            if (unicodeNamePointer != IntPtr.Zero) Marshal.FreeHGlobal(unicodeNamePointer);
+            if (nameBuffer != IntPtr.Zero) Marshal.FreeHGlobal(nameBuffer);
+            if (parentReference) parent.DangerousRelease();
+        }
+    }
+
     private static DateTimeOffset? FromFileTime(long value) => value <= 0 ? null : DateTimeOffset.FromFileTime(value);
 
     private static bool TryReadFileId(SafeFileHandle handle, out string id)
@@ -479,6 +584,8 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetFileInformationByHandleEx(SafeFileHandle fileHandle, int fileInformationClass, ref FileStandardInfo fileInformation, uint bufferSize);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetFileInformationByHandleEx(SafeFileHandle fileHandle, int fileInformationClass, ref FileAttributeTagInfo fileInformation, uint bufferSize);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetFileInformationByHandleEx(SafeFileHandle fileHandle, int fileInformationClass, IntPtr fileInformation, uint bufferSize);
+    [DllImport("ntdll.dll")] private static extern int NtCreateFile(out IntPtr handle, uint desiredAccess, IntPtr objectAttributes, out IoStatusBlock ioStatusBlock, IntPtr allocationSize, uint fileAttributes, uint shareAccess, uint createDisposition, uint createOptions, IntPtr eaBuffer, uint eaLength);
+    [DllImport("ntdll.dll")] private static extern uint RtlNtStatusToDosError(int status);
     [DllImport("Cfgmgr32.dll", SetLastError = false)] private static extern uint CmRegisterNotification(ref CmNotifyFilter filter, IntPtr context, CmNotifyCallback callback, out IntPtr notifyContext);
     [DllImport("Cfgmgr32.dll", SetLastError = false)] private static extern uint CmUnregisterNotification(IntPtr notifyContext);
 
@@ -490,6 +597,10 @@ internal sealed class WindowsNativeApi : IWindowsVolumeNative, IWindowsFileMetad
     private struct FileAttributeTagInfo { public uint FileAttributes; public uint ReparseTag; }
     [StructLayout(LayoutKind.Sequential)]
     private struct NativeOverlappedData { public IntPtr Internal; public IntPtr InternalHigh; public uint Offset; public uint OffsetHigh; public IntPtr EventHandle; }
+
+    [StructLayout(LayoutKind.Sequential)] private struct UnicodeString { public ushort Length; public ushort MaximumLength; public IntPtr Buffer; }
+    [StructLayout(LayoutKind.Sequential)] private struct ObjectAttributes { public int Length; public IntPtr RootDirectory; public IntPtr ObjectName; public uint Attributes; public IntPtr SecurityDescriptor; public IntPtr SecurityQualityOfService; }
+    [StructLayout(LayoutKind.Sequential)] private struct IoStatusBlock { public IntPtr Status; public UIntPtr Information; }
 }
 
 /// <summary>Windows drive type values returned by GetDriveTypeW.</summary>

@@ -52,11 +52,17 @@ public interface IWindowsFileMetadataNative
     /// <summary>Reads identity and standard metadata for the object already bound to an open handle.</summary>
     NativeFileMetadataRecord ReadMetadata(SafeFileHandle handle, string path, string? parentPath = null);
 
+    /// <summary>Reads metadata for an object and its parent using handles rooted in the same traversal chain.</summary>
+    NativeFileMetadataRecord ReadMetadataRelative(SafeFileHandle handle, string path, SafeFileHandle? parentDirectoryHandle);
+
     /// <summary>Enumerates direct child names from an open, non-reparse directory handle.</summary>
     IEnumerable<NativeDirectoryEntry> EnumerateDirectory(SafeFileHandle directoryHandle);
 
     /// <summary>Opens a directory without following its final-component reparse point.</summary>
     SafeFileHandle OpenDirectory(string path);
+
+    /// <summary>Opens one file-system child relative to an already-open directory, without resolving path ancestors or following the final reparse point.</summary>
+    SafeFileHandle OpenChild(SafeFileHandle parentDirectoryHandle, string childName, FileAttributes enumeratedAttributes);
 }
 
 /// <summary>Thin interface over ReadDirectoryChangesW.</summary>
