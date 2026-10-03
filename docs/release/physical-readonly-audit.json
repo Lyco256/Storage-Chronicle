@@ -1,6 +1,6 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "ddc293db7144a3756d6aa36d8a8a01acf34c4660",
+  "targetCommit": "3509fde90b384f20bf2f3c7738733098b745aa24",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -70,11 +70,17 @@
     "tests/StorageChronicle.Platform.Windows.FileSystem.Tests/VolumeAndMediaTests.cs"
   ],
   "workingTreeChanges": [
+    "build/Test-Privileged.ps1",
+    "build/package/Test-Installer.ps1",
+    "tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1",
     "tools/StorageChronicle.FileMutationWorkload/Program.cs",
-    "tests/StorageChronicle.Architecture.Tests/ArchitectureContractTests.cs",
-    "tools/TestEnvironment/Invoke-WindowsTestLab.ps1",
     "tests/StorageChronicle.Installer.Tests/InstallerManifestTests.cs",
+    "tests/StorageChronicle.Architecture.Tests/ArchitectureContractTests.cs",
+    "docs/build/quality/Test-Privileged.ps1.md",
+    "docs/build/package/Test-Installer.ps1.md",
+    "docs/tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1.md",
     "docs/tools/StorageChronicle.FileMutationWorkload/Program.cs.md",
+    "tools/TestEnvironment/Invoke-WindowsTestLab.ps1",
     "docs/tools/TestEnvironment/Invoke-WindowsTestLab.ps1.md",
     "docs/release/main-readiness.md",
     "docs/release/physical-readonly-audit.md",
@@ -139,14 +145,14 @@
         "status": "PARTIAL",
         "path": "tools/StorageChronicle.FileMutationWorkload/Program.cs",
         "lines": [80, 385],
-        "summary": "Commit ddc293d requires a canonical run GUID, an existing marker-only root with matching volume markers/label/filesystem and no reparse points, uses create-new for files and a direct run-named oracle, and verifies exact known tree contents before recursive delete. Architecture source-contract tests and the full fast suite pass. Residual path-based check/use races and root/volume ownership-marker authenticity remain unproven; do not execute before the complete Requirement 37 audit and independent runtime gates."
+        "summary": "Commits ddc293d and 3509fde require a canonical run GUID, an existing marker-only root with matching run/role/volume GUID/label/filesystem and no reparse points, use create-new for files and a direct run-named oracle, and verify exact known tree contents before recursive delete. Architecture source-contract tests and the full fast suite pass. Residual path-based check/use races and root/volume ownership-marker authenticity remain unproven; do not execute before the complete Requirement 37 audit and independent runtime gates."
       },
       {
         "id": "privileged-existing-root-and-reparse-confinement",
-        "status": "FAIL",
+        "status": "PARTIAL",
         "path": "build/Test-Privileged.ps1",
         "lines": [559, 576, 739, 759],
-        "summary": "Some existing acceptance-root paths can be admitted by forgeable JSON markers without proving run-owned volume identity, full reparse ancestry, and containment. Must harden before privileged lane."
+        "summary": "Commit 3509fde rejects volume roots, protected/synchronized descendants, reparse paths, any fixture-root entry except the two expected run-bound markers, and marker/live-volume identity, label, and filesystem mismatches; it accepts verified local drive and volume-GUID roots. Marker JSON remains forgeable and validation is path-based with TOCTOU; no privileged lane test ran. Blocking pending race/ownership closure and full Requirement 37 review."
       },
       {
         "id": "vdi-delete-run-ownership",
@@ -157,10 +163,10 @@
       },
       {
         "id": "installer-driver-authorization-bypass",
-        "status": "FAIL",
+        "status": "PARTIAL",
         "path": "tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1",
         "lines": [141, 153, 428, 439],
-        "summary": "Direct driver execution can synthesize JSON receipt and process environment nonce used as the confirmation handoff. Must enforce a verifiable single-use parent authorization or refuse standalone invocation."
+        "summary": "Commit 3509fde adds a case/PC/run-bound authorization phrase shown and collected by the parent before each case; the driver independently validates it and requires a matching standard-input line before the case switch. Static contract tests and PowerShell parsing pass, but no direct-driver negative-path execution or MSI lane ran; because the receipt/nonce and input can still be supplied by a deliberate caller, independent authorization semantics require further review."
       },
       {
         "id": "evidence-output-overwrite-isolation",
@@ -176,8 +182,8 @@
     "status": "PARTIAL_WITH_BLOCKING_FINDINGS",
     "findings": [
       "The file-mutation workload overwrite finding is narrowed by commit ddc293d: run GUID, marker-only root, no-reparse checks, create-new paths, run-bound in-root oracle, and exact deletion-tree checks are implemented and fast tests pass. Path-based TOCTOU and marker authenticity remain open, so workload execution remains gated.",
-      "Privileged acceptance accepts some existing roots based on forgeable JSON markers without complete reparse ancestry and volume containment proof.",
-      "The real-installer case driver can be invoked directly with a synthesized receipt/nonce instead of the prompted harness.",
+      "Commit 3509fde adds marker-only fixture-root and live volume-identity checks in the privileged runner. The marker is still forgeable and the path-based check/use race is not closed.",
+      "Commit 3509fde adds per-case user prompting in the parent installer harness and a driver-side case/PC/run phrase plus standard-input gate. The receipt/nonce/input remain caller-supplied and direct-driver negative-path execution has not been tested.",
       "The old VirtualBox VDI cleanup sink is retired by commit e0529db; the old guest runner was further reduced to a no-I/O stub by commit ddc293d. AST review found only Write-Error in both scripts. This does not address VHDX creation/attach or other runner risks.",
       "Several evidence and build/package producers use overwrite-capable output paths; full sink inventory and approved-root/new-only policy remain open."
     ],
