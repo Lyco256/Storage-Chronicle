@@ -31,6 +31,31 @@ public sealed record PendingReconciliationRequest(
     string FileSystem = "Unknown",
     DateTimeOffset? GapStartUtc = null);
 
+/// <summary>Describes the protection disclosure for an explicitly requested media-mirror approval.</summary>
+public enum MediaMirrorAclDisclosure
+{
+    /// <summary>The dedicated directory ACL was verified on an NTFS volume.</summary>
+    NtfsAclVerified,
+    /// <summary>The filesystem does not provide Windows ACL protection for this directory.</summary>
+    AclProtectionUnavailable,
+    /// <summary>The filesystem or ACL protection could not be verified; approval must not proceed.</summary>
+    Unknown
+}
+
+/// <summary>Identifies the exact PC, medium, and mirror location awaiting user approval.</summary>
+public sealed record PendingMediaMirrorApproval(
+    string RequestId,
+    string PcIdentity,
+    string LogicalMediaId,
+    string VolumeId,
+    string MediaRoot,
+    string FileSystem,
+    MediaMirrorAclDisclosure AclDisclosure,
+    DateTimeOffset DiscoveredUtc);
+
+/// <summary>Records the user's explicit decision for a pending media-mirror approval.</summary>
+public sealed record MediaMirrorApprovalDecision(string RequestId, bool Approve);
+
 /// <summary>Reports non-user-editable agent health state.</summary>
 public sealed record AgentHealth(
     string State,
@@ -38,7 +63,8 @@ public sealed record AgentHealth(
     long LastSequence,
     IReadOnlyList<VolumeHealth> Volumes,
     IReadOnlyList<PendingReconciliationRequest>? PendingReconciliations = null,
-    int QueueDepth = 0);
+    int QueueDepth = 0,
+    IReadOnlyList<PendingMediaMirrorApproval>? PendingMediaMirrorApprovals = null);
 
 /// <summary>Reports continuity for one volume.</summary>
 public sealed record VolumeHealth(VolumeId VolumeId, MonitoringContinuity Continuity, string? GapReason);

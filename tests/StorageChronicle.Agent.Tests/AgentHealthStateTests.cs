@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using StorageChronicle.Contracts;
+using StorageChronicle.Contracts.Runtime;
 using StorageChronicle.Domain.Contracts;
 using StorageChronicle.Storage;
 using Xunit;
@@ -8,6 +9,35 @@ namespace StorageChronicle.Agent.Tests;
 
 public sealed class AgentHealthStateTests
 {
+    [Fact]
+    public void MediaApprovalRemainsPendingUntilExplicitResolutionAndPreservesUnknownDisclosure()
+    {
+        var state = new AgentHealthState();
+        var request = new PendingMediaMirrorApproval(
+            "request-1", "pc-a", "media-a", "volume-a", "X:\\.StorageChronicle", "exFAT",
+            MediaMirrorAclDisclosure.Unknown, DateTimeOffset.UtcNow);
+
+        Assert.True(state.TryAddPendingMediaApproval(request));
+        var snapshot = state.Snapshot(new RecordingStatus(RecordingState.Running, 1, 1, null));
+        Assert.Equal(request, Assert.Single(snapshot.PendingMediaMirrorApprovals!));
+        Assert.True(state.TryGetPendingMediaApproval(request.RequestId, out var pending));
+        Assert.Equal(MediaMirrorAclDisclosure.Unknown, pending.AclDisclosure);
+        Assert.True(state.TryResolveMediaApproval(request.RequestId));
+        Assert.Empty(state.Snapshot(new RecordingStatus(RecordingState.Running, 1, 1, null)).PendingMediaMirrorApprovals!);
+    }
+
+    [Fact]
+    public void MediaApprovalQueueRejectsIncompleteIdentity()
+    {
+        var state = new AgentHealthState();
+        var request = new PendingMediaMirrorApproval(
+            "request-2", "", "media-a", "volume-a", "X:\\.StorageChronicle", "NTFS",
+            MediaMirrorAclDisclosure.NtfsAclVerified, DateTimeOffset.UtcNow);
+
+        Assert.False(state.TryAddPendingMediaApproval(request));
+        Assert.Empty(state.Snapshot(new RecordingStatus(RecordingState.Running, 1, 1, null)).PendingMediaMirrorApprovals!);
+    }
+
     [Fact]
     public void GapIsExposedOnceThenRetainedAsPresentedUntilDecision()
     {

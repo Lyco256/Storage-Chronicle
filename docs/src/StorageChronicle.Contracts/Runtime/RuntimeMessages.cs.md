@@ -41,3 +41,7 @@ Platform-neutral behavior remains portable; Windows-only APIs are isolated in th
 ## Change-sensitive contracts
 
 Public names, serialized fields, persistence boundaries, and the mirrored path are compatibility-sensitive contracts.
+
+## External-media approval messages
+
+`PendingMediaMirrorApproval` is the bounded IPC disclosure for a single mounted medium and configured mirror root. It binds the request to the local PC identity, logical media identity, live volume identity, filesystem, and ACL-disclosure classification. `MediaMirrorAclDisclosure.Unknown` is fail-closed; non-NTFS filesystems are represented as lacking Windows ACL protection, never as ACL-verified. `MediaMirrorApprovalDecision` carries only the request ID and explicit approve/decline choice; the Agent must resolve that ID against its live pending request before acting. `AgentHealth.PendingMediaMirrorApprovals` is optional for protocol compatibility.

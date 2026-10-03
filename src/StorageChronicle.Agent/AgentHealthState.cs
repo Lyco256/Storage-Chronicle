@@ -11,8 +11,10 @@ namespace StorageChronicle.Agent;
 public sealed class AgentHealthState
 {
     private const int PendingCapacity = 256;
+    private const int PendingMediaApprovalCapacity = 64;
     private readonly ConcurrentDictionary<string, VolumeHealth> volumes = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, PendingReconciliationRequest> pending = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, PendingMediaMirrorApproval> pendingMediaApprovals = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, DateTimeOffset> lastContinuousObservedUtc = new(StringComparer.OrdinalIgnoreCase);
     private string? failureReason;
     private int queueDepth;
@@ -115,8 +117,36 @@ public sealed class AgentHealthState
         }
 
         return new AgentHealth(state, currentFailure ?? status.Reason, status.LastSequence,
-            volumes.Values.OrderBy(value => value.VolumeId.Value, StringComparer.OrdinalIgnoreCase).ToArray(), requests, Volatile.Read(ref queueDepth));
+            volumes.Values.OrderBy(value => value.VolumeId.Value, StringComparer.OrdinalIgnoreCase).ToArray(), requests, Volatile.Read(ref queueDepth),
+            pendingMediaApprovals.Values.OrderBy(value => value.DiscoveredUtc).ThenBy(value => value.RequestId, StringComparer.Ordinal).ToArray());
     }
+
+    /// <summary>Queues one bounded media approval disclosure for presentation in the local UI.</summary>
+    public bool TryAddPendingMediaApproval(PendingMediaMirrorApproval request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (string.IsNullOrWhiteSpace(request.RequestId) || string.IsNullOrWhiteSpace(request.PcIdentity) ||
+            string.IsNullOrWhiteSpace(request.LogicalMediaId) || string.IsNullOrWhiteSpace(request.VolumeId) ||
+            string.IsNullOrWhiteSpace(request.MediaRoot) || string.IsNullOrWhiteSpace(request.FileSystem) ||
+            pendingMediaApprovals.Count >= PendingMediaApprovalCapacity)
+        {
+            return false;
+        }
+
+        return pendingMediaApprovals.TryAdd(request.RequestId, request);
+    }
+
+    /// <summary>Looks up a pending media approval before the caller validates and applies a user decision.</summary>
+    public bool TryGetPendingMediaApproval(string requestId, out PendingMediaMirrorApproval request)
+    {
+        if (!string.IsNullOrWhiteSpace(requestId) && pendingMediaApprovals.TryGetValue(requestId, out request!)) return true;
+        request = null!;
+        return false;
+    }
+
+    /// <summary>Removes one media approval request after its explicit decision is handled.</summary>
+    public bool TryResolveMediaApproval(string requestId)
+        => !string.IsNullOrWhiteSpace(requestId) && pendingMediaApprovals.TryRemove(requestId, out _);
 
     /// <summary>Resolves one pending request after the UI has made its decision.</summary>
     public bool TryResolve(string requestId) => !string.IsNullOrWhiteSpace(requestId) && pending.TryRemove(requestId, out _);

@@ -11,6 +11,8 @@ Aggregates collector, sink, and pipeline failures, recording status, and per-vol
 
 This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle.
 
+`AgentHealthState` now also exposes a bounded queue of exact, UI-safe external-media approval disclosures. Unknown ACL classification, incomplete media identity, and capacity overflow fail closed: no request is presented as approvable, and the mirror remains disabled until a later verified request can be published.
+
 ## Public types and responsibilities
 
 Public types preserve source facts and the explicitly owned responsibility; UI interpretation and correlation remain outside this boundary.

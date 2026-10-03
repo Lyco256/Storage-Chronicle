@@ -118,4 +118,22 @@ public sealed class IpcProtocolTests
         Assert.Equal(IpcClientRole.SessionAgent, hello.Role);
         Assert.Equal(42, hello.SessionId);
     }
+
+    [Fact]
+    public void MediaMirrorApprovalDisclosureAndDecisionRoundTrip()
+    {
+        var request = new PendingMediaMirrorApproval(
+            "request-1", "pc-a", "media-a", "volume-a", "E:\\.StorageChronicle", "exFAT",
+            MediaMirrorAclDisclosure.AclProtectionUnavailable, DateTimeOffset.UtcNow);
+        var decision = new MediaMirrorApprovalDecision(request.RequestId, Approve: true);
+        var health = new AgentHealth("Running", null, 1, Array.Empty<VolumeHealth>(), PendingMediaMirrorApprovals: [request]);
+
+        var roundTripRequest = IpcProtocol.Read<PendingMediaMirrorApproval>(IpcProtocol.Create("PendingMediaMirrorApproval", request));
+        var roundTripDecision = IpcProtocol.Read<MediaMirrorApprovalDecision>(IpcProtocol.Create("MediaMirrorApprovalDecision", decision));
+        var roundTripHealth = IpcProtocol.Read<AgentHealth>(IpcProtocol.Create("AgentHealth", health));
+
+        Assert.Equal(request, roundTripRequest);
+        Assert.Equal(decision, roundTripDecision);
+        Assert.Equal(MediaMirrorAclDisclosure.AclProtectionUnavailable, Assert.Single(roundTripHealth.PendingMediaMirrorApprovals!).AclDisclosure);
+    }
 }

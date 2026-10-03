@@ -71,6 +71,8 @@ public static class IpcProtocol
 [JsonSerializable(typeof(ClipboardCandidateRequest))]
 [JsonSerializable(typeof(ReconciliationDecision))]
 [JsonSerializable(typeof(PendingReconciliationRequest))]
+[JsonSerializable(typeof(PendingMediaMirrorApproval))]
+[JsonSerializable(typeof(MediaMirrorApprovalDecision))]
 [JsonSerializable(typeof(EventStackNodeSnapshot))]
 [JsonSerializable(typeof(VolumeHealth))]
 public partial class IpcJsonContext : JsonSerializerContext;

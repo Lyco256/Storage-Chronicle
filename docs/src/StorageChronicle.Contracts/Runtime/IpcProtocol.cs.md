@@ -2,6 +2,8 @@
 
 Defines versioned local IPC envelopes and a 4-byte little-endian length prefix with an 8 MiB cap. Protocol major mismatches and malformed lengths are rejected before payload allocation. JSON metadata is source-generated and shared by Agent, Desktop, and Session Agent, including independently paged Diff Activity Frame summaries and event timelines; the ClientHello contract binds each connection to its authenticated session and process role.
 
+The source-generated JSON context includes pending external-media consent disclosures and explicit decisions. These DTOs carry only binding evidence and a request ID/boolean decision; the Agent must match a decision to a live pending request and must never interpret a missing field or legacy settings value as consent.
+
 ## Role
 
 This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle.
