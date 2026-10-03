@@ -72,6 +72,8 @@ public sealed class ArchitectureContractTests
         var source = File.ReadAllText(Path.Combine(FindRoot(), "tools", "StorageChronicle.FileMutationWorkload", "Program.cs"));
         Assert.Contains("FileMode.CreateNew", source, StringComparison.Ordinal);
         Assert.Contains("ValidateNewOraclePath", source, StringComparison.Ordinal);
+        Assert.Contains("GetVolumeNameForVolumeMountPoint", source, StringComparison.Ordinal);
+        Assert.Contains("marker.VolumeUniqueId", source, StringComparison.Ordinal);
         Assert.Contains("allowedEntries.Remove(name)", source, StringComparison.Ordinal);
         Assert.Contains("oracle-\" + options.RunId + \".json", source, StringComparison.Ordinal);
         Assert.DoesNotContain("File.WriteAllBytes(", source, StringComparison.Ordinal);

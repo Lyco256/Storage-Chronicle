@@ -430,7 +430,8 @@ function Invoke-CapturedProcess {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][string[]]$Arguments,
-        [Parameter(Mandatory = $true)][int]$TimeoutSeconds
+        [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
+        [Parameter(Mandatory = $true)][string]$StandardInput
     )
 
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -439,6 +440,7 @@ function Invoke-CapturedProcess {
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    $startInfo.RedirectStandardInput = $true
     $argumentListProperty = [System.Diagnostics.ProcessStartInfo].GetProperty('ArgumentList')
     if ($null -ne $argumentListProperty -and $null -ne $startInfo.ArgumentList) {
         foreach ($argument in $Arguments) {
@@ -455,6 +457,8 @@ function Invoke-CapturedProcess {
             throw "Could not start process: $FilePath"
         }
 
+        $process.StandardInput.WriteLine($StandardInput)
+        $process.StandardInput.Close()
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
         $timeoutMilliseconds = $TimeoutSeconds * 1000
@@ -513,6 +517,7 @@ function Get-DriverInvocation {
         '-ConfirmDedicatedPhysicalMachine',
         '-OwnerReceiptPath', $script:OwnerReceiptPath,
         '-AuthorizationNonce', $script:AuthorizationNonce,
+        '-CaseAuthorizationPhrase', $script:CaseAuthorizationPhrase,
         '-ResultPath', $ResultPath,
         '-LogPath', $LogPath
     )
@@ -525,7 +530,7 @@ function Get-DriverInvocation {
         }
         return [pscustomobject]@{
             FilePath = $powershell.Source
-            Arguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $DriverScript) + $driverArguments
+            Arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $DriverScript) + $driverArguments
         }
     }
 
@@ -628,6 +633,16 @@ function Invoke-InstallerCase {
         return
     }
 
+    $script:CaseAuthorizationPhrase = "I AUTHORIZE STORAGE CHRONICLE CASE $caseId ON $env:COMPUTERNAME RUN $runId"
+    $updatedMsiHash = if (-not [string]::IsNullOrWhiteSpace($UpdatedMsiPath)) { (Get-FileHash -Algorithm SHA256 -LiteralPath $UpdatedMsiPath).Hash } else { 'not-used' }
+    $rollbackMsiHash = if (-not [string]::IsNullOrWhiteSpace($RollbackMsiPath)) { (Get-FileHash -Algorithm SHA256 -LiteralPath $RollbackMsiPath).Hash } else { 'not-used' }
+    $caseDetails = "Case=$caseId ($($Definition.Name)); PC=$env:COMPUTERNAME; RunId=$runId; TestDataRoot=$env:STORAGE_CHRONICLE_ACCEPTANCE_TEST_ROOT; InstallPath=$InstallPath; HistoryPath=$HistoryPath; Evidence=$caseResultPath; MSI SHA256 base=$((Get-FileHash -Algorithm SHA256 -LiteralPath $MsiPath).Hash), updated=$updatedMsiHash, rollback=$rollbackMsiHash. This case can mutate Windows Installer, Program Files, ProgramData, service, registry, or ACL state."
+    $caseAnswer = Read-Host "$caseDetails Type '$script:CaseAuthorizationPhrase' to authorize this one case"
+    if ($caseAnswer -cne $script:CaseAuthorizationPhrase) {
+        Add-CaseResult -Id $caseId -Name ([string]$Definition.Name) -Status 'NOT_EXECUTED' -Reason 'The user did not enter the exact one-case authorization phrase.'
+        $script:CaseAuthorizationPhrase = $null
+        return
+    }
     $previousAuthorizationNonce = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_INSTALLER_AUTHORIZATION_NONCE', 'Process')
     $script:AuthorizationNonce = [guid]::NewGuid().ToString('N')
     [Environment]::SetEnvironmentVariable('STORAGE_CHRONICLE_INSTALLER_AUTHORIZATION_NONCE', $script:AuthorizationNonce, 'Process')
@@ -635,7 +650,7 @@ function Invoke-InstallerCase {
     Write-Host "RUNNING [$caseId]" -ForegroundColor Cyan
     try {
         $invocation = Get-DriverInvocation -CaseId $caseId -ResultPath $caseResultPath -LogPath $caseLogPath
-        $result = Invoke-CapturedProcess -FilePath $invocation.FilePath -Arguments $invocation.Arguments -TimeoutSeconds $CaseTimeoutSeconds
+        $result = Invoke-CapturedProcess -FilePath $invocation.FilePath -Arguments $invocation.Arguments -TimeoutSeconds $CaseTimeoutSeconds -StandardInput $caseAnswer
         $driverLog = "STDOUT`r`n$($result.Output)`r`nSTDERR`r`n$($result.Error)"
         Write-NewUtf8File -Path $caseLogPath -Value $driverLog
         if ($result.TimedOut) {
@@ -657,6 +672,7 @@ function Invoke-InstallerCase {
         Add-CaseResult -Id $caseId -Name ([string]$Definition.Name) -Status 'FAILED' -Reason $_.Exception.Message -ExitCode 1 -DurationSeconds (([DateTime]::UtcNow - $started).TotalSeconds) -ResultPath $caseResultPath -LogPath $caseLogPath
     } finally {
         [Environment]::SetEnvironmentVariable('STORAGE_CHRONICLE_INSTALLER_AUTHORIZATION_NONCE', $previousAuthorizationNonce, 'Process')
+        $script:CaseAuthorizationPhrase = $null
     }
 }
 

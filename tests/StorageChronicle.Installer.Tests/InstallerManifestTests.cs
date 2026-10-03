@@ -135,6 +135,24 @@ public sealed class InstallerManifestTests
     }
 
     [Fact]
+    public void PrivilegedRunnerRejectsPopulatedFixtureRootsAndBindsMarkersToLiveVolume()
+    {
+        var root = FindRoot();
+        var producer = File.ReadAllText(Path.Combine(root, "build", "Test-Privileged.ps1"));
+        var markerValidation = producer.IndexOf("function Assert-TestLabMarker", StringComparison.Ordinal);
+        var markerRead = producer.IndexOf("Get-Content -Raw -Encoding UTF8 -LiteralPath $path | ConvertFrom-Json", markerValidation, StringComparison.Ordinal);
+        var unknownEntryGuard = producer.IndexOf("Fixture root is not fresh/run-owned", markerValidation, StringComparison.Ordinal);
+        var volumeIdentityGuard = producer.IndexOf("marker volume identity does not match the volume resolved from the fixture root", markerValidation, StringComparison.Ordinal);
+
+        Assert.True(markerValidation >= 0 && markerRead > markerValidation);
+        Assert.True(unknownEntryGuard > markerValidation && unknownEntryGuard < markerRead);
+        Assert.True(volumeIdentityGuard > markerRead);
+        Assert.Contains("DeviceID='$escapedDeviceId'", producer, StringComparison.Ordinal);
+        Assert.Contains("A local drive or verified volume GUID path is required", producer, StringComparison.Ordinal);
+        Assert.Contains("$fullPath.StartsWith($item + '\\'", producer, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PhysicalInstallerMutationRequiresFreshRunOwnershipAndCannotFallBackToVmOrOverwriteEvidence()
     {
         var root = FindRoot();
@@ -162,6 +180,16 @@ public sealed class InstallerManifestTests
         Assert.Contains("Write-NewUtf8File $manifestPath $json", harness, StringComparison.Ordinal);
         Assert.DoesNotContain("Set-Content -LiteralPath $manifestPath", harness, StringComparison.Ordinal);
         Assert.Contains("AuthorizationNonce", driver, StringComparison.Ordinal);
+        Assert.Contains("CaseAuthorizationPhrase", driver, StringComparison.Ordinal);
+        Assert.Contains("[Console]::ReadLine()", driver, StringComparison.Ordinal);
+        Assert.Contains("I AUTHORIZE STORAGE CHRONICLE CASE $CaseId ON $env:COMPUTERNAME RUN $RunId", driver, StringComparison.Ordinal);
+        Assert.Contains("The driver did not receive the exact interactive case authorization", driver, StringComparison.Ordinal);
+        Assert.Contains("-CaseAuthorizationPhrase", harness, StringComparison.Ordinal);
+        Assert.Contains("$caseAnswer = Read-Host", harness, StringComparison.Ordinal);
+        Assert.Contains("RedirectStandardInput = $true", harness, StringComparison.Ordinal);
+        Assert.Contains("-StandardInput $caseAnswer", harness, StringComparison.Ordinal);
+        Assert.DoesNotContain("'-NonInteractive'", harness, StringComparison.Ordinal);
+        Assert.True(driver.IndexOf("The driver did not receive the exact interactive case authorization", StringComparison.Ordinal) < driver.IndexOf("switch ($CaseId)", StringComparison.Ordinal));
         Assert.Contains("HumanConfirmation", driver, StringComparison.Ordinal);
         Assert.Contains("FileMode]::CreateNew", driver, StringComparison.Ordinal);
         Assert.DoesNotContain("New-Item -ItemType Directory -Force -Path $permissionRoot", driver, StringComparison.Ordinal);

@@ -31,10 +31,19 @@ $ErrorActionPreference = 'Stop'
 
 function Assert-NoReparsePath([string]$Path) {
     $fullPath = [IO.Path]::GetFullPath($Path)
-    if ($fullPath.StartsWith('\\', [StringComparison]::Ordinal)) { throw "UNC paths are not accepted: $fullPath" }
-    $rootPath = [IO.Path]::GetPathRoot($fullPath)
-    if ([string]::IsNullOrWhiteSpace($rootPath) -or $rootPath -notmatch '^[A-Za-z]:\\$') { throw "A local drive path is required: $fullPath" }
+    $volumeGuidRoot = [regex]::Match($fullPath, '^\\\\\?\\Volume\{[0-9A-Fa-f-]{36}\}\\', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if ($volumeGuidRoot.Success) {
+        $rootPath = $volumeGuidRoot.Value
+    } else {
+        if ($fullPath.StartsWith('\\', [StringComparison]::Ordinal)) { throw "UNC/device paths are not accepted: $fullPath" }
+        $rootPath = [IO.Path]::GetPathRoot($fullPath)
+        if ([string]::IsNullOrWhiteSpace($rootPath) -or $rootPath -notmatch '^[A-Za-z]:\\$') { throw "A local drive or verified volume GUID path is required: $fullPath" }
+    }
     $cursor = $rootPath
+    if (Test-Path -LiteralPath $cursor) {
+        $rootItem = Get-Item -LiteralPath $cursor -Force -ErrorAction Stop
+        if (($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Reparse points are not accepted in a test path: $cursor" }
+    }
     $segments = $fullPath.Substring($rootPath.Length).Split([char[]]@('\', '/'), [StringSplitOptions]::RemoveEmptyEntries)
     foreach ($segment in $segments) {
         $cursor = Join-Path $cursor $segment
@@ -190,6 +199,19 @@ function Get-VolumeForPath([string]$Path) {
         if ($root -match '^(?<drive>[A-Za-z]):\\$') {
             return Get-Volume -DriveLetter $Matches.drive -ErrorAction Stop
         }
+        if ($root -match '^\\\\\?\\Volume\{[0-9A-Fa-f-]{36}\}\\$') {
+            $escapedDeviceId = $root.Replace('\', '\\').Replace("'", "''")
+            $volumeMatches = @(Get-CimInstance -ClassName Win32_Volume -Filter "DeviceID='$escapedDeviceId'" -ErrorAction Stop)
+            if ($volumeMatches.Count -eq 1 -and [string]$volumeMatches[0].DeviceID -ieq $root) {
+                return [pscustomobject]@{
+                    UniqueId = [string]$volumeMatches[0].DeviceID
+                    FileSystem = [string]$volumeMatches[0].FileSystem
+                    FileSystemLabel = [string]$volumeMatches[0].Label
+                    DriveType = if ([int]$volumeMatches[0].DriveType -eq 3) { 'Fixed' } elseif ([int]$volumeMatches[0].DriveType -eq 2) { 'Removable' } else { 'Unknown' }
+                    SizeRemaining = [uint64]$volumeMatches[0].FreeSpace
+                }
+            }
+        }
     } catch {
         return $null
     }
@@ -298,17 +320,35 @@ function Is-Administrator {
 function Is-PathSafeForAcceptance([string]$Path) {
     $fullPath = [IO.Path]::GetFullPath($Path).TrimEnd('\')
     if ($fullPath.Length -lt 4) { return $false }
+    $pathRoot = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($Path)).TrimEnd('\')
+    if ($fullPath.Equals($pathRoot, [StringComparison]::OrdinalIgnoreCase)) { return $false }
     $forbidden = @(
         [IO.Path]::GetFullPath($env:WINDIR).TrimEnd('\'),
         [IO.Path]::GetFullPath($env:ProgramFiles).TrimEnd('\'),
         [IO.Path]::GetFullPath(${env:ProgramFiles(x86)}).TrimEnd('\'))
+    $forbidden += [IO.Path]::GetFullPath($env:ProgramData).TrimEnd('\')
     foreach ($item in $forbidden) {
-        if ($fullPath.Equals($item, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+        if ($fullPath.Equals($item, [StringComparison]::OrdinalIgnoreCase) -or $fullPath.StartsWith($item + '\', [StringComparison]::OrdinalIgnoreCase)) { return $false }
     }
+    if ($fullPath -match '(?i)(^|\\)(OneDrive|Documents)(\\|$)') { return $false }
     return $true
 }
 
 function Assert-TestLabMarker([string]$RootPath, [string[]]$AllowedRoles) {
+    Assert-NoReparsePath $RootPath
+    if (-not (Is-PathSafeForAcceptance $RootPath)) { throw "The marked fixture root is inside a protected or synchronized path: $RootPath" }
+    $volume = Get-VolumeForPath $RootPath
+    if ($null -eq $volume -or [string]::IsNullOrWhiteSpace([string]$volume.UniqueId)) { throw "The marked fixture root has no authoritative volume identity: $RootPath" }
+    $allowedEntries = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    [void]$allowedEntries.Add('.storage-chronicle-testlab-marker.json')
+    [void]$allowedEntries.Add('StorageChronicleTestVolume.json')
+    foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($RootPath)) {
+        Assert-NoReparsePath $entry
+        if (-not $allowedEntries.Remove([IO.Path]::GetFileName($entry))) { throw "Fixture root is not fresh/run-owned; refusing an unknown or duplicate entry: $entry" }
+        if ([IO.Directory]::Exists($entry)) { throw "A fixture ownership marker is not a regular file: $entry" }
+    }
+    if ($allowedEntries.Count -ne 0) { throw "The fixture root is missing an ownership marker: $RootPath" }
+
     $markers = @()
     foreach ($name in @('.storage-chronicle-testlab-marker.json', 'StorageChronicleTestVolume.json')) {
         $path = Join-Path $RootPath $name
@@ -321,11 +361,13 @@ function Assert-TestLabMarker([string]$RootPath, [string[]]$AllowedRoles) {
             'Mft' { [pscustomobject]@{ Label = 'SC_TEST_MFT_VOLUME'; FileSystem = 'NTFS' } }
             default { [pscustomobject]@{ Label = 'SC_TEST_VOLUME'; FileSystem = 'NTFS' } }
         }
-        if ([string]$marker.VolumeLabel -ne $expected.Label -or [string]$marker.FileSystem -ine $expected.FileSystem) { throw "TestLab marker label/filesystem is invalid: $path" }
+        if ([string]$marker.VolumeLabel -cne $expected.Label -or [string]$marker.FileSystem -ine $expected.FileSystem) { throw "TestLab marker label/filesystem is invalid: $path" }
         if ([string]$marker.TestId -ne $runId) { throw "TestLab marker TestId does not match this unique acceptance run: $path" }
+        if ([string]::IsNullOrWhiteSpace([string]$marker.VolumeUniqueId) -or [string]$marker.VolumeUniqueId -ne [string]$volume.UniqueId) { throw "TestLab marker volume identity does not match the volume resolved from the fixture root: $path" }
+        if ([string]$volume.FileSystem -ine [string]$marker.FileSystem -or [string]$volume.FileSystemLabel -cne [string]$marker.VolumeLabel) { throw "The live volume filesystem or label does not match its run marker: $path" }
         $markers += $marker
     }
-    if ([string]$markers[0].Role -ne [string]$markers[1].Role -or [string]$markers[0].TestId -ne [string]$markers[1].TestId) { throw "The two TestLab markers disagree: $RootPath" }
+    if ([string]$markers[0].Role -ne [string]$markers[1].Role -or [string]$markers[0].TestId -ne [string]$markers[1].TestId -or [string]$markers[0].VolumeUniqueId -ne [string]$markers[1].VolumeUniqueId) { throw "The two TestLab markers disagree: $RootPath" }
     return $markers[0]
 }
 

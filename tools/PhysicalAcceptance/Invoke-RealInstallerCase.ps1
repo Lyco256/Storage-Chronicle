@@ -23,6 +23,7 @@ param(
     [Parameter(Mandatory = $true)][string]$ExpectedComputerName,
     [Parameter(Mandatory = $true)][string]$OwnerReceiptPath,
     [Parameter(Mandatory = $true)][string]$AuthorizationNonce,
+    [Parameter(Mandatory = $true)][string]$CaseAuthorizationPhrase,
     [switch]$ConfirmDedicatedPhysicalMachine,
     [Parameter(Mandatory = $true)][string]$ResultPath,
     [Parameter(Mandatory = $true)][string]$LogPath
@@ -336,6 +337,11 @@ try {
     if (-not $result.Target.IsAdministrator) { throw 'The installer driver requires an elevated process.' }
     if (-not $ConfirmDedicatedPhysicalMachine -or -not $ExpectedComputerName.Equals($env:COMPUTERNAME, [StringComparison]::OrdinalIgnoreCase)) { throw 'The driver requires explicit authorization bound to the current physical test PC.' }
     if ([string]::IsNullOrWhiteSpace($AuthorizationNonce) -or -not $AuthorizationNonce.Equals([Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_INSTALLER_AUTHORIZATION_NONCE', 'Process'), [StringComparison]::Ordinal)) { throw 'The run-scoped installer authorization capability is missing or does not match.' }
+    $expectedCaseAuthorization = "I AUTHORIZE STORAGE CHRONICLE CASE $CaseId ON $env:COMPUTERNAME RUN $RunId"
+    if (-not $CaseAuthorizationPhrase.Equals($expectedCaseAuthorization, [StringComparison]::Ordinal)) { throw 'The case authorization phrase does not bind this exact case, physical PC, and run.' }
+    Write-Host "This driver will execute installer case '$CaseId' on physical PC '$env:COMPUTERNAME' for run '$RunId'. It may change Windows Installer, Program Files, ProgramData history, service, and registry state. Type the exact case authorization phrase to continue: $expectedCaseAuthorization"
+    $typedCaseAuthorization = [Console]::ReadLine()
+    if ($null -eq $typedCaseAuthorization -or -not $typedCaseAuthorization.Equals($expectedCaseAuthorization, [StringComparison]::Ordinal)) { throw 'The driver did not receive the exact interactive case authorization; no installer case was executed.' }
     if (-not (Test-Path -LiteralPath $OwnerReceiptPath -PathType Leaf)) { throw 'The physical installer owner receipt is missing.' }
     $ownerReceipt = Get-Content -Raw -Encoding UTF8 -LiteralPath $OwnerReceiptPath | ConvertFrom-Json
     if ([string]$ownerReceipt.Schema -ne 'StorageChronicle.PhysicalInstallerOwnerReceipt.v1' -or [string]$ownerReceipt.RunId -ne $RunId.ToString('D') -or [string]$ownerReceipt.ComputerName -ne $env:COMPUTERNAME -or [string]$ownerReceipt.HumanConfirmation -cne "I CONFIRM DEDICATED PC $env:COMPUTERNAME RUN $RunId" -or [string]$ownerReceipt.EvidenceRoot -ine $receiptDirectory -or [string]$ownerReceipt.InstallPath -ine [IO.Path]::GetFullPath($InstallPath) -or [string]$ownerReceipt.HistoryPath -ine [IO.Path]::GetFullPath($HistoryPath) -or [string]$ownerReceipt.StoragePermissionPath -ine [IO.Path]::GetFullPath($StoragePermissionPath)) { throw 'The installer owner receipt does not match this run, PC, human confirmation, evidence, install, history, or permission path.' }

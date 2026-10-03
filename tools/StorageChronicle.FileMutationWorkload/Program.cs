@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 
 namespace StorageChronicle.FileMutationWorkload;
@@ -94,6 +95,10 @@ public static class Program
         var driveRoot = Path.GetPathRoot(root) ?? throw new InvalidDataException("The workload root has no volume root.");
         var drive = new DriveInfo(driveRoot);
         if (!drive.IsReady || !string.Equals(drive.VolumeLabel, marker.VolumeLabel, StringComparison.OrdinalIgnoreCase) || !string.Equals(drive.DriveFormat, marker.FileSystem, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("The mounted volume label or filesystem does not match the TestLab marker.");
+        var volumeUniqueId = GetVolumeUniqueId(driveRoot);
+        if (string.IsNullOrWhiteSpace(marker.VolumeUniqueId) || !string.Equals(volumeUniqueId, marker.VolumeUniqueId, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(volumeUniqueId, volumeMarker.VolumeUniqueId, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("The TestLab marker volume identity does not match the volume resolved from the workload root.");
         var allowedEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { MarkerName, VolumeMarkerName };
         foreach (var entry in Directory.EnumerateFileSystemEntries(root))
         {
@@ -104,6 +109,16 @@ public static class Program
         }
         if (allowedEntries.Count != 0) throw new IOException("The workload root is missing one or more required ownership markers.");
         return root;
+    }
+
+    private static string GetVolumeUniqueId(string volumeMountPoint)
+    {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("The real-I/O workload requires Windows volume identity verification.");
+        var buffer = new char[64];
+        if (!GetVolumeNameForVolumeMountPoint(volumeMountPoint, buffer, (uint)buffer.Length))
+            throw new IOException($"Could not resolve the volume GUID for the workload root (Win32 error {Marshal.GetLastWin32Error()}).");
+        var length = Array.IndexOf(buffer, '\0');
+        return new string(buffer, 0, length < 0 ? buffer.Length : length);
     }
 
     private static string ValidateNewOraclePath(string root, WorkloadOptions options)
@@ -569,8 +584,12 @@ public static class Program
     }
 
     private sealed record WorkloadOptions(string Root, string OraclePath, string Scenario, string RunId, int Count);
-    private sealed record TestLabMarker(string Schema, string TestId, string Role, string VolumeLabel, string FileSystem, DateTimeOffset CreatedUtc);
+    private sealed record TestLabMarker(string Schema, string TestId, string Role, string VolumeLabel, string FileSystem, string VolumeUniqueId, DateTimeOffset CreatedUtc);
     private sealed record OracleDocument(string Schema, string RunId, string Scenario, DateTimeOffset CompletedUtc, ProcessEvidence Process, IReadOnlyCollection<ProcessEvidence> Processes, int RecordCount, IReadOnlyCollection<OracleRecord> Operations);
     private sealed record ProcessEvidence(int ProcessId, DateTime StartTimeUtc, string ExecutablePath, string ScenarioId);
     private sealed record OracleRecord(long Sequence, string Operation, string RelativePath, string? OldRelativePath, DateTimeOffset StartedUtc, DateTimeOffset CompletedUtc);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetVolumeNameForVolumeMountPoint(string mountPoint, [Out] char[] volumeName, uint bufferLength);
 }
