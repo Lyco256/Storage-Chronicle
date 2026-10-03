@@ -1,6 +1,6 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "a267ad8ff5142210b5a643be071df3f614845677",
+  "targetCommit": "aeabe0f587800215aa52d68ab85303fa98ad3379",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -200,17 +200,17 @@
       },
       {
         "id": "test-output-arbitrary-overwrite",
-        "status": "FAIL",
+        "status": "PARTIAL",
         "path": "tools/StorageChronicle.TestDataGenerator/Program.cs",
         "lines": [44, 56],
-        "summary": "--output accepts any caller-supplied path and File.WriteAllText overwrites/truncates an existing file. RealIoOracleValidator has the same class of issue and also creates arbitrary parent directories. A feature-owned remediation is in progress; no unsafe CLI was executed."
+        "summary": "Commits 1ecfb41 and aeabe0f add direct-child run-bound CreateNew output, root marker/volume checks, no-reparse traversal, and existing-target preservation tests for TestDataGenerator and RealIoOracleValidator. The validator now reads history segments without opening/recovering SQLite. These narrow paths passed focused tests and post-merge Fast; marker authenticity, path/parent TOCTOU, and a full output-sink inventory remain unproven. No unsafe CLI or physical acceptance was run."
       },
       {
         "id": "legacy-virtualbox-mutators-callable",
-        "status": "FAIL",
+        "status": "PASS",
         "path": "tools/TestEnvironment/Initialize-TestLab.ps1",
         "lines": [21, 43],
-        "summary": "Although newer Requirement 37 entry points are retired, this legacy script still contains callable VirtualBox VM/VDI creation/configuration when -Apply is supplied. Invoke-TestLabCommand can run caller-supplied guest commands and Reset-TestVm can restore snapshots. These whole-OS VM paths conflict with the current acceptance strategy and must become no-I/O retired entry points."
+        "summary": "Commit 1ecfb41 replaces Initialize-TestLab, Invoke-TestLabCommand, and Reset-TestVm with no-I/O retired error entry points. The VirtualBox contract suite and post-merge Fast passed. This only retires the legacy whole-OS VM scripts; it does not approve the separately gated, newly created file-backed VHDX fixture workflow."
       },
       {
         "id": "installer-registry-run-collision",
