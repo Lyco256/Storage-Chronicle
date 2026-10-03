@@ -1,6 +1,6 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "444565d84c084254dfee63e2141e1c910c0c78a8",
+  "targetCommit": "879a934c150891659609a054795c6204c1849598",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -43,6 +43,9 @@
     "docs/build/Test-WindowsPrivileged.ps1.md",
     "docs/tools/PhysicalAcceptance/Cleanup-RealMachineInstallerAcceptance.ps1.md",
     "build/package/Test-Installer.ps1",
+    "build/package/InstallerAuthorizationProtocol.cs",
+    "docs/build/package/InstallerAuthorizationProtocol.cs.md",
+    "docs/handoffs/installer-physical-guard.md",
     "tools/PhysicalAcceptance/Run-RealMachineInstallerAcceptance.ps1",
     "tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1",
     "tools/PhysicalAcceptance/Probe-WriteAccess.ps1",
@@ -133,7 +136,7 @@
         "status": "PARTIAL",
         "path": "src/StorageChronicle.Agent/WindowsServiceRecoveryConfigurator.cs",
         "lines": [19, 59],
-        "summary": "ChangeServiceConfig2 is reachable via exact command-line option, called by deferred non-impersonated MSI action after service start. Source has no UAC prompt; dedicated-PC pre-presentation/UAC gate and end-to-end installer audit remain unverified."
+        "summary": "ChangeServiceConfig2 is reachable via exact command-line option, called by deferred non-impersonated MSI action after service start. The installer harness now discloses service recovery and HKLM Run effects before per-case UAC, but exact host behavior, MSI effect containment, dedicated-PC acceptance, and end-to-end audit remain unverified."
       },
       {
         "id": "file-mutation-workload-overwrite-confinement",
@@ -169,11 +172,11 @@
         "summary": "Commit 1e8f97d replaces the legacy VirtualBox VDI creation/attachment helper with an unconditional no-I/O fail-closed stub. Its source-contract test requires the retirement notice and absence of helper imports, VBoxManage invocation, filesystem creation/deletion, and evidence writes. PowerShell parser validation is non-executing; targeted test and the 339-test fast suite pass with zero build warnings. This does not approve the separate file-backed VHDX physical workflow."
       },
       {
-        "id": "installer-driver-authorization-bypass",
+        "id": "installer-uac-broker-and-hash-use-races",
         "status": "PARTIAL",
         "path": "tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1",
-        "lines": [141, 153, 428, 439],
-        "summary": "Commit 3509fde adds a case/PC/run-bound phrase presented by the parent; the driver also displays it and requires an exact Console.ReadLine match before its mutation switch. The driver nevertheless requires an already elevated process; there is no operation-bound UAC prompt after the specific action is presented. A direct caller can supply the receipt/nonce and bypass the parent's externally reviewed hash-manifest check, and verified MSI paths are reopened later by msiexec. No direct-driver negative-path or MSI test ran."
+        "lines": [55, 60, 71, 412],
+        "summary": "Commit 1731f55 adds a one-case current-user-SID named-pipe grant bound to kernel-reported broker/child PIDs, PC, run, case, nonce, and external hash-manifest fingerprint. Parent requires an ordinary filtered admin token, enabled UAC prompt policy, exact action disclosure and typed phrase before RunAs; the child validates the live grant before creating case evidence. Installer tests pass 23/23, PowerShell AST and DocMirror pass, and Fast passes after required restore/build. The loaded driver is hash-checked only after PowerShell has loaded it, while msiexec reopens MSI paths after hash checks; both hash-to-use races remain. The MSI's complete effects are not proven, and no UAC or physical test was run."
       },
       {
         "id": "evidence-output-overwrite-isolation",
@@ -196,9 +199,9 @@
     "findings": [
       "The file-mutation workload overwrite finding is narrowed by commit ddc293d: run GUID, marker-only root, no-reparse checks, create-new paths, run-bound in-root oracle, and exact deletion-tree checks are implemented and fast tests pass. Path-based TOCTOU and marker authenticity remain open, so workload execution remains gated.",
       "Commit 3509fde adds marker-only fixture-root and live volume-identity checks in the privileged runner. The marker is still forgeable and the path-based check/use race is not closed.",
-      "Commit 3509fde adds per-case user prompting in the parent installer harness and a driver-side case/PC/run phrase plus standard-input gate. The receipt/nonce/input remain caller-supplied and direct-driver negative-path execution has not been tested.",
+      "Commit 1731f55 replaces caller-supplied phrase/nonce authorization with a per-case current-user-SID pipe broker, kernel PID checks, exact parent disclosure/phrase, and UAC RunAs. Non-privileged tests pass; loaded-script and MSI path hash-to-use races, complete MSI effect containment, and physical/UAC validation remain open.",
       "Commit 473834b hardens privileged SMB/service test cleanup: collision checks precede creation, cleanup requires a successful create in this invocation, and the live share path/service executable is rechecked before removal. The project builds and the non-privileged static contract test passes; no privileged lane was run.",
-      "The physical installer case driver still requires an already elevated process and does not itself validate the externally approved hash-manifest fingerprint; msiexec reopens the path after hash checks. Operation-bound UAC sequencing and hash-to-use binding remain blockers.",
+      "The physical installer case driver now verifies a live broker grant and external hash-manifest fingerprint before case evidence or the mutation switch. Parent-side pre-presentation and per-case UAC gating are implemented. The driver script is verified after load and msiexec reopens checked MSI paths, leaving script/MSI hash-to-use races; complete installer effect auditing and dedicated-PC/UAC execution remain blockers.",
       "The old VirtualBox VDI cleanup sink was retired by commit e0529db; the old VDI creation/attachment helper is now also a no-I/O stub with a source-contract test. The old guest runner was reduced to a no-I/O stub by commit ddc293d. This does not authorize the separately gated file-backed VHDX physical workflow or close other runner risks.",
       "The Explorer scenario producer no longer uses overwrite-capable output paths, but several other evidence and build/package producers may still overwrite existing paths; full sink inventory and approved-root/new-only policy remain open.",
       "Commit 444565d separates raw ResourceMonitor evidence from queue-augmented output and uses create-only publication for both. A diagnostic shell-process sample verified preservation only; it does not satisfy the independent runtime write-monitor or formal resource gate."
@@ -224,7 +227,7 @@
       "id": "installer-mutation-scope",
       "status": "PARTIAL",
       "path": "tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1",
-      "summary": "The physical launcher and Test-Installer parent require an externally reviewed hash-manifest fingerprint and verify selected MSI/driver correspondence; matching Workload/NTFS markers and volume identity, fixture roots outside protected/system/repository/bundle/synchronized roots, canonical Program Files/ProgramData install/history paths, a clean product/service/install/ProgramData boundary, dedicated-PC/run confirmation, run-owned receipt, and one-case nonce are also enforced. The lower-level case driver only checks MSI hashes against the caller-supplied receipt and does not independently verify the external fingerprint; direct invocation therefore bypasses the parent's trust anchor. MSI paths are reopened after verification without an identity-pinned handle. Operation-bound UAC, full source-to-sink and installed-state discovery across profiles, trusted release signing, race/TOCTOU proof, independent runtime monitoring, and physical hardware proof remain. Runtime is NOT_EXECUTED; DO_NOT_RUN."
+      "summary": "The non-elevated parent requires a filtered local-Administrators token, EnableLUA=1, and ConsentPromptBehaviorAdmin=1..4; it discloses one case, exact MSI hashes, install/history/evidence paths, and known service/registry effects, requires the exact PC/run/case phrase, then starts exactly one hidden RunAs child. Explicit current-user-SID pipe ACL, kernel client/server PID checks, schema/context-bound one-use grant, external manifest fingerprint and payload hashes, create-new result/log files, post-exit result validation, UAC-cancel handling, and no automatic termination of live children are covered by static/protocol tests. The script is loaded before its hash check; msiexec reopens paths after MSI hash checks; MSI effects are not sandboxed by the receipt. Cross-profile existing-install discovery, trusted release signing, complete source-to-sink review, independent runtime monitoring, and physical/UAC proof remain. Runtime is NOT_EXECUTED; DO_NOT_RUN."
     },
     {
       "id": "cleanup-ownership-proof",
