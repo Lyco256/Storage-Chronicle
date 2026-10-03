@@ -6,7 +6,7 @@ The witness is fail-closed: a missing or malformed health response, sequence reg
 
 ## Inputs and outputs
 
-`-OutputPath` is the required evidence destination. `-AgentPipeName`, `-DurationSeconds`, `-IntervalMilliseconds`, `-MaxQueueDepth`, and `-ForbiddenProcessName` control only the bounded observation. The output contains `QuietPeriodStartedUtc`, `QuietPeriodCompletedUtc`, `QuietPeriodSeconds`, `BulkEventCount`, `QueueOverrunCount`, `ReconciliationActiveTimeSeconds`, process-absence flags, health samples, and errors.
+`-OutputPath` is the required evidence destination. The script publishes its final JSON through the shared `Write-NewJsonArtifact` contract: it writes and flushes a create-new same-directory temporary, then atomically moves without replacing an existing report. `-AgentPipeName`, `-DurationSeconds`, `-IntervalMilliseconds`, `-MaxQueueDepth`, and `-ForbiddenProcessName` control only the bounded observation. The output contains `QuietPeriodStartedUtc`, `QuietPeriodCompletedUtc`, `QuietPeriodSeconds`, `BulkEventCount`, `QueueOverrunCount`, `ReconciliationActiveTimeSeconds`, process-absence flags, health samples, and errors.
 
 ## Failure behavior and tests
 

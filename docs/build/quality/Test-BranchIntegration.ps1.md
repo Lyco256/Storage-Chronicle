@@ -6,7 +6,7 @@ Produces the measured `StorageChronicle.BranchIntegrationEvidence.v1` artifact u
 
 ## Inputs and outputs
 
-`-ExpectedAcceptedSha` identifies the commit that passed the preceding acceptance gates. `-OutputPath` selects the JSON artifact; otherwise the script writes beneath `artifacts/acceptance/branch-integration/`. The script exits `0` only when the current checkout is clean `main`, both remote branches exist, HEAD equals the expected accepted SHA and `origin/main`, and `origin/main` contains `origin/devenv`. Missing integration state produces a real ineligible artifact and exit code `2`.
+`-ExpectedAcceptedSha` identifies the commit that passed the preceding acceptance gates. `-OutputPath` selects the JSON artifact; otherwise the script writes beneath `artifacts/acceptance/branch-integration/`. It publishes either success or failure evidence through `Write-NewJsonArtifact`; an existing destination is preserved and causes fail-closed output failure. The script exits `0` only when the current checkout is clean `main`, both remote branches exist, HEAD equals the expected accepted SHA and `origin/main`, and `origin/main` contains `origin/devenv`. Missing integration state produces a real ineligible artifact and exit code `2` when its new evidence path is available.
 
 ## Invariants and failure behavior
 

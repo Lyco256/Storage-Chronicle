@@ -213,6 +213,6 @@ try {
 }
 
 $manifest.GeneratedUtc = [DateTimeOffset]::UtcNow
-$manifest | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $OutputPath -Encoding UTF8
+Write-NewJsonArtifact -Path $OutputPath -Value $manifest -Depth 20
 $manifest | ConvertTo-Json -Depth 20
 exit $exitCode

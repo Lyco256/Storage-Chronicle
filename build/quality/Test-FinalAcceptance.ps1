@@ -349,16 +349,8 @@ $evidence = [ordered]@{
     GeneratedUtc = [DateTimeOffset]::UtcNow
     OutputPath = $OutputPath
 }
+Write-NewJsonArtifact -Path $OutputPath -Value $evidence -Depth 12
 $json = $evidence | ConvertTo-Json -Depth 12
-$outputBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($json + [Environment]::NewLine)
-$outputStream = [System.IO.FileStream]::new($OutputPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None, 4096, [System.IO.FileOptions]::WriteThrough)
-try {
-    $outputStream.Write($outputBytes, 0, $outputBytes.Length)
-    $outputStream.Flush($true)
-}
-finally {
-    $outputStream.Dispose()
-}
 Write-Output $json
 if ($blocking.Count -ne 0) { exit 2 }
 exit 0

@@ -6,8 +6,7 @@ param(
     [string]$RollbackMsiPath,
     [string]$OutputRoot,
     [switch]$Build,
-    [switch]$AllowIncompleteBundle,
-    [switch]$Force
+    [switch]$AllowIncompleteBundle
 )
 
 $ErrorActionPreference = 'Stop'
@@ -69,54 +68,47 @@ $win10Finalizer = Join-Path $root 'tools/PhysicalAcceptance/Finalize-Windows10Ph
 if (-not (Test-Path -LiteralPath $win10Finalizer -PathType Leaf)) { throw "Windows 10 finalizer is missing: $win10Finalizer" }
 $acceptanceContracts = Join-Path $root 'build/quality/AcceptanceContracts.ps1'
 if (-not (Test-Path -LiteralPath $acceptanceContracts -PathType Leaf)) { throw "Acceptance contract is missing: $acceptanceContracts" }
-
-function Copy-Payload {
-    param([string]$Source, [string]$Destination)
-    if (-not (Test-Path -LiteralPath $Source)) { return $false }
-    if ((Test-Path -LiteralPath $Destination) -and -not $Force) { throw "Destination already exists; use -Force only for an approved generated-artifact directory: $Destination" }
-    Copy-Item -LiteralPath $Source -Destination $Destination -Recurse -Force:$Force
-    return $true
-}
+. $acceptanceContracts
 
 function New-Bundle {
     param([Parameter(Mandatory = $true)][string]$TargetOs)
     $name = if ($TargetOs -eq 'Windows10-22H2') { 'windows10-physical-acceptance' } else { 'installer-acceptance' }
     $bundle = Join-Path $OutputRoot $name
-    if ((Test-Path -LiteralPath $bundle) -and -not $Force) { throw "Bundle directory already exists; use -Force for generated artifacts only: $bundle" }
-    New-Item -ItemType Directory -Force -Path $bundle | Out-Null
+    if (Test-Path -LiteralPath $bundle) { throw "Bundle directory already exists; choose a new OutputRoot and preserve the prior evidence: $bundle" }
+    New-Item -ItemType Directory -Path $bundle | Out-Null
 
     $payloadFiles = [System.Collections.Generic.List[string]]::new()
     if (-not [string]::IsNullOrWhiteSpace($MsiPath) -and (Test-Path -LiteralPath $MsiPath -PathType Leaf)) {
-        Copy-Item -LiteralPath $MsiPath -Destination (Join-Path $bundle 'StorageChronicle.msi') -Force:$Force
+        Copy-Item -LiteralPath $MsiPath -Destination (Join-Path $bundle 'StorageChronicle.msi')
         [void]$payloadFiles.Add('StorageChronicle.msi')
     }
     if (-not [string]::IsNullOrWhiteSpace($UpdatedMsiPath) -and (Test-Path -LiteralPath $UpdatedMsiPath -PathType Leaf)) {
-        Copy-Item -LiteralPath $UpdatedMsiPath -Destination (Join-Path $bundle 'StorageChronicle.updated.msi') -Force:$Force
+        Copy-Item -LiteralPath $UpdatedMsiPath -Destination (Join-Path $bundle 'StorageChronicle.updated.msi')
         [void]$payloadFiles.Add('StorageChronicle.updated.msi')
     }
     if (-not [string]::IsNullOrWhiteSpace($RollbackMsiPath) -and (Test-Path -LiteralPath $RollbackMsiPath -PathType Leaf)) {
-        Copy-Item -LiteralPath $RollbackMsiPath -Destination (Join-Path $bundle 'StorageChronicle.rollback.msi') -Force:$Force
+        Copy-Item -LiteralPath $RollbackMsiPath -Destination (Join-Path $bundle 'StorageChronicle.rollback.msi')
         [void]$payloadFiles.Add('StorageChronicle.rollback.msi')
     }
     foreach ($entry in $publishRoots.GetEnumerator()) {
         if (Test-Path -LiteralPath $entry.Value -PathType Container) {
             $destination = Join-Path $bundle $entry.Key
-            Copy-Item -LiteralPath $entry.Value -Destination $destination -Recurse -Force:$Force
+            Copy-Item -LiteralPath $entry.Value -Destination $destination -Recurse
             foreach ($file in @(Get-ChildItem -LiteralPath $destination -File -Recurse)) { [void]$payloadFiles.Add(($file.FullName.Substring($bundle.Length).TrimStart('\').Replace('\', '/'))) }
         }
     }
     foreach ($scriptPath in $commonScripts) {
         $destination = Join-Path $bundle ([IO.Path]::GetFileName($scriptPath))
-        Copy-Item -LiteralPath $scriptPath -Destination $destination -Force:$Force
+        Copy-Item -LiteralPath $scriptPath -Destination $destination
         [void]$payloadFiles.Add([IO.Path]::GetFileName($scriptPath))
     }
+    Copy-Item -LiteralPath $acceptanceContracts -Destination (Join-Path $bundle 'AcceptanceContracts.ps1')
+    [void]$payloadFiles.Add('AcceptanceContracts.ps1')
     if ($TargetOs -eq 'Windows10-22H2') {
-        Copy-Item -LiteralPath $win10Verifier -Destination (Join-Path $bundle 'Verify-Windows10PhysicalAcceptance.ps1') -Force:$Force
+        Copy-Item -LiteralPath $win10Verifier -Destination (Join-Path $bundle 'Verify-Windows10PhysicalAcceptance.ps1')
         [void]$payloadFiles.Add('Verify-Windows10PhysicalAcceptance.ps1')
-        Copy-Item -LiteralPath $win10Finalizer -Destination (Join-Path $bundle 'Finalize-Windows10PhysicalAcceptance.ps1') -Force:$Force
+        Copy-Item -LiteralPath $win10Finalizer -Destination (Join-Path $bundle 'Finalize-Windows10PhysicalAcceptance.ps1')
         [void]$payloadFiles.Add('Finalize-Windows10PhysicalAcceptance.ps1')
-        Copy-Item -LiteralPath $acceptanceContracts -Destination (Join-Path $bundle 'AcceptanceContracts.ps1') -Force:$Force
-        [void]$payloadFiles.Add('AcceptanceContracts.ps1')
     }
 
     $hashEntries = [System.Collections.Generic.List[object]]::new()
@@ -128,7 +120,7 @@ function New-Bundle {
         }
     }
     $hashManifest = [ordered]@{ Schema = 'StorageChronicle.ManualAcceptanceHashManifest.v1'; GeneratedUtc = [DateTimeOffset]::UtcNow; Files = @($hashEntries) }
-    $hashManifest | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $bundle 'hash-manifest.json') -Encoding UTF8
+    Write-NewJsonArtifact -Path (Join-Path $bundle 'hash-manifest.json') -Value $hashManifest -Depth 12
 
     $bundleManifest = [ordered]@{
         Schema = 'StorageChronicle.ManualAcceptanceBundle.v1'
@@ -141,7 +133,7 @@ function New-Bundle {
         PayloadFiles = @($hashEntries | ForEach-Object RelativePath)
         Instructions = @('Run as administrator on a disposable target.', 'Verify the target OS and test-data marker before confirmation.', 'Use a real non-admin credential reference; never put plaintext passwords in the bundle.', 'Collect results and keep NOT_EXECUTED/FAILED cases visible.')
     }
-    $bundleManifest | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $bundle 'bundle-manifest.json') -Encoding UTF8
+    Write-NewJsonArtifact -Path (Join-Path $bundle 'bundle-manifest.json') -Value $bundleManifest -Depth 12
     $readme = @"
 # Storage Chronicle manual acceptance bundle
 
@@ -163,7 +155,16 @@ For Windows 10, use a user-approved dedicated local fixed NTFS test-data volume 
 
 Cleanup requires explicit `-ConfirmCleanup`; it never removes `%ProgramData%\Storage Chronicle\history`.
 "@
-    Set-Content -LiteralPath (Join-Path $bundle 'README.md') -Value $readme -Encoding UTF8
+$readmePath = Join-Path $bundle 'README.md'
+$readmeBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($readme)
+$readmeStream = [System.IO.FileStream]::new($readmePath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None, 4096, [System.IO.FileOptions]::WriteThrough)
+try {
+    $readmeStream.Write($readmeBytes, 0, $readmeBytes.Length)
+    $readmeStream.Flush($true)
+}
+finally {
+    $readmeStream.Dispose()
+}
     Write-Output ([ordered]@{ Bundle = $bundle; TargetOs = $TargetOs; MissingInputs = @($missing); AcceptanceEligible = $false } | ConvertTo-Json -Depth 8)
 }
 

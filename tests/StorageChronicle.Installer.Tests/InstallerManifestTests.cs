@@ -286,11 +286,48 @@ public sealed class InstallerManifestTests
         Assert.Contains("overallStatus -ne 'PASS'", finalGate, StringComparison.Ordinal);
         Assert.Contains("Physical safety audit does not declare AcceptanceEligible=true", finalGate, StringComparison.Ordinal);
         Assert.Contains("Validation failed: $($_.Exception.Message)", finalGate, StringComparison.Ordinal);
-        Assert.Contains("[System.IO.FileMode]::CreateNew", finalGate, StringComparison.Ordinal);
-        Assert.Contains("$outputStream.Flush($true)", finalGate, StringComparison.Ordinal);
+        Assert.Contains("Write-NewJsonArtifact -Path $OutputPath -Value $evidence", finalGate, StringComparison.Ordinal);
         Assert.DoesNotContain("Set-Content -LiteralPath $OutputPath", finalGate, StringComparison.Ordinal);
         Assert.DoesNotContain("Windows11VirtualBoxInstallerManifest", finalGate, StringComparison.Ordinal);
         Assert.DoesNotContain("TestLabAndRealIo", finalGate, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PhysicalAcceptanceCollectorCreatesEvidenceWithoutReplacingExistingFiles()
+    {
+        var root = FindRoot();
+        var collector = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Collect-PhysicalAcceptanceResults.ps1"));
+
+        Assert.Contains("Write-NewJsonArtifact -Path $OutputPath -Value $payload", collector, StringComparison.Ordinal);
+        Assert.Contains("AcceptanceContracts.ps1", collector, StringComparison.Ordinal);
+        Assert.DoesNotContain("Set-Content -LiteralPath $OutputPath", collector, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AcceptanceEvidenceWritersShareAtomicCreateOnlyJsonContract()
+    {
+        var root = FindRoot();
+        var contracts = File.ReadAllText(Path.Combine(root, "build", "quality", "AcceptanceContracts.ps1"));
+        var writers = new[]
+        {
+            "build/quality/Test-FinalAcceptance.ps1",
+            "build/quality/Test-BranchIntegration.ps1",
+            "build/quality/New-ResourceQuietWitness.ps1",
+            "tools/PhysicalAcceptance/Collect-PhysicalAcceptanceResults.ps1",
+            "tools/PhysicalAcceptance/Finalize-Windows10PhysicalAcceptance.ps1",
+            "tools/TestEnvironment/Compose-Windows10StageA.ps1"
+        };
+
+        Assert.Contains("function Write-NewJsonArtifact", contracts, StringComparison.Ordinal);
+        Assert.Contains("The JSON artifact destination already exists", contracts, StringComparison.Ordinal);
+        Assert.Contains("[System.IO.FileMode]::CreateNew", contracts, StringComparison.Ordinal);
+        Assert.Contains("$stream.Flush($true)", contracts, StringComparison.Ordinal);
+        Assert.Contains("[System.IO.File]::Move($temporaryPath, $fullPath)", contracts, StringComparison.Ordinal);
+        foreach (var writer in writers)
+        {
+            var source = File.ReadAllText(Path.Combine(root, writer.Replace('/', Path.DirectorySeparatorChar)));
+            Assert.Contains("Write-NewJsonArtifact", source, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -302,6 +339,11 @@ public sealed class InstallerManifestTests
 
         Assert.Contains("AcceptanceContracts.ps1", bundleGenerator, StringComparison.Ordinal);
         Assert.Contains("payloadFiles.Add('AcceptanceContracts.ps1')", bundleGenerator, StringComparison.Ordinal);
+        Assert.Contains("Copy-Item -LiteralPath $acceptanceContracts -Destination (Join-Path $bundle 'AcceptanceContracts.ps1')", bundleGenerator, StringComparison.Ordinal);
+        Assert.Contains("Write-NewJsonArtifact", bundleGenerator, StringComparison.Ordinal);
+        Assert.Contains("FileMode]::CreateNew", bundleGenerator, StringComparison.Ordinal);
+        Assert.DoesNotContain("$switch]$Force", bundleGenerator, StringComparison.Ordinal);
+        Assert.DoesNotContain("Copy-Item -Force", bundleGenerator, StringComparison.Ordinal);
         Assert.Contains("Join-Path $PSScriptRoot 'AcceptanceContracts.ps1'", finalizer, StringComparison.Ordinal);
     }
 

@@ -6,6 +6,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'AcceptanceContracts.ps1')
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = Join-Path $root ('artifacts/acceptance/branch-integration/branch-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.json')
@@ -69,7 +70,7 @@ try {
         FailureReasons = @($failureReasons)
         GeneratedUtc = [DateTimeOffset]::UtcNow
     }
-    $evidence | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $OutputPath -Encoding UTF8
+    Write-NewJsonArtifact -Path $OutputPath -Value $evidence -Depth 12
     Write-Output ($evidence | ConvertTo-Json -Depth 12)
     if ($failureReasons.Count -ne 0) { exit 2 }
     exit 0
@@ -82,7 +83,7 @@ catch {
         FailureReasons = @($_.Exception.Message)
         GeneratedUtc = [DateTimeOffset]::UtcNow
     }
-    $evidence | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $OutputPath -Encoding UTF8
+    Write-NewJsonArtifact -Path $OutputPath -Value $evidence -Depth 12
     Write-Error $_.Exception.Message
     exit 1
 }

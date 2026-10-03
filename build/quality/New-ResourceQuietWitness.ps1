@@ -17,6 +17,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'AcceptanceContracts.ps1')
 
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
     throw 'The quiet witness requires Windows because it independently samples the Agent named pipe.'
@@ -198,7 +199,7 @@ $witness['SampleSpanSeconds'] = [Math]::Round($sampleSpanSeconds, 3)
 $witness['Samples'] = $samples.ToArray()
 $witness['Errors'] = $errors.ToArray()
 $witness['GeneratedUtc'] = [DateTimeOffset]::UtcNow
-$witness | ConvertTo-Json -Depth 12 | Set-Content -Encoding UTF8 -LiteralPath $fullOutputPath
+Write-NewJsonArtifact -Path $fullOutputPath -Value $witness -Depth 12
 if (-not $eligible) {
     Write-Error "Quiet witness is not acceptance-eligible: $fullOutputPath"
     exit 1
