@@ -23,7 +23,9 @@ param(
     [Parameter(Mandatory = $true)][string]$ExpectedComputerName,
     [Parameter(Mandatory = $true)][string]$OwnerReceiptPath,
     [Parameter(Mandatory = $true)][string]$AuthorizationNonce,
-    [Parameter(Mandatory = $true)][string]$CaseAuthorizationPhrase,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[A-Za-z0-9_-]{16,96}$')][string]$AuthorizationPipeName,
+    [Parameter(Mandatory = $true)][int]$AuthorizationParentProcessId,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[A-Fa-f0-9]{64}$')][string]$ExpectedHashManifestSha256,
     [switch]$ConfirmDedicatedPhysicalMachine,
     [Parameter(Mandatory = $true)][string]$ResultPath,
     [Parameter(Mandatory = $true)][string]$LogPath
@@ -50,6 +52,75 @@ function Assert-NoReparsePath([string]$Path) {
 $resultDirectory = Split-Path -Parent $ResultPath
 $evidenceDirectory = Join-Path $resultDirectory 'evidence'
 if (-not (Test-Path -LiteralPath $resultDirectory -PathType Container)) { throw "The run-owned result directory must already exist: $resultDirectory" }
+
+# The elevated case driver is inert until it receives a one-use grant from the
+# exact non-elevated Test-Installer broker process. A caller-supplied receipt,
+# nonce, or phrase is not sufficient authorization.
+if (-not [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'The case driver must be launched as the single UAC-approved elevated case process.' }
+if ($null -eq ('StorageChronicleInstallerPipe.NativeMethods' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace StorageChronicleInstallerPipe {
+    public static class NativeMethods {
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool GetNamedPipeServerProcessId(IntPtr pipe, out uint serverProcessId);
+    }
+}
+'@
+}
+$pipeClient = [IO.Pipes.NamedPipeClientStream]::new('.', $AuthorizationPipeName, [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None)
+$pipeReader = $null
+$pipeWriter = $null
+try {
+    $pipeClient.Connect(30000)
+    [uint32]$actualBrokerProcessId = 0
+    if (-not [StorageChronicleInstallerPipe.NativeMethods]::GetNamedPipeServerProcessId($pipeClient.SafePipeHandle.DangerousGetHandle(), [ref]$actualBrokerProcessId) -or $actualBrokerProcessId -ne [uint32]$AuthorizationParentProcessId) { throw 'The authorization pipe is not owned by the declared live parent process.' }
+    $brokerProcess = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$AuthorizationParentProcessId" -ErrorAction Stop
+    $expectedHarnessPath = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $PSScriptRoot) 'Test-Installer.ps1'))
+    $brokerCommandLine = [string]$brokerProcess.CommandLine
+    if ([string]::IsNullOrWhiteSpace($brokerCommandLine) -or $brokerCommandLine.IndexOf($expectedHarnessPath, [StringComparison]::OrdinalIgnoreCase) -lt 0 -or $brokerCommandLine -notmatch '(?i)(?:^|\s)-Execute(?:\s|$)' -or $brokerCommandLine.IndexOf($RunId.ToString('D'), [StringComparison]::OrdinalIgnoreCase) -lt 0) { throw 'The authorization broker is not the expected Test-Installer -Execute process for this run.' }
+    $pipeEncoding = [Text.UTF8Encoding]::new($false)
+    $pipeReader = [IO.StreamReader]::new($pipeClient, $pipeEncoding, $false, 1024, $true)
+    $pipeWriter = [IO.StreamWriter]::new($pipeClient, $pipeEncoding, 1024, $true)
+    $pipeWriter.AutoFlush = $true
+    $expectedCaseAuthorization = "I AUTHORIZE STORAGE CHRONICLE CASE $CaseId ON $env:COMPUTERNAME RUN $RunId"
+    $hello = [ordered]@{ Schema = 'StorageChronicle.InstallerCaseAuthorizationHello.v1'; RunId = $RunId.ToString('D'); CaseId = $CaseId; ComputerName = $env:COMPUTERNAME; ProcessId = $PID; ParentProcessId = $AuthorizationParentProcessId; AuthorizationNonce = $AuthorizationNonce; HashManifestSha256 = $ExpectedHashManifestSha256 }
+    $pipeWriter.WriteLine(($hello | ConvertTo-Json -Compress -Depth 4))
+    $grantLine = $pipeReader.ReadLine()
+    if ([string]::IsNullOrWhiteSpace($grantLine)) { throw 'The parent authorization broker closed without granting this installer case.' }
+    $grant = $grantLine | ConvertFrom-Json
+    if ([string]$grant.Schema -cne 'StorageChronicle.InstallerCaseAuthorizationGrant.v1' -or [string]$grant.RunId -cne $RunId.ToString('D') -or [string]$grant.CaseId -cne $CaseId -or [string]$grant.ComputerName -cne $env:COMPUTERNAME -or [int]$grant.ParentProcessId -ne $AuthorizationParentProcessId -or [string]$grant.AuthorizationNonce -cne $AuthorizationNonce -or [string]$grant.HashManifestSha256 -cne $ExpectedHashManifestSha256 -or [string]$grant.CaseAuthorizationPhrase -cne $expectedCaseAuthorization -or $null -eq $grant.GrantedUtc) { throw 'The one-case authorization grant does not match this exact PC, run, case, nonce, or payload fingerprint.' }
+} finally {
+    if ($null -ne $pipeReader) { $pipeReader.Dispose() }
+    if ($null -ne $pipeWriter) { $pipeWriter.Dispose() }
+    $pipeClient.Dispose()
+}
+
+if (-not (Test-Path -LiteralPath $OwnerReceiptPath -PathType Leaf)) { throw 'The physical installer owner receipt is missing.' }
+$bundleRootForVerification = [IO.Path]::GetFullPath((Split-Path -Parent $MsiPath)).TrimEnd('\')
+$hashManifestPath = Join-Path $bundleRootForVerification 'hash-manifest.json'
+Assert-NoReparsePath $bundleRootForVerification
+Assert-NoReparsePath $hashManifestPath
+if (-not (Test-Path -LiteralPath $hashManifestPath -PathType Leaf) -or -not (Get-FileHash -Algorithm SHA256 -LiteralPath $hashManifestPath).Hash.Equals($ExpectedHashManifestSha256, [StringComparison]::OrdinalIgnoreCase)) { throw 'The driver did not independently verify the externally approved hash-manifest fingerprint.' }
+$trustedManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $hashManifestPath | ConvertFrom-Json
+$trustedPayloads = @{}
+foreach ($entry in @($trustedManifest.Files)) {
+    $relativePath = [string]$entry.RelativePath
+    if ([string]::IsNullOrWhiteSpace($relativePath) -or [IO.Path]::IsPathRooted($relativePath) -or $relativePath -match '(^|[\\/])\.\.([\\/]|$)' -or $relativePath.Contains(':') -or [string]$entry.SHA256 -notmatch '^[A-Fa-f0-9]{64}$' -or $trustedPayloads.ContainsKey($relativePath)) { throw "The trusted installer hash manifest contains an unsafe, duplicate, or malformed entry: $relativePath" }
+    $trustedPayloads[$relativePath] = [string]$entry.SHA256
+}
+foreach ($payload in @(
+    @{ Name = 'StorageChronicle.msi'; Path = $MsiPath },
+    @{ Name = 'StorageChronicle.updated.msi'; Path = $UpdatedMsiPath },
+    @{ Name = 'StorageChronicle.rollback.msi'; Path = $RollbackMsiPath },
+    @{ Name = 'Invoke-RealInstallerCase.ps1'; Path = $PSCommandPath }
+)) {
+    if ([string]::IsNullOrWhiteSpace([string]$payload.Path) -or -not $trustedPayloads.ContainsKey([string]$payload.Name)) { throw "The trusted hash manifest does not contain required payload $($payload.Name)." }
+    $expectedPayloadPath = [IO.Path]::GetFullPath((Join-Path $bundleRootForVerification $payload.Name))
+    if (-not [IO.Path]::GetFullPath([string]$payload.Path).Equals($expectedPayloadPath, [StringComparison]::OrdinalIgnoreCase) -or -not (Get-FileHash -Algorithm SHA256 -LiteralPath $payload.Path).Hash.Equals($trustedPayloads[[string]$payload.Name], [StringComparison]::OrdinalIgnoreCase)) { throw "The physical installer payload differs from the independently fingerprinted bundle entry: $($payload.Name)" }
+}
+
 if (-not (Test-Path -LiteralPath $OwnerReceiptPath -PathType Leaf)) { throw 'The physical installer owner receipt is missing.' }
 $receiptDirectory = [IO.Path]::GetFullPath((Split-Path -Parent $OwnerReceiptPath)).TrimEnd('\')
 $resultDirectoryFull = [IO.Path]::GetFullPath($resultDirectory).TrimEnd('\')
@@ -61,6 +132,8 @@ if (Test-Path -LiteralPath $ResultPath -or Test-Path -LiteralPath $LogPath) { th
 New-Item -ItemType Directory -Path $evidenceDirectory | Out-Null
 
 $result = [ordered]@{
+    Schema = 'StorageChronicle.InstallerCaseResult.v1'
+    ComputerName = $env:COMPUTERNAME
     RunId = $RunId.ToString('D')
     CaseId = $CaseId
     Status = 'FAILED'
@@ -336,12 +409,8 @@ try {
     $result.Target.IsAdministrator = Test-Administrator
     if (-not $result.Target.IsAdministrator) { throw 'The installer driver requires an elevated process.' }
     if (-not $ConfirmDedicatedPhysicalMachine -or -not $ExpectedComputerName.Equals($env:COMPUTERNAME, [StringComparison]::OrdinalIgnoreCase)) { throw 'The driver requires explicit authorization bound to the current physical test PC.' }
-    if ([string]::IsNullOrWhiteSpace($AuthorizationNonce) -or -not $AuthorizationNonce.Equals([Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_INSTALLER_AUTHORIZATION_NONCE', 'Process'), [StringComparison]::Ordinal)) { throw 'The run-scoped installer authorization capability is missing or does not match.' }
-    $expectedCaseAuthorization = "I AUTHORIZE STORAGE CHRONICLE CASE $CaseId ON $env:COMPUTERNAME RUN $RunId"
-    if (-not $CaseAuthorizationPhrase.Equals($expectedCaseAuthorization, [StringComparison]::Ordinal)) { throw 'The case authorization phrase does not bind this exact case, physical PC, and run.' }
-    Write-Host "This driver will execute installer case '$CaseId' on physical PC '$env:COMPUTERNAME' for run '$RunId'. It may change Windows Installer, Program Files, ProgramData history, service, and registry state. Type the exact case authorization phrase to continue: $expectedCaseAuthorization"
-    $typedCaseAuthorization = [Console]::ReadLine()
-    if ($null -eq $typedCaseAuthorization -or -not $typedCaseAuthorization.Equals($expectedCaseAuthorization, [StringComparison]::Ordinal)) { throw 'The driver did not receive the exact interactive case authorization; no installer case was executed.' }
+    if ($AuthorizationNonce -notmatch '^[A-Fa-f0-9]{32}$') { throw 'The run-scoped installer authorization capability is missing or malformed.' }
+    Write-Host "Broker grant validated for installer case '$CaseId' on '$env:COMPUTERNAME' run '$RunId'. The parent presented the action details and the user approved this one case through UAC."
     if (-not (Test-Path -LiteralPath $OwnerReceiptPath -PathType Leaf)) { throw 'The physical installer owner receipt is missing.' }
     $ownerReceipt = Get-Content -Raw -Encoding UTF8 -LiteralPath $OwnerReceiptPath | ConvertFrom-Json
     if ([string]$ownerReceipt.Schema -ne 'StorageChronicle.PhysicalInstallerOwnerReceipt.v1' -or [string]$ownerReceipt.RunId -ne $RunId.ToString('D') -or [string]$ownerReceipt.ComputerName -ne $env:COMPUTERNAME -or [string]$ownerReceipt.HumanConfirmation -cne "I CONFIRM DEDICATED PC $env:COMPUTERNAME RUN $RunId" -or [string]$ownerReceipt.EvidenceRoot -ine $receiptDirectory -or [string]$ownerReceipt.InstallPath -ine [IO.Path]::GetFullPath($InstallPath) -or [string]$ownerReceipt.HistoryPath -ine [IO.Path]::GetFullPath($HistoryPath) -or [string]$ownerReceipt.StoragePermissionPath -ine [IO.Path]::GetFullPath($StoragePermissionPath)) { throw 'The installer owner receipt does not match this run, PC, human confirmation, evidence, install, history, or permission path.' }
@@ -498,6 +567,10 @@ try {
 $result.Assertions = @($assertions)
 $resultJson = $result | ConvertTo-Json -Depth 20
 $resultBytes = [Text.UTF8Encoding]::new($false).GetBytes($resultJson)
+$log = [ordered]@{ Schema = 'StorageChronicle.InstallerCaseLog.v1'; ComputerName = $env:COMPUTERNAME; RunId = $RunId.ToString('D'); CaseId = $CaseId; Text = "Status=$($result.Status)`r`nReason=$($result.Reason)`r`n"; CompletedUtc = [DateTimeOffset]::UtcNow }
+$logBytes = [Text.UTF8Encoding]::new($false).GetBytes(($log | ConvertTo-Json -Depth 4))
+$logStream = [IO.File]::Open($LogPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+try { $logStream.Write($logBytes, 0, $logBytes.Length); $logStream.Flush($true) } finally { $logStream.Dispose() }
 $resultStream = [IO.File]::Open($ResultPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
 try { $resultStream.Write($resultBytes, 0, $resultBytes.Length); $resultStream.Flush($true) } finally { $resultStream.Dispose() }
 exit $(if ($result.Status -eq 'PASSED') { 0 } else { 1 })

@@ -80,10 +80,17 @@ if ([string]$computerSystem.Model -match '(?i)virtual|vmware|virtualbox|kvm|hype
 $currentVersion = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue
 $osDisplayVersion = if ($null -ne $os.PSObject.Properties['DisplayVersion']) { [string]$os.DisplayVersion } elseif ($null -ne $currentVersion) { [string]$currentVersion.DisplayVersion } else { '' }
 $osBuild = if ($null -ne $os.PSObject.Properties['BuildNumber']) { [string]$os.BuildNumber } else { [string]$currentVersion.CurrentBuild }
-$isAdmin = ([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$isAdmin = ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+$adminSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
+$isAdminGroupMember = @($identity.Groups | Where-Object { $_.Value -eq $adminSid.Value }).Count -gt 0
+$uacConfiguration = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name EnableLUA, ConsentPromptBehaviorAdmin -ErrorAction Stop
+$uacEnabled = [int]$uacConfiguration.EnableLUA -eq 1
+$adminPromptBehavior = [int]$uacConfiguration.ConsentPromptBehaviorAdmin
+$uacPromptConfigured = $adminPromptBehavior -in @(1, 2, 3, 4)
 $isX64 = [Environment]::Is64BitOperatingSystem
 $targetMatches = if ($target -eq 'Windows10-22H2') { [string]$os.Caption -match 'Windows 10' -and ($osDisplayVersion -eq '22H2' -or $osBuild -eq '19045') } else { [string]$os.Caption -match 'Windows 11' }
-if (-not $isAdmin -or -not $isX64 -or -not $targetMatches) { throw "Wrong environment: Product=$($os.Caption), DisplayVersion=$osDisplayVersion, Build=$osBuild, x64=$isX64, admin=$isAdmin, target=$target" }
+if ($isAdmin -or -not $isAdminGroupMember -or -not $uacEnabled -or -not $uacPromptConfigured -or -not $isX64 -or -not $targetMatches) { throw "Wrong environment: the installer broker requires a non-elevated filtered token for a local Administrators member, EnableLUA=1, and ConsentPromptBehaviorAdmin=1..4. Product=$($os.Caption), DisplayVersion=$osDisplayVersion, Build=$osBuild, x64=$isX64, admin=$isAdmin, localAdministratorsMember=$isAdminGroupMember, UACEnabled=$uacEnabled, ConsentPromptBehaviorAdmin=$adminPromptBehavior, target=$target" }
 
 $testDataRootFull = [IO.Path]::GetFullPath($TestDataRoot).TrimEnd('\')
 $blockedRoots = @('C:', 'C:\', $env:WINDIR, $env:ProgramFiles, $env:ProgramData) | ForEach-Object { try { [IO.Path]::GetFullPath($_).TrimEnd('\') } catch { $_ } }
@@ -139,7 +146,7 @@ $msiHashes = [ordered]@{}
 foreach ($name in @('StorageChronicle.msi', 'StorageChronicle.updated.msi', 'StorageChronicle.rollback.msi')) {
     $msiHashes[$name] = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $BundleRoot $name)).Hash
 }
-$preflight = [ordered]@{ Schema = 'StorageChronicle.RealMachineInstallerPreflight.v1'; RunId = $runId; GeneratedUtc = [DateTimeOffset]::UtcNow; ComputerName = $env:COMPUTERNAME; TargetOs = $target; ProductName = $os.Caption; DisplayVersion = $osDisplayVersion; Build = $osBuild; IsAdministrator = $isAdmin; IsX64 = $isX64; TestDataRoot = $testDataRootFull; TestDataVolumeUniqueId = [string]$testVolume.UniqueId; TestDataMarker = $markerFiles[0].FullName; FreeSpaceGiB = $freeSpaceGiB; InstallPath = $installPath; ProgramDataRoot = $programDataRoot; ProgramDataRootPresentBeforeRun = Test-Path -LiteralPath $programDataRoot; HistoryPath = $historyPath; EvidenceRoot = $evidenceRunRoot; MsiSha256 = $msiHashes; ExistingProductCount = $registeredProducts.Count; ExistingService = $null -ne $existingService; ExistingProgramDataEntryCount = $programDataEntries.Count; AcceptanceEligible = $false }
+$preflight = [ordered]@{ Schema = 'StorageChronicle.RealMachineInstallerPreflight.v1'; RunId = $runId; GeneratedUtc = [DateTimeOffset]::UtcNow; ComputerName = $env:COMPUTERNAME; TargetOs = $target; ProductName = $os.Caption; DisplayVersion = $osDisplayVersion; Build = $osBuild; IsAdministrator = $isAdmin; UACEnabled = $uacEnabled; IsX64 = $isX64; TestDataRoot = $testDataRootFull; TestDataVolumeUniqueId = [string]$testVolume.UniqueId; TestDataMarker = $markerFiles[0].FullName; FreeSpaceGiB = $freeSpaceGiB; InstallPath = $installPath; ProgramDataRoot = $programDataRoot; ProgramDataRootPresentBeforeRun = Test-Path -LiteralPath $programDataRoot; HistoryPath = $historyPath; EvidenceRoot = $evidenceRunRoot; MsiSha256 = $msiHashes; ExistingProductCount = $registeredProducts.Count; ExistingService = $null -ne $existingService; ExistingProgramDataEntryCount = $programDataEntries.Count; AcceptanceEligible = $false }
 New-Item -ItemType Directory -Path $evidenceRunRoot | Out-Null
 $preflightPath = Join-Path $evidenceRunRoot 'real-machine-preflight.json'
 Write-NewJson $preflightPath $preflight

@@ -1,9 +1,116 @@
 using Xunit;
+using StorageChronicle.InstallerAuthorization;
 
 namespace StorageChronicle.Installer.Tests;
 
 public sealed class InstallerManifestTests
 {
+    [Fact]
+    public void InstallerAuthorizationHelloAcceptsOnlyTheExactChildAndCaseContext()
+    {
+        var hash = new string('A', 64);
+        var nonce = InstallerAuthorizationProtocol.CreateToken();
+        Assert.True(InstallerAuthorizationProtocol.ValidateHello(
+            "StorageChronicle.InstallerCaseAuthorizationHello.v1", "run-1", "service", "TEST-PC", 1234, 5678, nonce, hash,
+            "run-1", "service", "test-pc", 1234, 5678, nonce, hash));
+        Assert.False(InstallerAuthorizationProtocol.ValidateHello(
+            "StorageChronicle.InstallerCaseAuthorizationHello.v1", "run-1", "service", "TEST-PC", 1235, 5678, nonce, hash,
+            "run-1", "service", "test-pc", 1234, 5678, nonce, hash));
+        Assert.False(InstallerAuthorizationProtocol.ValidateHello(
+            "StorageChronicle.InstallerCaseAuthorizationHello.v1", "run-1", "repair", "TEST-PC", 1234, 5678, nonce, hash,
+            "run-1", "service", "test-pc", 1234, 5678, nonce, hash));
+        Assert.False(InstallerAuthorizationProtocol.ValidateHello(
+            "StorageChronicle.InstallerCaseAuthorizationHello.v1", "run-1", "service", "TEST-PC", 1234, 5678, nonce, hash,
+            "run-1", "service", "test-pc", 1234, 5678, nonce, new string('B', 64)));
+    }
+
+    [Fact]
+    public void InstallerAuthorizationNonceRejectsMismatchAndReplay()
+    {
+        var nonce = InstallerAuthorizationProtocol.CreateToken();
+        var mismatch = new OneTimeNonce(nonce);
+        Assert.False(mismatch.TryConsume("not-the-nonce"));
+        Assert.False(mismatch.TryConsume(nonce));
+
+        var validOnce = new OneTimeNonce(nonce);
+        Assert.True(validOnce.TryConsume(nonce));
+        Assert.False(validOnce.TryConsume(nonce));
+    }
+
+    [Fact]
+    public void UacCancellationMapsToNotExecutedAndOtherLaunchFailuresRemainFailures()
+    {
+        Assert.Equal("NOT_EXECUTED", InstallerAuthorizationProtocol.MapLaunchFailure(1223));
+        Assert.Equal("FAILED", InstallerAuthorizationProtocol.MapLaunchFailure(5));
+        Assert.Equal("FAILED", InstallerAuthorizationProtocol.MapLaunchFailure(-1));
+    }
+
+    [Fact]
+    public void InstallerBrokerPipeNameCollisionFailsClosed()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var pipeName = "SCInstallerCollision-" + InstallerAuthorizationProtocol.CreateToken();
+        using var first = new System.IO.Pipes.NamedPipeServerStream(pipeName, System.IO.Pipes.PipeDirection.InOut, 1, System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.None);
+        Assert.Throws<IOException>(() => new System.IO.Pipes.NamedPipeServerStream(pipeName, System.IO.Pipes.PipeDirection.InOut, 1, System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.None));
+    }
+
+    [Fact]
+    public void PhysicalInstallerBrokerOrdersDisclosureConsentPipeIdentityGrantAndPostExitReads()
+    {
+        var root = FindRoot();
+        var harness = File.ReadAllText(Path.Combine(root, "build", "package", "Test-Installer.ps1"));
+        var disclose = harness.IndexOf("Write-Host $disclosure", StringComparison.Ordinal);
+        var parentConsent = harness.IndexOf("Read-Host \"Type exactly", StringComparison.Ordinal);
+        var pipe = harness.IndexOf("New-CurrentUserInstallerPipe -PipeName", StringComparison.Ordinal);
+        var uac = harness.IndexOf("Start-UacInstallerCase -FilePath", StringComparison.Ordinal);
+        var clientPid = harness.IndexOf("GetClientProcessId($pipe)", StringComparison.Ordinal);
+        var helloCheck = harness.IndexOf("ValidateHello(", StringComparison.Ordinal);
+        var grant = harness.IndexOf("Schema = 'StorageChronicle.InstallerCaseAuthorizationGrant.v1'", StringComparison.Ordinal);
+        var exitWait = harness.IndexOf("$process.WaitForExit($CaseTimeoutSeconds * 1000)", StringComparison.Ordinal);
+        var resultRead = harness.IndexOf("Read-PhysicalDriverLog -LogPath", StringComparison.Ordinal);
+
+        Assert.True(disclose >= 0 && disclose < parentConsent && parentConsent < pipe && pipe < uac && uac < clientPid && clientPid < helloCheck && helloCheck < grant && grant < exitWait && exitWait < resultRead);
+        Assert.Contains("NamedPipeServerStreamAcl]::Create", harness, StringComparison.Ordinal);
+        Assert.Contains("PipeAccessRights]0", harness, StringComparison.Ordinal);
+        Assert.Contains("SetAccessRuleProtection($true, $false)", harness, StringComparison.Ordinal);
+        Assert.Contains("ConsentPromptBehaviorAdmin", harness, StringComparison.Ordinal);
+        Assert.Contains("$physicalIsElevated", harness, StringComparison.Ordinal);
+        Assert.Contains("$isAdminGroupMember", harness, StringComparison.Ordinal);
+        Assert.Contains("$promptBehavior -notin @(1, 2, 3, 4)", harness, StringComparison.Ordinal);
+        Assert.Contains("$startInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden", harness, StringComparison.Ordinal);
+        Assert.Contains("$startInfo.Verb = 'runas'", harness, StringComparison.Ordinal);
+        Assert.Contains("AuthorizationParentProcessId', [string]$PID", harness, StringComparison.Ordinal);
+        Assert.Contains("ExpectedHashManifestSha256', $ExpectedHashManifestSha256", harness, StringComparison.Ordinal);
+        var invocation = harness.Substring(harness.IndexOf("function Get-DriverInvocation", StringComparison.Ordinal), harness.IndexOf("function Read-DriverResult", StringComparison.Ordinal) - harness.IndexOf("function Get-DriverInvocation", StringComparison.Ordinal));
+        Assert.Contains("'-AuthorizationPipeName', $script:AuthorizationPipeName", invocation, StringComparison.Ordinal);
+        Assert.Contains("'-AuthorizationNonce', $script:AuthorizationNonce", invocation, StringComparison.Ordinal);
+        Assert.DoesNotContain("'-CaseAuthorizationPhrase'", invocation, StringComparison.Ordinal);
+        Assert.DoesNotContain("PipeOptions]::CurrentUserOnly", harness, StringComparison.Ordinal);
+        Assert.DoesNotContain("StandardInput", harness, StringComparison.Ordinal);
+        Assert.DoesNotContain("STORAGE_CHRONICLE_INSTALLER_AUTHORIZATION_NONCE", harness, StringComparison.Ordinal);
+        Assert.Contains("$script:StopAfterLiveChild = $true", harness, StringComparison.Ordinal);
+        var protocol = File.ReadAllText(Path.Combine(root, "build", "package", "InstallerAuthorizationProtocol.cs"));
+        Assert.Contains("StorageChronicle.InstallerCaseAuthorizationHello.v1", protocol, StringComparison.Ordinal);
+        Assert.Contains("StorageChronicle.InstallerCaseAuthorizationGrant.v1", harness, StringComparison.Ordinal);
+        Assert.Contains("ComputerName = $env:COMPUTERNAME", harness, StringComparison.Ordinal);
+        Assert.Contains("CaseAuthorizationPhrase = $script:CaseAuthorizationPhrase", harness, StringComparison.Ordinal);
+        Assert.Contains("StorageChronicle.InstallerCaseResult.v1", harness, StringComparison.Ordinal);
+        Assert.Contains("StorageChronicle.InstallerCaseLog.v1", harness, StringComparison.Ordinal);
+        Assert.Contains("Id = 'service'; Name = 'LocalSystem service and recovery'; Requirements = @('MsiPath', 'ServiceName')", harness, StringComparison.Ordinal);
+        Assert.Contains("'session' { return", harness, StringComparison.Ordinal);
+        Assert.Contains("'non-admin' { return", harness, StringComparison.Ordinal);
+        Assert.DoesNotContain("'session-agent' { return", harness, StringComparison.Ordinal);
+        Assert.DoesNotContain("'non-admin-ui' { return", harness, StringComparison.Ordinal);
+        Assert.DoesNotContain("Add-Precondition 'ServiceCredentialReference'", harness, StringComparison.Ordinal);
+        Assert.DoesNotContain("ServiceCredentialReference", harness, StringComparison.Ordinal);
+        Assert.Contains("Add-Precondition 'UacEnabled'", harness, StringComparison.Ordinal);
+        var launcher = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Run-RealMachineInstallerAcceptance.ps1"));
+        Assert.Contains("ConsentPromptBehaviorAdmin", launcher, StringComparison.Ordinal);
+        Assert.Contains("$isAdminGroupMember", launcher, StringComparison.Ordinal);
+        Assert.Contains("$adminPromptBehavior -in @(1, 2, 3, 4)", launcher, StringComparison.Ordinal);
+        Assert.Contains("-not $uacPromptConfigured", launcher, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void ManifestContainsSingleProductAndRecoveryContract()
     {
@@ -197,15 +304,18 @@ public sealed class InstallerManifestTests
         Assert.DoesNotContain("Set-Content -LiteralPath $manifestPath", harness, StringComparison.Ordinal);
         Assert.Contains("AuthorizationNonce", driver, StringComparison.Ordinal);
         Assert.Contains("CaseAuthorizationPhrase", driver, StringComparison.Ordinal);
-        Assert.Contains("[Console]::ReadLine()", driver, StringComparison.Ordinal);
         Assert.Contains("I AUTHORIZE STORAGE CHRONICLE CASE $CaseId ON $env:COMPUTERNAME RUN $RunId", driver, StringComparison.Ordinal);
-        Assert.Contains("The driver did not receive the exact interactive case authorization", driver, StringComparison.Ordinal);
-        Assert.Contains("-CaseAuthorizationPhrase", harness, StringComparison.Ordinal);
         Assert.Contains("$caseAnswer = Read-Host", harness, StringComparison.Ordinal);
-        Assert.Contains("RedirectStandardInput = $true", harness, StringComparison.Ordinal);
-        Assert.Contains("-StandardInput $caseAnswer", harness, StringComparison.Ordinal);
+        Assert.Contains("$grant.CaseAuthorizationPhrase -cne $expectedCaseAuthorization", driver, StringComparison.Ordinal);
+        Assert.DoesNotContain("[Console]::ReadLine()", driver, StringComparison.Ordinal);
+        Assert.DoesNotContain("-CaseAuthorizationPhrase", harness, StringComparison.Ordinal);
+        Assert.DoesNotContain("RedirectStandardInput", harness, StringComparison.Ordinal);
+        Assert.DoesNotContain("-StandardInput", harness, StringComparison.Ordinal);
+        Assert.Contains("CaseAuthorizationPhrase = $script:CaseAuthorizationPhrase", harness, StringComparison.Ordinal);
+        Assert.Contains("StorageChronicle.InstallerCaseAuthorizationGrant.v1", harness, StringComparison.Ordinal);
+        Assert.DoesNotContain("STORAGE_CHRONICLE_INSTALLER_AUTHORIZATION_NONCE", harness, StringComparison.Ordinal);
         Assert.DoesNotContain("'-NonInteractive'", harness, StringComparison.Ordinal);
-        Assert.True(driver.IndexOf("The driver did not receive the exact interactive case authorization", StringComparison.Ordinal) < driver.IndexOf("switch ($CaseId)", StringComparison.Ordinal));
+        Assert.True(driver.IndexOf("$grant.CaseAuthorizationPhrase -cne $expectedCaseAuthorization", StringComparison.Ordinal) < driver.IndexOf("switch ($CaseId)", StringComparison.Ordinal));
         Assert.Contains("HumanConfirmation", driver, StringComparison.Ordinal);
         Assert.Contains("FileMode]::CreateNew", driver, StringComparison.Ordinal);
         Assert.DoesNotContain("New-Item -ItemType Directory -Force -Path $permissionRoot", driver, StringComparison.Ordinal);
