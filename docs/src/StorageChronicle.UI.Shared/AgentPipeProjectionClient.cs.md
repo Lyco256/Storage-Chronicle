@@ -6,6 +6,8 @@ This client is the UI's only Agent boundary. It authenticates each connection as
 
 This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle.
 
+The typed health gateway also submits explicit external-media approval decisions by request ID. The Agent resolves the request against its authenticated pending state; the UI cannot send or override PC, volume, filesystem, root, or ACL identity evidence.
+
 ## Public types and responsibilities
 
 Public types preserve source facts and the explicitly owned responsibility; UI interpretation and correlation remain outside this boundary.

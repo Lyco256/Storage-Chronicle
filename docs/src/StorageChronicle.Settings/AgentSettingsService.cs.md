@@ -57,3 +57,5 @@ Platform-neutral behavior remains portable; Windows-only APIs are isolated in th
 ## Change-sensitive contracts
 
 Public names, serialized fields, persistence boundaries, and the mirrored path are compatibility-sensitive contracts.
+
+The `MachineSettings.MediaMirrorConsents` list is machine-scoped and included in change detection. Applying changed consent through the ordinary machine-settings gateway follows the existing authorized settings/lifecycle path; the dedicated consent-decision IPC must persist only a validated single grant and must not bypass its authenticated interactive-session check.

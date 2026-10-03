@@ -86,6 +86,14 @@ public sealed class AgentPipeProjectionClient : IVirtualizedPageSource<EventStac
         return IpcProtocol.Read<AgentHealth>(response);
     }
 
+    /// <summary>Submits the explicit user decision for one pending external-media mirror consent.</summary>
+    public async ValueTask<AgentHealth> DecideMediaMirrorApprovalAsync(string requestId, bool approve, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
+        var response = await SendAsync("MediaMirrorApprovalDecision", new MediaMirrorApprovalDecision(requestId, approve), cancellationToken).ConfigureAwait(false);
+        return IpcProtocol.Read<AgentHealth>(response);
+    }
+
     /// <inheritdoc />
     public async ValueTask<UserSettings> LoadUserSettingsAsync(CancellationToken cancellationToken = default)
     {

@@ -2,6 +2,8 @@
 
 `AgentHealthPanel` is the desktop state-monitoring surface. It reads only the bounded Agent health IPC response, displays recording state and per-volume continuity, and opens `ReconciliationConfirmationWindow` for the selected pending gap. The dialog's explicit `実行する`/`実行しない` result is sent through the typed Agent decision IPC; the UI never invokes a manual filesystem reconciliation API.
 
+The panel also lists pending external-media consent requests, refreshes health periodically while visible, and opens `MediaMirrorApprovalWindow` for a selected request. The consent window discloses PC/media/volume/root identity, existing-history import, future append scope, and filesystem-specific ACL limitations; only its explicit approval result is sent to the Agent.
+
 ## Role
 
 This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle.

@@ -39,6 +39,7 @@ public sealed class SettingsTests
             NoiseFilter = NoiseFilterProfile.Aggressive,
             LogStoragePath = fixture.Root + "\\logs",
             MediaMirrors = new Dictionary<string, string> { ["usb-a"] = fixture.Root + "\\mirror" },
+            MediaMirrorConsents = [new MediaMirrorConsentSettings("pc-a", "usb-a", "volume-a", "root-a", "NTFS", "NtfsAclVerified", DateTimeOffset.UtcNow)],
             FlushIntervalSeconds = 60
         };
 
@@ -51,6 +52,7 @@ public sealed class SettingsTests
         Assert.Equal(expected.MonitoringPaths, actual.MonitoringPaths);
         Assert.Equal(expected.ExcludedPaths, actual.ExcludedPaths);
         Assert.Equal(expected.MediaMirrors, actual.MediaMirrors);
+        Assert.Equal(expected.MediaMirrorConsents, actual.MediaMirrorConsents);
         var bytes = fixture.ReadBytes(fixture.MachinePath);
         Assert.False(bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF);
     }
@@ -182,6 +184,19 @@ public sealed class SettingsTests
         Assert.Contains(machineResult.Errors, error => error.Property == "LogStoragePath");
         Assert.False(userResult.IsValid);
         Assert.Equal(3, userResult.Errors.Count);
+    }
+
+    [Theory]
+    [InlineData("NTFS", "NotProvidedByFileSystem")]
+    [InlineData("exFAT", "NtfsAclVerified")]
+    [InlineData("Unknown", "Unknown")]
+    public void ConsentValidationRejectsInconsistentFilesystemProtection(string fileSystem, string aclProtection)
+    {
+        var consent = new MediaMirrorConsentSettings("pc-a", "media-a", "volume-a", "root-a", fileSystem, aclProtection, DateTimeOffset.UtcNow);
+
+        var result = SettingsValidator.Validate(new MachineSettings { MediaMirrorConsents = [consent] });
+
+        Assert.Contains(result.Errors, error => error.Property == "MediaMirrorConsents");
     }
 
     [Theory]

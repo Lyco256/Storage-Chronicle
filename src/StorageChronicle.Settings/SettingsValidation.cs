@@ -28,6 +28,43 @@ public static class SettingsValidator
             ValidatePath(pair.Value, $"MediaMirrors[{pair.Key}]", errors);
         }
 
+        var consentIdentities = new HashSet<string>(StringComparer.Ordinal);
+        if (settings.MediaMirrorConsents is null)
+        {
+            errors.Add(new("MediaMirrorConsents", "Consent collection cannot be null."));
+        }
+        else
+        {
+            foreach (var consent in settings.MediaMirrorConsents)
+            {
+                if (consent is null)
+                {
+                    errors.Add(new("MediaMirrorConsents", "Consent entries cannot be null."));
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(consent.PcIdentity) || string.IsNullOrWhiteSpace(consent.LogicalMediaId) ||
+                    string.IsNullOrWhiteSpace(consent.LiveVolumeIdentity) || string.IsNullOrWhiteSpace(consent.DedicatedMediaRootIdentity))
+                {
+                    errors.Add(new("MediaMirrorConsents", "Consent must bind PC, logical media, live volume, and dedicated root identities."));
+                    continue;
+                }
+
+                var key = $"{consent.PcIdentity}\0{consent.LogicalMediaId}";
+                if (!consentIdentities.Add(key)) errors.Add(new("MediaMirrorConsents", "Only one current consent binding is allowed per PC and logical media identity."));
+
+                var ntfs = string.Equals(consent.FileSystem, "NTFS", StringComparison.OrdinalIgnoreCase);
+                var knownNonNtfs = new[] { "FAT", "FAT32", "exFAT", "Other" }.Contains(consent.FileSystem, StringComparer.OrdinalIgnoreCase);
+                var validProtection = ntfs
+                    ? consent.AclProtection is "NtfsAclVerified" or "NtfsAclUnavailable"
+                    : knownNonNtfs && consent.AclProtection == "NotProvidedByFileSystem";
+                if (!validProtection)
+                    errors.Add(new("MediaMirrorConsents", "Filesystem and ACL-protection classifications are missing, unknown, or inconsistent."));
+                if (consent.ApprovedAtUtc == default)
+                    errors.Add(new("MediaMirrorConsents", "Consent must record a non-default approval timestamp."));
+            }
+        }
+
         return new(errors);
     }
 

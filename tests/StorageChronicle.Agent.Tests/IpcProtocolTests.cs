@@ -123,8 +123,8 @@ public sealed class IpcProtocolTests
     public void MediaMirrorApprovalDisclosureAndDecisionRoundTrip()
     {
         var request = new PendingMediaMirrorApproval(
-            "request-1", "pc-a", "media-a", "volume-a", "E:\\.StorageChronicle", "exFAT",
-            MediaMirrorAclDisclosure.AclProtectionUnavailable, DateTimeOffset.UtcNow);
+            "request-1", "pc-a", "media-a", "volume-a", "E:\\.StorageChronicle", "root-id-a", "exFAT",
+            MediaMirrorAclDisclosure.NotProvidedByFileSystem, true, true, DateTimeOffset.UtcNow);
         var decision = new MediaMirrorApprovalDecision(request.RequestId, Approve: true);
         var health = new AgentHealth("Running", null, 1, Array.Empty<VolumeHealth>(), PendingMediaMirrorApprovals: [request]);
 
@@ -134,6 +134,6 @@ public sealed class IpcProtocolTests
 
         Assert.Equal(request, roundTripRequest);
         Assert.Equal(decision, roundTripDecision);
-        Assert.Equal(MediaMirrorAclDisclosure.AclProtectionUnavailable, Assert.Single(roundTripHealth.PendingMediaMirrorApprovals!).AclDisclosure);
+        Assert.Equal(MediaMirrorAclDisclosure.NotProvidedByFileSystem, Assert.Single(roundTripHealth.PendingMediaMirrorApprovals!).AclDisclosure);
     }
 }

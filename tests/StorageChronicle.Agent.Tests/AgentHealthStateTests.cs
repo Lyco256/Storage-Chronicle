@@ -14,8 +14,8 @@ public sealed class AgentHealthStateTests
     {
         var state = new AgentHealthState();
         var request = new PendingMediaMirrorApproval(
-            "request-1", "pc-a", "media-a", "volume-a", "X:\\.StorageChronicle", "exFAT",
-            MediaMirrorAclDisclosure.Unknown, DateTimeOffset.UtcNow);
+            "request-1", "pc-a", "media-a", "volume-a", "X:\\.StorageChronicle", "root-id-a", "exFAT",
+            MediaMirrorAclDisclosure.Unknown, true, true, DateTimeOffset.UtcNow);
 
         Assert.True(state.TryAddPendingMediaApproval(request));
         var snapshot = state.Snapshot(new RecordingStatus(RecordingState.Running, 1, 1, null));
@@ -31,8 +31,8 @@ public sealed class AgentHealthStateTests
     {
         var state = new AgentHealthState();
         var request = new PendingMediaMirrorApproval(
-            "request-2", "", "media-a", "volume-a", "X:\\.StorageChronicle", "NTFS",
-            MediaMirrorAclDisclosure.NtfsAclVerified, DateTimeOffset.UtcNow);
+            "request-2", "", "media-a", "volume-a", "X:\\.StorageChronicle", "root-id-a", "NTFS",
+            MediaMirrorAclDisclosure.NtfsAclVerified, true, true, DateTimeOffset.UtcNow);
 
         Assert.False(state.TryAddPendingMediaApproval(request));
         Assert.Empty(state.Snapshot(new RecordingStatus(RecordingState.Running, 1, 1, null)).PendingMediaMirrorApprovals!);

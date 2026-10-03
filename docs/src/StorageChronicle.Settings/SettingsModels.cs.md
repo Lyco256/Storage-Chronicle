@@ -27,6 +27,8 @@ Machine Settings ? User Settings ? versioned JSON payload ??????????????????????
 
 This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle.
 
+`MachineSettings.MediaMirrorConsents` is the canonical PC-local persistence contract for explicit media consent. Each `MediaMirrorConsentSettings` entry binds PC identity, logical media ID, live volume identity, dedicated root identity, filesystem and ACL-protection classifications, and approval time. A legacy `MediaMirrors` path does not imply consent.
+
 ## Public types and responsibilities
 
 Public types preserve source facts and the explicitly owned responsibility; UI interpretation and correlation remain outside this boundary.

@@ -36,8 +36,10 @@ public enum MediaMirrorAclDisclosure
 {
     /// <summary>The dedicated directory ACL was verified on an NTFS volume.</summary>
     NtfsAclVerified,
-    /// <summary>The filesystem does not provide Windows ACL protection for this directory.</summary>
-    AclProtectionUnavailable,
+    /// <summary>The live volume is NTFS, but its dedicated directory ACL could not be verified.</summary>
+    NtfsAclUnavailable,
+    /// <summary>The live filesystem does not provide the Windows ACL protection being described.</summary>
+    NotProvidedByFileSystem,
     /// <summary>The filesystem or ACL protection could not be verified; approval must not proceed.</summary>
     Unknown
 }
@@ -49,8 +51,11 @@ public sealed record PendingMediaMirrorApproval(
     string LogicalMediaId,
     string VolumeId,
     string MediaRoot,
+    string DedicatedMediaRootIdentity,
     string FileSystem,
     MediaMirrorAclDisclosure AclDisclosure,
+    bool ExistingHistoryReadAndImportRequested,
+    bool FutureHistoryAppendRequested,
     DateTimeOffset DiscoveredUtc);
 
 /// <summary>Records the user's explicit decision for a pending media-mirror approval.</summary>

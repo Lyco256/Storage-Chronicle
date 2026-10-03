@@ -96,8 +96,8 @@ public sealed class HeadlessSmokeTests
                 GapStartUtc: DateTimeOffset.UtcNow.AddMinutes(-5));
             var dialog = new ReconciliationConfirmationWindow(request);
             var dialogTask = dialog.ShowDialogAsync(owner);
-            dialog.Measure(new Size(640, 420));
-            dialog.Arrange(new Rect(0, 0, 640, 420));
+            dialog.Measure(new Size(640, 480));
+            dialog.Arrange(new Rect(0, 0, 640, 480));
             await Task.Yield();
 
             var buttons = dialog.GetVisualDescendants().OfType<Button>().ToArray();
@@ -116,6 +116,28 @@ public sealed class HeadlessSmokeTests
         {
             owner.Close();
         }
+    }
+
+    [AvaloniaFact]
+    public void MediaMirrorApprovalDisclosesBothEffectsAndNeverCallsNonNtfsAclProtected()
+    {
+        var request = new PendingMediaMirrorApproval(
+            "media-approval-1", "PC-A", "USB-A", "volume-guid-a", @"E:\", "root-id-a", "exFAT",
+            MediaMirrorAclDisclosure.NotProvidedByFileSystem, true, true, DateTimeOffset.UtcNow);
+        var dialog = new MediaMirrorApprovalWindow(request);
+        var content = Assert.IsType<StackPanel>(dialog.Content);
+        var actionButtons = Assert.Single(content.Children.OfType<StackPanel>()).Children.OfType<Button>().ToArray();
+        Assert.True(actionButtons.Single(value => value.Content as string == "Approve this PC and media").IsEnabled);
+        var text = FindText(dialog.Content);
+        Assert.Contains("read existing owned media history and import", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("append future media-specific history", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("does not provide NTFS ACL protection", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("described as ACL-protected", text, StringComparison.Ordinal);
+
+        var unknown = new MediaMirrorApprovalWindow(request with { AclDisclosure = MediaMirrorAclDisclosure.Unknown });
+        var unknownActions = Assert.Single(Assert.IsType<StackPanel>(unknown.Content).Children.OfType<StackPanel>()).Children.OfType<Button>().ToArray();
+        Assert.False(unknownActions.Single(value => value.Content as string == "Approve this PC and media").IsEnabled);
+        Assert.NotNull(unknownActions.SingleOrDefault(value => value.Content as string == "Cancel"));
     }
 
     private static string FindText(object? value)

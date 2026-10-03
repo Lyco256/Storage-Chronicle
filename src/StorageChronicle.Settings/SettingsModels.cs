@@ -65,9 +65,22 @@ public sealed record MachineSettings
     public string LogStoragePath { get; init; } = string.Empty;
     /// <summary>Gets the mirror target for each media identifier.</summary>
     public IReadOnlyDictionary<string, string> MediaMirrors { get; init; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Gets PC-local, explicit consent bindings for previously approved media mirror roots.</summary>
+    public IReadOnlyList<MediaMirrorConsentSettings> MediaMirrorConsents { get; init; } = Array.Empty<MediaMirrorConsentSettings>();
     /// <summary>Gets the event flush interval in seconds.</summary>
     public int FlushIntervalSeconds { get; init; } = 5;
 }
+
+/// <summary>Persists the exact evidence to which a user explicitly consented for one media mirror.</summary>
+/// <remarks>This is a PC-local settings contract; a legacy <see cref="MachineSettings.MediaMirrors"/> entry is not consent.</remarks>
+public sealed record MediaMirrorConsentSettings(
+    string PcIdentity,
+    string LogicalMediaId,
+    string LiveVolumeIdentity,
+    string DedicatedMediaRootIdentity,
+    string FileSystem,
+    string AclProtection,
+    DateTimeOffset ApprovedAtUtc);
 
 /// <summary>Contains settings owned by the current user.</summary>
 public sealed record UserSettings

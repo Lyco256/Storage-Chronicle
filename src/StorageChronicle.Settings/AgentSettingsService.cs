@@ -152,6 +152,7 @@ public sealed class AgentSettingsService : IAgentSettingsGateway
         if (before.NoiseFilter != after.NoiseFilter) changed.Add(nameof(MachineSettings.NoiseFilter));
         if (!string.Equals(before.LogStoragePath, after.LogStoragePath, StringComparison.OrdinalIgnoreCase)) changed.Add(nameof(MachineSettings.LogStoragePath));
         if (!before.MediaMirrors.OrderBy(pair => pair.Key).SequenceEqual(after.MediaMirrors.OrderBy(pair => pair.Key))) changed.Add(nameof(MachineSettings.MediaMirrors));
+        if (!before.MediaMirrorConsents.SequenceEqual(after.MediaMirrorConsents)) changed.Add(nameof(MachineSettings.MediaMirrorConsents));
         if (before.FlushIntervalSeconds != after.FlushIntervalSeconds) changed.Add(nameof(MachineSettings.FlushIntervalSeconds));
         return changed;
     }
