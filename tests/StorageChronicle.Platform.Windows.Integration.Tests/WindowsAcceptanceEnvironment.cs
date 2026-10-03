@@ -151,4 +151,12 @@ internal static class WindowsAcceptanceEnvironment
         return output.Trim();
     }
 
+    public static Task<string> GetSmbSharePathAsync(string name) => RunPowerShellAsync(
+        "param($shareName) $share = Get-SmbShare -Name $shareName -ErrorAction SilentlyContinue; if ($null -ne $share) { [Console]::WriteLine([IO.Path]::GetFullPath([string]$share.Path)) }",
+        name);
+
+    public static Task<string> GetServiceExecutablePathAsync(string name) => RunPowerShellAsync(
+        """param($serviceName) $escapedName = $serviceName.Replace("'", "''"); $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$escapedName'" -ErrorAction SilentlyContinue; if ($null -ne $service) { $match = [regex]::Match([string]$service.PathName, '^"(?<path>[^"]+)"'); if ($match.Success) { [Console]::WriteLine([IO.Path]::GetFullPath($match.Groups['path'].Value)) } }""",
+        name);
+
 }

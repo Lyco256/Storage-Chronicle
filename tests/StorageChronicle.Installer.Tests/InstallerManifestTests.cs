@@ -401,6 +401,27 @@ public sealed class InstallerManifestTests
         Assert.DoesNotContain("New-Item", verifier, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void PrivilegedShareAndServiceCleanupRequiresRunOwnership()
+    {
+        var root = FindRoot();
+        var privilegedTests = File.ReadAllText(Path.Combine(root, "tests", "StorageChronicle.Platform.Windows.Integration.Tests", "WindowsPrivilegedAcceptanceTests.cs"));
+        var environment = File.ReadAllText(Path.Combine(root, "tests", "StorageChronicle.Platform.Windows.Integration.Tests", "WindowsAcceptanceEnvironment.cs"));
+
+        Assert.Contains("shareCreatedByThisRun = false", privilegedTests, StringComparison.Ordinal);
+        Assert.Contains("shareCreatedByThisRun = true", privilegedTests, StringComparison.Ordinal);
+        Assert.Contains("GetSmbSharePathAsync(shareName)", privilegedTests, StringComparison.Ordinal);
+        Assert.Contains("Path.GetFullPath(currentSharePath).Equals(Path.GetFullPath(scenario)", privilegedTests, StringComparison.Ordinal);
+        Assert.Contains("if (shareCreatedByThisRun)", privilegedTests, StringComparison.Ordinal);
+        Assert.Contains("serviceCreatedByThisRun = false", privilegedTests, StringComparison.Ordinal);
+        Assert.Contains("serviceCreatedByThisRun = true", privilegedTests, StringComparison.Ordinal);
+        Assert.Contains("GetServiceExecutablePathAsync(serviceName)", privilegedTests, StringComparison.Ordinal);
+        Assert.Contains("Path.GetFullPath(currentExecutable).Equals(Path.GetFullPath(executable)", privilegedTests, StringComparison.Ordinal);
+        Assert.Contains("if (serviceCreatedByThisRun)", privilegedTests, StringComparison.Ordinal);
+        Assert.Contains("Get-CimInstance -ClassName Win32_Service", environment, StringComparison.Ordinal);
+        Assert.Contains("Get-SmbShare -Name $shareName", environment, StringComparison.Ordinal);
+    }
+
     private static string FindRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

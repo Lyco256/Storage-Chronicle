@@ -233,15 +233,19 @@ public sealed class WindowsPrivilegedAcceptanceTests
     [Trait("Capability", "Smb")]
     public async Task DisposableSmbShareCreateChangeAndRemoveAreObservedBySnapshots()
     {
-        var scenario = WindowsAcceptanceEnvironment.CreateScenario("smb");
         var shareName = "SCAcc" + Guid.NewGuid().ToString("N");
+        Assert.True(string.IsNullOrWhiteSpace(await WindowsAcceptanceEnvironment.GetSmbSharePathAsync(shareName)), $"Refusing the colliding SMB share name: {shareName}");
+        var scenario = WindowsAcceptanceEnvironment.CreateScenario("smb");
         var before = await new NetShareSnapshotReader().ReadAsync(TestContext.Current.CancellationToken);
+        var shareCreatedByThisRun = false;
+        string? cleanupOwnershipError = null;
         try
         {
             await WindowsAcceptanceEnvironment.RunPowerShellAsync(
                 "param($name, $path) New-SmbShare -Name $name -Path $path -FullAccess $env:USERNAME -ErrorAction Stop | Out-Null",
                 shareName,
                 scenario);
+            shareCreatedByThisRun = true;
             var afterCreate = await new NetShareSnapshotReader().ReadAsync(TestContext.Current.CancellationToken);
             Assert.Contains(new ShareSnapshotDiffer().Diff(before, afterCreate), value => string.Equals(value.Share.Name, shareName, StringComparison.OrdinalIgnoreCase) && value.ChangeKind == "Created");
 
@@ -254,14 +258,33 @@ public sealed class WindowsPrivilegedAcceptanceTests
             await WindowsAcceptanceEnvironment.RunPowerShellAsync(
                 "param($name) Remove-SmbShare -Name $name -Force -ErrorAction Stop",
                 shareName);
+            shareCreatedByThisRun = false;
             var afterRemove = await new NetShareSnapshotReader().ReadAsync(TestContext.Current.CancellationToken);
             Assert.Contains(new ShareSnapshotDiffer().Diff(afterChange, afterRemove), value => string.Equals(value.Share.Name, shareName, StringComparison.OrdinalIgnoreCase) && value.ChangeKind == "Deleted");
         }
         finally
         {
-            try { await WindowsAcceptanceEnvironment.RunPowerShellAsync("param($name) Remove-SmbShare -Name $name -Force -ErrorAction SilentlyContinue", shareName); } catch (InvalidOperationException) { }
+            if (shareCreatedByThisRun)
+            {
+                var currentSharePath = await WindowsAcceptanceEnvironment.GetSmbSharePathAsync(shareName);
+                if (string.IsNullOrWhiteSpace(currentSharePath))
+                {
+                    shareCreatedByThisRun = false;
+                }
+                else if (!Path.GetFullPath(currentSharePath).Equals(Path.GetFullPath(scenario), StringComparison.OrdinalIgnoreCase))
+                {
+                    cleanupOwnershipError = $"The SMB share no longer points at this run's fixture; preserving it: {shareName}";
+                }
+                else
+                {
+                    try { await WindowsAcceptanceEnvironment.RunPowerShellAsync("param($name) Remove-SmbShare -Name $name -Force -ErrorAction Stop", shareName); }
+                    catch (InvalidOperationException exception) { cleanupOwnershipError = exception.Message; }
+                }
+            }
             WindowsAcceptanceEnvironment.DeleteScenario(scenario);
         }
+
+        Assert.Null(cleanupOwnershipError);
     }
 
     [Fact]
@@ -287,11 +310,17 @@ public sealed class WindowsPrivilegedAcceptanceTests
     {
         var executable = WindowsAcceptanceEnvironment.AgentExecutable;
         Assert.True(File.Exists(executable), $"The Agent executable does not exist: {executable}");
-        var serviceName = $"SCAccAgent{Guid.NewGuid():N}"[..Math.Min(40, 11 + Guid.NewGuid().ToString("N").Length)];
+        var serviceName = $"SCAccAgent{Guid.NewGuid():N}";
+        var existingService = RunSc("query", serviceName);
+        Assert.Equal(1060, existingService.ExitCode);
+        var serviceCreatedByThisRun = false;
         var binPath = $"\"{executable}\"";
+        string? cleanupOwnershipError = null;
         try
         {
-            Assert.Equal(0, RunSc("create", serviceName, "binPath=", binPath, "start=", "demand").ExitCode);
+            var createResult = RunSc("create", serviceName, "binPath=", binPath, "start=", "demand");
+            Assert.Equal(0, createResult.ExitCode);
+            serviceCreatedByThisRun = true;
             Assert.Equal(0, RunSc("failure", serviceName, "reset=", "60", "actions=", "restart/5000/restart/15000/" ).ExitCode);
             Assert.Equal(0, RunSc("start", serviceName).ExitCode);
             await WaitForServiceStateAsync(serviceName, "RUNNING");
@@ -303,9 +332,35 @@ public sealed class WindowsPrivilegedAcceptanceTests
         }
         finally
         {
-            _ = RunSc("stop", serviceName);
-            _ = RunSc("delete", serviceName);
+            if (serviceCreatedByThisRun)
+            {
+                var currentExecutable = await WindowsAcceptanceEnvironment.GetServiceExecutablePathAsync(serviceName);
+                if (string.IsNullOrWhiteSpace(currentExecutable))
+                {
+                    serviceCreatedByThisRun = false;
+                }
+                else if (!Path.GetFullPath(currentExecutable).Equals(Path.GetFullPath(executable), StringComparison.OrdinalIgnoreCase))
+                {
+                    cleanupOwnershipError = $"The service no longer points at this run's Agent executable; preserving it: {serviceName}";
+                }
+                else
+                {
+                    try
+                    {
+                        var stopResult = RunSc("stop", serviceName);
+                        if (stopResult.ExitCode is not (0 or 1062)) cleanupOwnershipError = $"Could not stop the run-owned service safely: {stopResult.Output}";
+                        else
+                        {
+                            var deleteResult = RunSc("delete", serviceName);
+                            if (deleteResult.ExitCode != 0) cleanupOwnershipError = $"Could not delete the run-owned service safely: {deleteResult.Output}";
+                        }
+                    }
+                    catch (InvalidOperationException exception) { cleanupOwnershipError = exception.Message; }
+                }
+            }
         }
+
+        Assert.Null(cleanupOwnershipError);
     }
 
     [Fact]
