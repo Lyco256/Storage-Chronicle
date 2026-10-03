@@ -24,7 +24,7 @@ Wire names are `StorageChronicle.InstallerCaseAuthorizationHello.v1` and `Storag
 - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/package/Build-Installer.ps1`: passed on the current 2026-08-03 checkout with self-contained Agent/Session Agent/UI publish and WiX Toolset SDK 6.0.2; MSI build completed with 0 warnings/errors at `installer/bin/x64/Release/StorageChronicle.msi`.
 - `tests/StorageChronicle.Installer.Tests/`: manifest tests pass in the non-privileged test gate.
 - `build/package/Test-Installer.ps1` without a disposable target: all eleven cases recorded `NOT_EXECUTED`, exit code 2; no physical acceptance was misreported.
-- 2026-10-03 verification of the UAC broker implementation: installer tests 23/23, DocMirror passed, parent/driver PowerShell AST parsing passed, full Debug solution build passed with 0 warnings/errors, and Fast passed all 24 projects after solution restore/build. Initial Fast attempt before building the architecture dependencies failed; the rerun passed.
+- 2026-10-03 verification of the UAC broker implementation: installer tests 23/23, DocMirror passed, parent/driver PowerShell AST parsing passed, full Debug solution build passed with 0 warnings/errors, Fast passed all 24 projects after solution restore/build, and `build/Test-All.ps1` passed (Build, Fast, Quality/coverage, and UI). Initial Fast attempt before restoring/building the architecture dependencies failed; reruns passed.
 - No UAC prompt or privileged/physical test was run. The loaded PowerShell driver hash-to-load race, MSI path hash-to-use race, MSI effect containment, end-to-end installer acceptance, and dedicated-PC safety gates remain unresolved; this is not release approval.
 
 ## Release-environment work still required
