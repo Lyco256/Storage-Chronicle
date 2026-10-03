@@ -1,6 +1,6 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "1e8f97d66a0d6a524c5cdb078c5fc77c4392dce6",
+  "targetCommit": "ff6cc0dc8ff2edb59cc88290bfd8193ef7f6db79",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -213,7 +213,7 @@
       "status": "PARTIAL",
       "path": "build/Test-Privileged.ps1",
       "lines": [32, 58, 63, 67, 71, 109],
-      "summary": "Runner now requires a new explicit local NTFS evidence root outside the repository and rejects UNC/OneDrive/Documents/existing roots. Parent reparse ancestry, approved-root consent, and independent runtime monitoring remain unverified."
+      "summary": "Runner requires a new explicit local NTFS evidence root outside the repository and rejects UNC, OneDrive/Documents, Windows, Program Files (x64/x86), ProgramData, and existing roots. A static source-contract test covers protected-root rejection. Checks remain path-based; approved-root consent, hostile-race resistance, real-host resolution, and independent runtime monitoring remain unverified. No privileged lane ran."
     },
     {
       "id": "installer-mutation-scope",
