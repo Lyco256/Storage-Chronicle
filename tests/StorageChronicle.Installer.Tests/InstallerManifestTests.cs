@@ -286,6 +286,9 @@ public sealed class InstallerManifestTests
         Assert.Contains("overallStatus -ne 'PASS'", finalGate, StringComparison.Ordinal);
         Assert.Contains("Physical safety audit does not declare AcceptanceEligible=true", finalGate, StringComparison.Ordinal);
         Assert.Contains("Validation failed: $($_.Exception.Message)", finalGate, StringComparison.Ordinal);
+        Assert.Contains("[System.IO.FileMode]::CreateNew", finalGate, StringComparison.Ordinal);
+        Assert.Contains("$outputStream.Flush($true)", finalGate, StringComparison.Ordinal);
+        Assert.DoesNotContain("Set-Content -LiteralPath $OutputPath", finalGate, StringComparison.Ordinal);
         Assert.DoesNotContain("Windows11VirtualBoxInstallerManifest", finalGate, StringComparison.Ordinal);
         Assert.DoesNotContain("TestLabAndRealIo", finalGate, StringComparison.Ordinal);
     }

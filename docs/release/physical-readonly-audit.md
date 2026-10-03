@@ -4,6 +4,8 @@
 
 Reviewed commit: `e0529dbbb6c1edb47b140cf3ede04191c4d5de37` (`devenv`). This is a source-level inventory of production `src/**` write/change sinks and selected call paths plus selected `build/**`, `tools/**`, and installer sinks; it is not the complete Requirement 37 audit. No product, service, installer, privileged runner, workload, VHDX, or monitored-volume collector was started for this review. The active physical decision remains **FAIL / DO NOT RUN**; host preflight and independent process monitoring remain **NOT_EXECUTED**.
 
+Continuation note (2026-10-03): the final acceptance aggregator's output sink was separately reviewed and changed from overwrite-capable `Set-Content` to `FileMode.CreateNew` with write-through and durable flush. Its collision behavior was exercised in an isolated temporary directory; an existing sentinel remained byte-for-byte unchanged. This narrow test-harness improvement does not update the reviewed source commit above or constitute the complete current-commit source-to-sink audit. The machine-readable audit remains historical/partial; do not use it to authorize execution.
+
 The production source contains these intentional durable write classes:
 
 | Destination | Sink and guard observed | Residual requiring closure |
