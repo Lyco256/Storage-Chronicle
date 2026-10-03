@@ -66,6 +66,26 @@ public sealed class ArchitectureContractTests
         Assert.Empty(project.Descendants("ProjectReference"));
     }
 
+    [Fact]
+    public void FileMutationWorkloadUsesFreshRunBoundCreateNewOutputs()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRoot(), "tools", "StorageChronicle.FileMutationWorkload", "Program.cs"));
+        Assert.Contains("FileMode.CreateNew", source, StringComparison.Ordinal);
+        Assert.Contains("ValidateNewOraclePath", source, StringComparison.Ordinal);
+        Assert.Contains("allowedEntries.Remove(name)", source, StringComparison.Ordinal);
+        Assert.Contains("oracle-\" + options.RunId + \".json", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("File.WriteAllBytes(", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("File.WriteAllText(", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("File.Copy(", source, StringComparison.Ordinal);
+
+        var fullTreeCheck = source.IndexOf("AssertExpectedFullTreeForDeletion(movedTree, count)", StringComparison.Ordinal);
+        var firstRecursiveDelete = source.IndexOf("Directory.Delete(movedTree, recursive: true)", StringComparison.Ordinal);
+        var directDeleteCheck = source.IndexOf("AssertExpectedDirectFilesForDeletion(directory, expectedFiles)", StringComparison.Ordinal);
+        var secondRecursiveDelete = source.IndexOf("Directory.Delete(directory, recursive: true)", StringComparison.Ordinal);
+        Assert.True(fullTreeCheck >= 0 && fullTreeCheck < firstRecursiveDelete, "The full-tree deletion must verify the exact run-generated tree first.");
+        Assert.True(directDeleteCheck >= 0 && directDeleteCheck < secondRecursiveDelete, "The delete scenario must verify exact run-generated files first.");
+    }
+
     private static DotNetAssembly[] LoadRequiredAssemblies()
     {
         var root = FindRoot();

@@ -181,9 +181,10 @@ public sealed class InstallerManifestTests
         Assert.Contains("return 2;", agent, StringComparison.Ordinal);
         Assert.Contains("This VM/guest TestLab runner is retired", testLab, StringComparison.Ordinal);
         Assert.Contains("exit 2", testLab, StringComparison.Ordinal);
-        Assert.Contains("[Console]::Error.WriteLine", testLab, StringComparison.Ordinal);
-        Assert.True(testLab.IndexOf("exit 2", StringComparison.Ordinal) < testLab.IndexOf("TestLab.Common.ps1", StringComparison.Ordinal));
-        Assert.True(testLab.IndexOf("exit 2", StringComparison.Ordinal) < testLab.IndexOf("Invoke-GuestCommand", StringComparison.Ordinal));
+        Assert.DoesNotContain("TestLab.Common.ps1", testLab, StringComparison.Ordinal);
+        Assert.DoesNotContain("Invoke-GuestCommand", testLab, StringComparison.Ordinal);
+        Assert.DoesNotContain("Initialize-Disk", testLab, StringComparison.Ordinal);
+        Assert.DoesNotContain("Format-Volume", testLab, StringComparison.Ordinal);
     }
 
     [Fact]

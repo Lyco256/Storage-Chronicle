@@ -15,7 +15,7 @@ public static class Program
     private static readonly int[] ParallelWorkerIds = [0, 1];
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    /// <summary>Runs the requested workload and writes an operation oracle without reading file contents.</summary>
+    /// <summary>Runs metadata-only operations in a fresh marked root and create-new publishes one run-bound operation oracle.</summary>
     public static int Main(string[] args)
     {
         if (!TryParse(args, out var options, out var error))
@@ -28,11 +28,9 @@ public static class Program
         try
         {
             var root = PrepareRoot(options);
+            var oraclePath = ValidateNewOraclePath(root, options);
             var records = new List<OracleRecord>();
             var sequence = 0L;
-            // Establish the oracle document before any mutation begins. The
-            // final write below closes the operation list after the real I/O.
-            WriteOracle(options.OraclePath, options, records);
             switch (options.Scenario)
             {
                 case "basic":
@@ -66,8 +64,8 @@ public static class Program
                     throw new InvalidOperationException($"Unsupported scenario: {options.Scenario}");
             }
 
-            WriteOracle(options.OraclePath, options, records);
-            Console.WriteLine(JsonSerializer.Serialize(new { options.RunId, options.Scenario, Count = records.Count, Oracle = options.OraclePath }, JsonOptions));
+            WriteOracle(oraclePath, root, options, records);
+            Console.WriteLine(JsonSerializer.Serialize(new { options.RunId, options.Scenario, Count = records.Count, Oracle = oraclePath }, JsonOptions));
             return 0;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
@@ -85,6 +83,7 @@ public static class Program
         if (string.Equals(volumeRoot, "C:", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The workload refuses the guest system volume C:. Use a marked disposable data VHDX.");
         if (root.Contains("Windows", StringComparison.OrdinalIgnoreCase) || root.Contains("Program Files", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The workload root is protected.");
         if (!Directory.Exists(root)) throw new InvalidDataException("The workload root must already exist on a marked TestLab volume.");
+        EnsureNoReparsePoints(root);
         var markerPath = Path.Combine(root, MarkerName);
         var marker = ReadAndValidateMarker(markerPath, options);
         var volumeMarkerPath = Path.Combine(root, VolumeMarkerName);
@@ -95,11 +94,37 @@ public static class Program
         var driveRoot = Path.GetPathRoot(root) ?? throw new InvalidDataException("The workload root has no volume root.");
         var drive = new DriveInfo(driveRoot);
         if (!drive.IsReady || !string.Equals(drive.VolumeLabel, marker.VolumeLabel, StringComparison.OrdinalIgnoreCase) || !string.Equals(drive.DriveFormat, marker.FileSystem, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("The mounted volume label or filesystem does not match the TestLab marker.");
+        var allowedEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { MarkerName, VolumeMarkerName };
+        foreach (var entry in Directory.EnumerateFileSystemEntries(root))
+        {
+            EnsureNoReparsePoints(entry);
+            var name = Path.GetFileName(entry);
+            if (!allowedEntries.Remove(name)) throw new IOException($"The workload root is not a fresh, run-owned fixture; refusing unknown or duplicate entry: {entry}");
+            if (Directory.Exists(entry)) throw new IOException($"The workload root marker is not a regular file: {entry}");
+        }
+        if (allowedEntries.Count != 0) throw new IOException("The workload root is missing one or more required ownership markers.");
         return root;
+    }
+
+    private static string ValidateNewOraclePath(string root, WorkloadOptions options)
+    {
+        var fullPath = Path.GetFullPath(options.OraclePath);
+        var parent = Path.GetDirectoryName(fullPath);
+        if (string.IsNullOrWhiteSpace(parent) || !string.Equals(Path.GetFullPath(parent).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), root, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("The workload oracle must be a direct child of the verified run-owned root.");
+        var expectedName = "oracle-" + options.RunId + ".json";
+        var leafName = Path.GetFileName(fullPath);
+        var isWorkerOracle = Enumerable.Range(0, ParallelWorkerIds.Length).Any(index => string.Equals(leafName, $"oracle-{options.RunId}-worker-{index}.json", StringComparison.OrdinalIgnoreCase));
+        if (!string.Equals(leafName, expectedName, StringComparison.OrdinalIgnoreCase) && !isWorkerOracle)
+            throw new IOException($"The workload oracle must use the run-specific name {expectedName}.");
+        EnsureNoReparsePoints(fullPath);
+        if (File.Exists(fullPath) || Directory.Exists(fullPath)) throw new IOException("The run-specific workload oracle already exists; refusing to overwrite it.");
+        return fullPath;
     }
 
     private static TestLabMarker ReadAndValidateMarker(string path, WorkloadOptions options)
     {
+        EnsureNoReparsePoints(path);
         if (!File.Exists(path)) throw new InvalidDataException($"The required TestLab marker is missing: {path}");
         using var stream = File.OpenRead(path);
         var marker = JsonSerializer.Deserialize<TestLabMarker>(stream) ?? throw new InvalidDataException($"The TestLab marker is invalid: {path}");
@@ -124,10 +149,10 @@ public static class Program
         {
             var relative = $"batch-{index % 100:D3}\\file-{index:D8}.dat";
             var path = Path.Combine(root, relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllBytes(path, [0x53, 0x43, 0x01]);
+            EnsureDirectory(Path.GetDirectoryName(path)!);
+            WriteNewFile(path, [0x53, 0x43, 0x01]);
             Add(records, ref sequence, "Create", relative, null);
-            File.SetLastWriteTimeUtc(path, DateTime.UtcNow);
+            SetRunFileLastWriteTimeUtc(path);
             Add(records, ref sequence, "Write", relative, null);
         }
     }
@@ -136,19 +161,19 @@ public static class Program
     {
         var tree = Path.Combine(root, "full-tree");
         var movedTree = Path.Combine(root, "full-tree-moved");
-        Directory.CreateDirectory(tree);
-        Directory.CreateDirectory(Path.Combine(tree, "nested", "deep"));
+        EnsureDirectory(tree);
+        EnsureDirectory(Path.Combine(tree, "nested", "deep"));
         Add(records, ref sequence, "DirectoryCreate", Relative(root, tree), null);
         Add(records, ref sequence, "DirectoryCreate", Relative(root, Path.Combine(tree, "nested", "deep")), null);
 
         for (var index = 0; index < count; index++)
         {
             var empty = Path.Combine(tree, "nested", $"empty-{index:D6}.dat");
-            using (File.Create(empty)) { }
+            using (CreateNewFile(empty)) { }
             Add(records, ref sequence, "EmptyCreate", Relative(root, empty), null);
 
             var file = Path.Combine(tree, "nested", "deep", $"item-{index:D6}.dat");
-            File.WriteAllBytes(file, [0x53, 0x43, 0x10]);
+            WriteNewFile(file, [0x53, 0x43, 0x10]);
             Add(records, ref sequence, "Create", Relative(root, file), null);
             Add(records, ref sequence, "DataWrite", Relative(root, file), null);
             using (var stream = new FileStream(file, FileMode.Open, FileAccess.Write, FileShare.Read))
@@ -163,30 +188,32 @@ public static class Program
                 stream.Flush(flushToDisk: true);
             }
             Add(records, ref sequence, "Extend", Relative(root, file), null);
-            File.SetLastWriteTimeUtc(file, DateTime.UtcNow);
-            File.SetAttributes(file, FileAttributes.ReadOnly);
+            SetRunFileLastWriteTimeUtc(file);
+            SetRunFileAttributes(file, FileAttributes.ReadOnly);
             Add(records, ref sequence, "MetadataChanged", Relative(root, file), null);
-            File.SetAttributes(file, FileAttributes.Normal);
+            SetRunFileAttributes(file, FileAttributes.Normal);
 
             var renamed = file + ".renamed";
-            File.Move(file, renamed);
+            MoveRunFileNoOverwrite(file, renamed);
             Add(records, ref sequence, "Rename", Relative(root, renamed), Relative(root, file));
             var moved = Path.Combine(tree, $"moved-{index:D6}.dat");
-            File.Move(renamed, moved);
+            MoveRunFileNoOverwrite(renamed, moved);
             Add(records, ref sequence, "Move", Relative(root, moved), Relative(root, renamed));
         }
 
-        Directory.Move(tree, movedTree);
+        MoveRunDirectoryNoOverwrite(tree, movedTree);
         Add(records, ref sequence, "DirectoryMove", Relative(root, movedTree), Relative(root, tree));
 
         var replacement = Path.Combine(root, "same-name-replacement.dat");
-        File.WriteAllBytes(replacement, [0x53, 0x43, 0x11]);
+        WriteNewFile(replacement, [0x53, 0x43, 0x11]);
         Add(records, ref sequence, "Create", Relative(root, replacement), null);
-        File.Delete(replacement);
+        DeleteRunFile(replacement);
         Add(records, ref sequence, "Delete", Relative(root, replacement), null);
-        File.WriteAllBytes(replacement, [0x53, 0x43, 0x12]);
+        WriteNewFile(replacement, [0x53, 0x43, 0x12]);
         Add(records, ref sequence, "CreateReplacement", Relative(root, replacement), null);
 
+        AssertExpectedFullTreeForDeletion(movedTree, count);
+        EnsureNoReparsePoints(movedTree);
         Directory.Delete(movedTree, recursive: true);
         Add(records, ref sequence, "DirectoryDelete", Relative(root, movedTree), null);
     }
@@ -194,15 +221,15 @@ public static class Program
     private static void RunBurst(string root, int count, ICollection<OracleRecord> records, ref long sequence)
     {
         var directory = Path.Combine(root, "burst");
-        Directory.CreateDirectory(directory);
+        EnsureDirectory(directory);
         var concurrent = new ConcurrentBag<OracleRecord>();
         var nextSequence = sequence;
         Parallel.For(0, count, index =>
         {
             var path = Path.Combine(directory, $"item-{index:D8}.dat");
-            using (File.Create(path)) { }
+            using (CreateNewFile(path)) { }
             concurrent.Add(CreateRecord(Interlocked.Increment(ref nextSequence), "Create", Relative(root, path), null));
-            File.SetLastWriteTimeUtc(path, DateTime.UtcNow);
+            SetRunFileLastWriteTimeUtc(path);
             concurrent.Add(CreateRecord(Interlocked.Increment(ref nextSequence), "MetadataChanged", Relative(root, path), null));
         });
 
@@ -213,15 +240,15 @@ public static class Program
     private static void RunParallelProcesses(string root, WorkloadOptions options, ICollection<OracleRecord> records, ref long sequence)
     {
         var childRoot = Path.Combine(root, "parallel");
-        Directory.CreateDirectory(childRoot);
+        EnsureDirectory(childRoot);
         var childCount = Math.Max(1, options.Count / 2);
-        var childOracles = ParallelWorkerIds.Select(index => Path.Combine(childRoot, $"child-{index}.json")).ToArray();
+        var childOracles = ParallelWorkerIds.Select(index => Path.Combine(childRoot, $"worker-{index}", $"oracle-{options.RunId}-worker-{index}.json")).ToArray();
         var processes = childOracles.Select((oracle, index) =>
         {
             var processRoot = Path.Combine(childRoot, $"worker-{index}");
-            Directory.CreateDirectory(processRoot);
-            File.Copy(Path.Combine(root, MarkerName), Path.Combine(processRoot, MarkerName), overwrite: true);
-            File.Copy(Path.Combine(root, VolumeMarkerName), Path.Combine(processRoot, VolumeMarkerName), overwrite: true);
+            EnsureDirectory(processRoot);
+            CopyNewRunFile(Path.Combine(root, MarkerName), Path.Combine(processRoot, MarkerName));
+            CopyNewRunFile(Path.Combine(root, VolumeMarkerName), Path.Combine(processRoot, VolumeMarkerName));
             var info = new ProcessStartInfo(Environment.ProcessPath ?? throw new InvalidOperationException("The workload process path is unavailable."))
             {
                 UseShellExecute = false,
@@ -235,10 +262,11 @@ public static class Program
             return (Process: process, Oracle: oracle);
         }).ToArray();
 
-        foreach (var child in processes)
+        foreach (var (child, index) in processes.Select((value, index) => (value, index)))
         {
             child.Process.WaitForExit();
             if (child.Process.ExitCode != 0) throw new IOException($"Parallel workload child failed with exit code {child.Process.ExitCode}: {child.Process.StandardError.ReadToEnd()}");
+            EnsureNoReparsePoints(child.Oracle);
             using var document = JsonDocument.Parse(File.ReadAllText(child.Oracle));
             foreach (var operation in document.RootElement.GetProperty("Operations").EnumerateArray())
             {
@@ -250,7 +278,8 @@ public static class Program
                 var completedUtc = operation.TryGetProperty("CompletedUtc", out var completed) && completed.TryGetDateTimeOffset(out var parsedCompleted)
                     ? parsedCompleted
                     : startedUtc;
-                records.Add(new OracleRecord(++sequence, operation.GetProperty("Operation").GetString() ?? "Unknown", path, oldPath, startedUtc, completedUtc));
+                var prefix = $"parallel\\worker-{index}\\";
+                records.Add(new OracleRecord(++sequence, operation.GetProperty("Operation").GetString() ?? "Unknown", prefix + path, oldPath is null ? null : prefix + oldPath, startedUtc, completedUtc));
             }
         }
     }
@@ -260,10 +289,10 @@ public static class Program
         for (var index = 0; index < count; index++)
         {
             var path = Path.Combine(root, "short-lived", $"item-{index:D8}.tmp");
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            using (File.Create(path)) { }
+            EnsureDirectory(Path.GetDirectoryName(path)!);
+            using (CreateNewFile(path)) { }
             Add(records, ref sequence, "Create", Relative(root, path), null);
-            File.Delete(path);
+            DeleteRunFile(path);
             Add(records, ref sequence, "Delete", Relative(root, path), null);
         }
     }
@@ -272,19 +301,21 @@ public static class Program
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("The acl-denied workload requires Windows ACL APIs.");
         var directory = Path.Combine(root, "acl-denied");
-        Directory.CreateDirectory(directory);
+        EnsureDirectory(directory);
         var path = Path.Combine(directory, "metadata-only-candidate.dat");
-        using (File.Create(path)) { }
+        using (CreateNewFile(path)) { }
         Add(records, ref sequence, "Create", Relative(root, path), null);
 
         var identity = WindowsIdentity.GetCurrent().User ?? throw new InvalidOperationException("The current Windows identity has no security identifier.");
         var fileInfo = new FileInfo(path);
+        EnsureRegularRunFile(path);
         var security = fileInfo.GetAccessControl();
         var deny = new FileSystemAccessRule(
             identity,
             FileSystemRights.ReadData | FileSystemRights.ReadAttributes | FileSystemRights.ReadExtendedAttributes | FileSystemRights.ReadPermissions,
             AccessControlType.Deny);
         security.AddAccessRule(deny);
+        EnsureNoReparsePoints(path);
         fileInfo.SetAccessControl(security);
         Add(records, ref sequence, "AclDeniedMetadata", Relative(root, path), null);
     }
@@ -295,8 +326,8 @@ public static class Program
         {
             var relative = $"mft-{index / 1000:D4}\\entry-{index:D8}.dat";
             var path = Path.Combine(root, relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            using (File.Create(path)) { }
+            EnsureDirectory(Path.GetDirectoryName(path)!);
+            using (CreateNewFile(path)) { }
             Add(records, ref sequence, "Create", relative, null);
         }
     }
@@ -316,51 +347,57 @@ public static class Program
     {
         var source = Path.Combine(root, "rename-source");
         var destination = Path.Combine(root, "rename-destination");
-        Directory.CreateDirectory(source);
+        EnsureDirectory(source);
         for (var index = 0; index < count; index++)
         {
             var relative = $"rename-source\\item-{index:D6}.dat";
             var path = Path.Combine(root, relative);
-            File.WriteAllBytes(path, [0x53, 0x43, 0x02]);
+            WriteNewFile(path, [0x53, 0x43, 0x02]);
             Add(records, ref sequence, "Create", relative, null);
         }
-        Directory.Move(source, destination);
+        MoveRunDirectoryNoOverwrite(source, destination);
         Add(records, ref sequence, "DirectoryMove", "rename-destination", "rename-source");
     }
 
     private static void RunDelete(string root, int count, ICollection<OracleRecord> records, ref long sequence)
     {
         var directory = Path.Combine(root, "delete-target");
-        Directory.CreateDirectory(directory);
+        EnsureDirectory(directory);
         for (var index = 0; index < count; index++)
         {
             var relative = $"delete-target\\item-{index:D6}.dat";
-            File.WriteAllBytes(Path.Combine(root, relative), [0x53, 0x43, 0x03]);
+            WriteNewFile(Path.Combine(root, relative), [0x53, 0x43, 0x03]);
             Add(records, ref sequence, "Create", relative, null);
         }
+        var expectedFiles = Enumerable.Range(0, count).Select(index => $"item-{index:D6}.dat").ToHashSet(StringComparer.OrdinalIgnoreCase);
+        AssertExpectedDirectFilesForDeletion(directory, expectedFiles);
+        EnsureNoReparsePoints(directory);
         Directory.Delete(directory, recursive: true);
         Add(records, ref sequence, "DirectoryDelete", "delete-target", null);
     }
 
-    private static void WriteOracle(string path, WorkloadOptions options, IReadOnlyCollection<OracleRecord> records)
+    private static void WriteOracle(string path, string root, WorkloadOptions options, IReadOnlyCollection<OracleRecord> records)
     {
         var fullPath = Path.GetFullPath(path);
-        var parent = Path.GetDirectoryName(fullPath);
-        if (string.IsNullOrWhiteSpace(parent)) throw new InvalidOperationException("The oracle path must have a parent directory.");
-        Directory.CreateDirectory(parent);
+        if (!string.Equals(Path.GetDirectoryName(fullPath)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), root, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("The workload oracle must remain directly inside the run-owned root.");
+        EnsureNoReparsePoints(fullPath);
         using var process = Process.GetCurrentProcess();
         var processEvidence = new ProcessEvidence(process.Id, process.StartTime.ToUniversalTime(), Environment.ProcessPath ?? "unknown", options.Scenario);
         var processes = new Dictionary<(int Id, DateTime StartTimeUtc), ProcessEvidence>
         {
             [(processEvidence.ProcessId, processEvidence.StartTimeUtc)] = processEvidence
         };
-        var parallelRoot = Path.Combine(Path.GetFullPath(options.Root), "parallel");
+        var parallelRoot = Path.Combine(root, "parallel");
         if (Directory.Exists(parallelRoot))
         {
-            foreach (var childOraclePath in Directory.EnumerateFiles(parallelRoot, "child-*.json", SearchOption.TopDirectoryOnly))
+            for (var index = 0; index < ParallelWorkerIds.Length; index++)
             {
+                var childOraclePath = Path.Combine(parallelRoot, $"worker-{index}", $"oracle-{options.RunId}-worker-{index}.json");
+                if (!File.Exists(childOraclePath)) continue;
                 try
                 {
+                    EnsureNoReparsePoints(childOraclePath);
                     var child = JsonSerializer.Deserialize<OracleDocument>(File.ReadAllText(childOraclePath), JsonOptions);
                     if (child is null) continue;
                     foreach (var childProcess in child.Processes ?? [child.Process])
@@ -382,7 +419,137 @@ public static class Program
         }
 
         var document = new OracleDocument("StorageChronicle.FileMutationWorkload.v2", options.RunId, options.Scenario, DateTimeOffset.UtcNow, processEvidence, processes.Values.ToArray(), records.Count, records);
-        File.WriteAllText(fullPath, JsonSerializer.Serialize(document, JsonOptions));
+        WriteNewFile(fullPath, JsonSerializer.SerializeToUtf8Bytes(document, JsonOptions));
+    }
+
+    private static FileStream CreateNewFile(string path)
+    {
+        var parent = Path.GetDirectoryName(Path.GetFullPath(path));
+        if (string.IsNullOrWhiteSpace(parent)) throw new IOException("A workload file must have a parent directory.");
+        EnsureNoReparsePoints(parent);
+        return new(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough);
+    }
+
+    private static void WriteNewFile(string path, ReadOnlySpan<byte> content)
+    {
+        using var output = CreateNewFile(path);
+        output.Write(content);
+        output.Flush(flushToDisk: true);
+    }
+
+    private static void EnsureDirectory(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var parent = Path.GetDirectoryName(fullPath);
+        if (string.IsNullOrWhiteSpace(parent)) throw new IOException("A workload directory must have a parent.");
+        EnsureNoReparsePoints(parent);
+        if (File.Exists(fullPath)) throw new IOException($"A file already occupies a workload directory path: {fullPath}");
+        Directory.CreateDirectory(fullPath);
+        EnsureNoReparsePoints(fullPath);
+    }
+
+    private static void SetRunFileLastWriteTimeUtc(string path)
+    {
+        EnsureRegularRunFile(path);
+        File.SetLastWriteTimeUtc(path, DateTime.UtcNow);
+    }
+
+    private static void SetRunFileAttributes(string path, FileAttributes attributes)
+    {
+        EnsureRegularRunFile(path);
+        File.SetAttributes(path, attributes);
+    }
+
+    private static void MoveRunFileNoOverwrite(string source, string destination)
+    {
+        EnsureRegularRunFile(source);
+        EnsureNoReparsePoints(destination);
+        if (File.Exists(destination) || Directory.Exists(destination)) throw new IOException($"Refusing to replace an existing workload destination: {destination}");
+        File.Move(source, destination);
+    }
+
+    private static void MoveRunDirectoryNoOverwrite(string source, string destination)
+    {
+        EnsureNoReparsePoints(source);
+        EnsureNoReparsePoints(destination);
+        if (File.Exists(destination) || Directory.Exists(destination)) throw new IOException($"Refusing to replace an existing workload directory destination: {destination}");
+        Directory.Move(source, destination);
+    }
+
+    private static void DeleteRunFile(string path)
+    {
+        EnsureRegularRunFile(path);
+        File.Delete(path);
+    }
+
+    private static void CopyNewRunFile(string source, string destination)
+    {
+        EnsureRegularRunFile(source);
+        using var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan);
+        using var output = CreateNewFile(destination);
+        input.CopyTo(output);
+        output.Flush(flushToDisk: true);
+    }
+
+    private static void EnsureRegularRunFile(string path)
+    {
+        EnsureNoReparsePoints(path);
+        if (!File.Exists(path) || Directory.Exists(path)) throw new IOException($"A run-owned workload file is missing or is not a regular file: {path}");
+    }
+
+    private static void AssertExpectedFullTreeForDeletion(string tree, int count)
+    {
+        var expected = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "nested", Path.Combine("nested", "deep") };
+        for (var index = 0; index < count; index++)
+        {
+            expected.Add(Path.Combine("nested", $"empty-{index:D6}.dat"));
+            expected.Add($"moved-{index:D6}.dat");
+        }
+
+        var observed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pending = new Stack<string>();
+        pending.Push(tree);
+        while (pending.Count > 0)
+        {
+            var directory = pending.Pop();
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+            {
+                EnsureNoReparsePoints(entry);
+                var relative = Path.GetRelativePath(tree, entry);
+                if (!expected.Contains(relative)) throw new IOException($"The workload subtree contains an unexpected entry; refusing recursive deletion: {entry}");
+                if (!observed.Add(relative)) throw new IOException($"The workload subtree contains a duplicate entry; refusing recursive deletion: {entry}");
+                if (Directory.Exists(entry)) pending.Push(entry);
+                else if (!File.Exists(entry)) throw new IOException($"The workload subtree entry is not a regular file or directory: {entry}");
+            }
+        }
+
+        if (!observed.SetEquals(expected)) throw new IOException("The workload subtree does not exactly match this run's expected file and directory set; refusing recursive deletion.");
+    }
+
+    private static void AssertExpectedDirectFilesForDeletion(string directory, IReadOnlySet<string> expectedFiles)
+    {
+        EnsureNoReparsePoints(directory);
+        if (Directory.EnumerateDirectories(directory).Any()) throw new IOException("The delete scenario contains an unexpected subdirectory; refusing recursive deletion.");
+        var observed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in Directory.EnumerateFiles(directory))
+        {
+            EnsureRegularRunFile(path);
+            if (!observed.Add(Path.GetFileName(path))) throw new IOException("The delete scenario contains duplicate file names; refusing recursive deletion.");
+        }
+        if (!observed.SetEquals(expectedFiles)) throw new IOException("The delete scenario contents do not exactly match files created by this run; refusing recursive deletion.");
+    }
+
+    private static void EnsureNoReparsePoints(string path)
+    {
+        var current = Path.GetFullPath(path);
+        while (!string.IsNullOrEmpty(current))
+        {
+            if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException($"The workload refuses paths that traverse reparse points: {current}");
+            var parent = Directory.GetParent(current)?.FullName;
+            if (string.IsNullOrEmpty(parent) || string.Equals(parent, current, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) break;
+            current = parent;
+        }
     }
 
     private static bool TryParse(string[] args, out WorkloadOptions options, out string error)
@@ -395,6 +562,7 @@ public static class Program
         }
         if (!values.TryGetValue("root", out var root) || !values.TryGetValue("oracle", out var oracle) || !values.TryGetValue("scenario", out var scenario) || !values.TryGetValue("run-id", out var runId) || !values.TryGetValue("count", out var countText) || !int.TryParse(countText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var count) || count is < 1 or > 1_000_000) { options = default!; error = "root, oracle, scenario, run-id, and count (1..1,000,000) are required."; return false; }
         if (scenario is not ("basic" or "full" or "burst" or "parallel" or "rename-move" or "delete" or "short-lived" or "acl-denied" or "mft")) { options = default!; error = "scenario must be basic, full, burst, parallel, rename-move, delete, short-lived, acl-denied, or mft."; return false; }
+        if (!Guid.TryParseExact(runId, "D", out _)) { options = default!; error = "run-id must be a canonical GUID in D format."; return false; }
         options = new WorkloadOptions(root, oracle, scenario, runId, count);
         error = string.Empty;
         return true;
