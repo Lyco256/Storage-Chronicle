@@ -1,6 +1,6 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "473834be62d6d7c131b45ec5afd3b99369bfd6b1",
+  "targetCommit": "444565d84c084254dfee63e2141e1c910c0c78a8",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -90,7 +90,7 @@
   "hostPreflight": "NOT_EXECUTED",
   "processWriteMonitoring": "NOT_EXECUTED",
   "currentCommitSourceAudit": {
-    "scope": "Production src/** write/change sinks and selected call paths; excludes complete tests/build/tools/installer/external command audit, host preflight, and runtime monitor.",
+    "scope": "Production src/** write/change sinks and selected call paths, plus a narrow review of the resource-budget evidence writer; excludes complete tests/build/tools/installer/external command audit, host preflight, and independent runtime write monitor.",
     "status": "PARTIAL",
     "reviewedAt": "2026-10-03",
     "findings": [
@@ -181,6 +181,12 @@
         "path": "tools/TestEnvironment/New-ExplorerCorrelationScenario.ps1",
         "lines": [22, 97],
         "summary": "The Explorer scenario producer now checks both markers against the live fixed-NTFS volume identity, rejects reparse paths, requires an existing in-root output parent, and uses exclusive CreateNew outputs/files; parser, source-contract, DocMirror, and the 338-test fast suite pass with no build warnings. Not executed on a physical volume; marker authenticity and path-based TOCTOU remain. Other evidence/build/package sinks still require full call-chain inventory and new-only/approved-root confinement."
+      },
+      {
+        "id": "resource-monitor-raw-evidence-overwrite",
+        "status": "PARTIAL",
+        "path": "build/quality/Test-ResourceBudget.ps1",
+        "summary": "Commit 444565d separates the ResourceMonitor raw samples from the queue-augmented final report, and both JSON artifacts are create-only; the PID list is also kept as an array for the single-process case. Script AST parsing, DocMirror, static contract tests, and Fast passed. A one-second diagnostic sampled only the current shell and confirmed distinct raw/final files with matching process ID and sample count; diagnostic mode is explicitly ineligible and is not the independent, application-attributed write monitor or formal 600-second acceptance."
       }
     ]
   },
@@ -194,7 +200,8 @@
       "Commit 473834b hardens privileged SMB/service test cleanup: collision checks precede creation, cleanup requires a successful create in this invocation, and the live share path/service executable is rechecked before removal. The project builds and the non-privileged static contract test passes; no privileged lane was run.",
       "The physical installer case driver still requires an already elevated process and does not itself validate the externally approved hash-manifest fingerprint; msiexec reopens the path after hash checks. Operation-bound UAC sequencing and hash-to-use binding remain blockers.",
       "The old VirtualBox VDI cleanup sink was retired by commit e0529db; the old VDI creation/attachment helper is now also a no-I/O stub with a source-contract test. The old guest runner was reduced to a no-I/O stub by commit ddc293d. This does not authorize the separately gated file-backed VHDX physical workflow or close other runner risks.",
-      "The Explorer scenario producer no longer uses overwrite-capable output paths, but several other evidence and build/package producers may still overwrite existing paths; full sink inventory and approved-root/new-only policy remain open."
+      "The Explorer scenario producer no longer uses overwrite-capable output paths, but several other evidence and build/package producers may still overwrite existing paths; full sink inventory and approved-root/new-only policy remain open.",
+      "Commit 444565d separates raw ResourceMonitor evidence from queue-augmented output and uses create-only publication for both. A diagnostic shell-process sample verified preservation only; it does not satisfy the independent runtime write-monitor or formal resource gate."
     ],
     "runtimeExecution": "NOT_EXECUTED"
   },
