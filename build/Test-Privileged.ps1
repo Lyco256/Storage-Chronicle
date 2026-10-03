@@ -54,6 +54,18 @@ function Assert-NoReparsePath([string]$Path) {
     }
 }
 
+function Assert-OutsideProtectedSystemRoots([string]$Path) {
+    $fullPath = [IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $protectedRoots = @($env:WINDIR, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+        ForEach-Object { [IO.Path]::GetFullPath([string]$_).TrimEnd('\') }
+    foreach ($protectedRoot in $protectedRoots) {
+        if ($fullPath.Equals($protectedRoot, [StringComparison]::OrdinalIgnoreCase) -or $fullPath.StartsWith($protectedRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
+            throw "EvidenceRoot must not be inside a protected Windows/application data root: $protectedRoot"
+        }
+    }
+}
+
 function Write-NewUtf8File([string]$Path, [string]$Value) {
     $encoding = [Text.UTF8Encoding]::new($false)
     $bytes = $encoding.GetBytes($Value)
@@ -65,6 +77,7 @@ $platformTestProject = Join-Path $root 'tests/StorageChronicle.Platform.Windows.
 $agentTestProject = Join-Path $root 'tests/StorageChronicle.Agent.Tests/StorageChronicle.Agent.Tests.csproj'
 $testProjects = @($platformTestProject, $agentTestProject)
 $artifactRoot = [IO.Path]::GetFullPath($EvidenceRoot)
+Assert-OutsideProtectedSystemRoots $artifactRoot
 $repoRoot = [IO.Path]::GetFullPath($root).TrimEnd('\') + '\'
 if ($artifactRoot.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'EvidenceRoot must be outside the repository and any synced workspace.'

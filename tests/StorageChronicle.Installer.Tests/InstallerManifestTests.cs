@@ -153,6 +153,22 @@ public sealed class InstallerManifestTests
     }
 
     [Fact]
+    public void PrivilegedEvidenceRootRejectsWindowsAndApplicationDataTrees()
+    {
+        var root = FindRoot();
+        var producer = File.ReadAllText(Path.Combine(root, "build", "Test-Privileged.ps1"));
+        var guard = producer.IndexOf("function Assert-OutsideProtectedSystemRoots", StringComparison.Ordinal);
+        var evidenceCheck = producer.IndexOf("Assert-OutsideProtectedSystemRoots $artifactRoot", StringComparison.Ordinal);
+
+        Assert.True(guard >= 0 && evidenceCheck > guard);
+        Assert.Contains("$env:WINDIR", producer, StringComparison.Ordinal);
+        Assert.Contains("$env:ProgramFiles", producer, StringComparison.Ordinal);
+        Assert.Contains("${env:ProgramFiles(x86)}", producer, StringComparison.Ordinal);
+        Assert.Contains("$env:ProgramData", producer, StringComparison.Ordinal);
+        Assert.Contains("EvidenceRoot must not be inside a protected Windows/application data root", producer, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PhysicalInstallerMutationRequiresFreshRunOwnershipAndCannotFallBackToVmOrOverwriteEvidence()
     {
         var root = FindRoot();
