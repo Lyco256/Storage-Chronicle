@@ -96,7 +96,7 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
         }
 
         var notificationContinuityLost = false;
-        await foreach (var change in changes.ReadChangesAsync(cancellationToken).ConfigureAwait(false))
+        await foreach (var change in ReadChangesWithReconciliationAsync(cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (change.Kind == ExternalMediaChangeKind.ContinuityGap)
@@ -242,6 +242,20 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
 
     /// <inheritdoc />
     public ValueTask DisposeAsync() => changes.DisposeAsync();
+
+    private async IAsyncEnumerable<ExternalMediaChange> ReadChangesWithReconciliationAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var change in changes.ReadChangesAsync(cancellationToken).ConfigureAwait(false))
+        {
+            yield return change;
+            if (change.Kind == ExternalMediaChangeKind.ContinuityGap)
+            {
+                // A gap can be the final queued notification while the medium remains mounted.
+                // Re-enumerate immediately instead of waiting for a later arrival notification.
+                yield return new ExternalMediaChange(ExternalMediaChangeKind.Connected, DateTimeOffset.UtcNow, null, "Re-enumeration after external-media notification continuity gap.");
+            }
+        }
+    }
 
     private async IAsyncEnumerable<SourceEvent> ImportMirrorAsync(MediaVolumeDescriptor media, MountSession session, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {

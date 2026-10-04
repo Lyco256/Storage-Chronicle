@@ -42,7 +42,7 @@ public sealed class ExternalMediaCollectorTests
     }
 
     [Fact]
-    public async Task NotificationContinuityGapInvalidatesOldMirrorSessionAndReenumeratesReconnectedVolume()
+    public async Task TerminalNotificationContinuityGapInvalidatesSessionAndImmediatelyReenumeratesMountedVolume()
     {
         var fixtureRoot = CreateFixtureRoot(out var runId);
         var mediaRoot = Path.Combine(fixtureRoot, "media");
@@ -51,11 +51,9 @@ public sealed class ExternalMediaCollectorTests
         var descriptor = new VolumeDescriptor(VolumeId.Create("media-volume"), "NTFS", [mediaRoot], false, true, ProtectedVolumeRoles.None, true, true, IsProtectedRoleClassificationComplete: true);
         var source = new OneMediaChangeSource(
             new ExternalMediaChange(ExternalMediaChangeKind.Connected, DateTimeOffset.UtcNow, "device-before-gap"),
-            new ExternalMediaChange(ExternalMediaChangeKind.ContinuityGap, DateTimeOffset.UtcNow, "notification queue overflow"),
-            new ExternalMediaChange(ExternalMediaChangeKind.Connected, DateTimeOffset.UtcNow, "enumeration-empty"),
-            new ExternalMediaChange(ExternalMediaChangeKind.Connected, DateTimeOffset.UtcNow, "device-after-gap"));
+            new ExternalMediaChange(ExternalMediaChangeKind.ContinuityGap, DateTimeOffset.UtcNow, "notification queue overflow"));
         var coordinator = new TrackingMirrorCoordinator();
-        var volumes = new SequenceVolumeEnumerator([descriptor], [], [descriptor]);
+        var volumes = new SequenceVolumeEnumerator([descriptor], [descriptor]);
         try
         {
             await using var collector = new WindowsExternalMediaCollector(source, volumes, settings, "pc-test", mirrorCoordinator: coordinator);
