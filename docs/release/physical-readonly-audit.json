@@ -1,6 +1,6 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "e599c6e30fa5dc5d548be05d7d8b54ca908112fc",
+  "targetCommit": "672b7eca261bebdde270a3d3e35b6efab10a91fc",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -81,7 +81,16 @@
     "tests/StorageChronicle.CorrelationAcceptance.Tests/CorrelationMetricsAcceptanceTests.cs",
     "tests/StorageChronicle.Platform.Windows.Integration.Tests/WindowsAcceptanceEnvironment.cs",
     "tests/StorageChronicle.Platform.Windows.Integration.Tests/WindowsPrivilegedAcceptanceTests.cs",
-    "tests/StorageChronicle.Installer.Tests/InstallerManifestTests.cs"
+    "tests/StorageChronicle.Installer.Tests/InstallerManifestTests.cs",
+    "src/StorageChronicle.Contracts/MediaFileAccess.cs",
+    "src/StorageChronicle.Platform.Windows.FileSystem/Interop/WindowsVolumeDirectorySession.cs",
+    "tests/StorageChronicle.Platform.Windows.FileSystem.Tests/VolumeAndMediaTests.cs",
+    "tests/StorageChronicle.ExternalMedia.Tests/FixtureMediaFileSystem.cs",
+    "tests/StorageChronicle.Agent.Tests/FixtureVolumeFileSystemFactory.cs",
+    "benchmarks/StorageChronicle.Benchmarks/BenchmarkMediaFileSystem.cs",
+    "docs/src/StorageChronicle.Contracts/MediaFileAccess.cs.md",
+    "docs/src/StorageChronicle.Platform.Windows.FileSystem/Interop/WindowsVolumeDirectorySession.cs.md",
+    "docs/benchmarks/StorageChronicle.Benchmarks/BenchmarkMediaFileSystem.cs.md"
   ],
   "workingTreeChanges": [],
   "overallStatus": "FAIL",
@@ -95,7 +104,7 @@
   "currentCommitSourceAudit": {
     "scope": "Partial source-to-sink review of Agent/Application/Windows NTFS/Session calls plus selected build/tools/installer flows and their service/OS-command reachability. Does not exhaustively audit every source/test/script/external command, perform host preflight, or run an independent runtime write monitor.",
     "status": "PARTIAL",
-    "reviewedAt": "2026-10-03",
+    "reviewedAt": "2026-10-04",
     "findings": [
       {
         "id": "settings-path-write-boundary",
@@ -230,7 +239,7 @@
         "id": "pc-bound-media-consent-end-to-end-gate",
         "status": "FAIL",
         "path": "src/StorageChronicle.Agent/ExternalMediaCollector.cs",
-        "summary": "Commit 02c245b adds a pure exact-binding consent policy; commit e599c6e adds a PC-local Settings record, IPC disclosure/decision contracts, and a consent UI. The live collector/import/mirror paths are not yet wired to acquire verified dedicated-root identity/NTFS ACL evidence, queue pending requests, persist the exact accepted binding through an authenticated decision handler, and deny legacy MediaMirrors-only reads/imports/appends. Therefore the first-use requirement is not implemented end-to-end and no media path is eligible to run. No physical media was accessed."
+        "summary": "Commits 02c245b and e599c6e add a pure exact-binding consent policy, PC-local Settings record, IPC disclosure/decision contracts, consent UI, and tests. Commit 672b7ec adds a read-only FILE_ID_INFO identity API backed by the validated pinned product-root handle and an isolated Windows test. The live collector/import/mirror paths are still not wired to acquire and revalidate this evidence, inspect ACLs, queue live requests, persist an accepted binding through an authenticated handler, and deny legacy MediaMirrors-only reads/imports/appends. First-use consent remains incomplete and no media path is eligible to run. No physical media was accessed."
       }
     ]
   },
