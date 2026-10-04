@@ -1,6 +1,6 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "8314865",
+  "targetCommit": "f7a6e2f8df1da52ff2bd1cac39b40fa2304e74b2",
   "priorAuditTargetCommit": "b8d4fb9e6ec3afadb3fde6e2d197237f4391d722",
   "currentDeltaFromPriorAudit": [
     "src/StorageChronicle.Storage/SegmentLog.cs",
@@ -15,9 +15,16 @@
     "benchmarks/StorageChronicle.Benchmarks/StorageChronicle.Benchmarks.csproj",
     "tests/StorageChronicle.Architecture.Tests/ArchitectureContractTests.cs",
     "docs/benchmarks/StorageChronicle.Benchmarks/Program.cs.md",
-    "docs/benchmarks/StorageChronicle.Benchmarks/StorageChronicle.Benchmarks.csproj.md"
+    "docs/benchmarks/StorageChronicle.Benchmarks/StorageChronicle.Benchmarks.csproj.md",
+    "benchmarks/StorageChronicle.Benchmarks/MftBenchmarks.cs",
+    "build/quality/Test-FullBenchmarkMatrix.ps1",
+    "build/quality/Test-FinalAcceptance.ps1",
+    "Directory.Build.props",
+    "docs/benchmarks/StorageChronicle.Benchmarks/MftBenchmarks.cs.md",
+    "docs/build/quality/Test-FullBenchmarkMatrix.ps1.md",
+    "docs/build/quality/Test-FinalAcceptance.ps1.md"
   ],
-  "currentAuditScope": "Partial audited-source-snapshot review at devenv integration 8314865: carries forward earlier source-to-sink findings where source is unchanged from b8d4fb9; re-reviewed storage tail recovery, SQLite derived-index recovery, and benchmark temporary fixture ownership/cleanup. This is not exhaustive across every source, test, script, external command, configured root, host preflight, or runtime write monitor.",
+  "currentAuditScope": "Partial audited-source-snapshot review at devenv integration f7a6e2f8df1da52ff2bd1cac39b40fa2304e74b2: carries forward earlier source-to-sink findings where source is unchanged from b8d4fb9; re-reviewed storage tail recovery, SQLite derived-index recovery, benchmark temporary fixture ownership/cleanup, and the updated BenchmarkDotNet runner/matrix path handling. The 1M Storage diagnostic used only an owned OS-temp fixture and completed one million indexed records; it did not launch the product or touch user/media data. This is not exhaustive across every source, test, script, external command, configured root, host preflight, or runtime write monitor.",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -119,8 +126,8 @@
   "workingTreeChanges": [],
   "latestValidation": {
     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1",
-    "codeCommit": "8314865",
-    "currentAuditCommit": "8314865",
+    "codeCommit": "f7a6e2f8df1da52ff2bd1cac39b40fa2304e74b2",
+    "currentAuditCommit": "f7a6e2f8df1da52ff2bd1cac39b40fa2304e74b2",
     "exitCode": 0,
     "fastProjects": 24,
     "qualityGate": "passed",
@@ -143,7 +150,7 @@
     "mftSeedOfflineContracts": "31 passed; current scripts parsed; no VHDX, disk, partition, format, product, installer, media, or workload was executed",
     "legacyVmRetirementContracts": "17 passed; eight newly retired VM/Stage A scripts parsed without execution; AST contract rejects every command except Write-Error/exit and fixed error-preference assignment",
     "retiredEntryPointParser": "eight retired VM/Stage A entry points parsed successfully; none was invoked",
-    "integrationMerge": "feat/storage-tail-recovery tail recovery merged at dde919b, SQLite startup recovery at 9d78c50, 1M small-record Storage fixture at 247f0f1, and exclusive benchmark fixture ownership/cleanup at 8314865; all with --no-ff and no conflicts; main unchanged",
+    "integrationMerge": "feat/storage-tail-recovery tail recovery merged at dde919b, SQLite startup recovery at 9d78c50, 1M small-record Storage fixture at 247f0f1, exclusive benchmark fixture ownership/cleanup at 8314865, and safe 1M BenchmarkDotNet runner/matrix at f7a6e2f; all with --no-ff and no conflicts; main unchanged",
     "physicalAcceptance": "NOT_EXECUTED"
   },
   "overallStatus": "FAIL",
@@ -155,10 +162,10 @@
   "hostPreflight": "NOT_EXECUTED",
   "processWriteMonitoring": "NOT_EXECUTED",
   "currentCommitSourceAudit": {
-    "scope": "Partial source-to-sink review of Agent/Application/Windows NTFS/Session calls plus selected build/tools/installer flows and their service/OS-command reachability; prior findings are carried forward where source is unchanged from b8d4fb9. The storage tail/index recovery and benchmark fixture cleanup source deltas were inspected against targetCommit. Does not exhaustively audit every source/test/script/external command, perform host preflight, or run an independent runtime write monitor.",
+    "scope": "Partial source-to-sink review of Agent/Application/Windows NTFS/Session calls plus selected build/tools/installer flows and their service/OS-command reachability; prior findings are carried forward where source is unchanged from b8d4fb9. The storage tail/index recovery, benchmark fixture cleanup, and benchmark runner/matrix deltas were inspected against targetCommit. The 1M Storage diagnostic wrote only to benchmark-owned OS-temp roots. Does not exhaustively audit every source/test/script/external command, perform host preflight, or run an independent runtime write monitor.",
     "status": "PARTIAL",
     "reviewedAt": "2026-10-04",
-    "currentDeltaReview": "The .open tail-recovery delta was inspected: only a manifest-free segment matching its header GUID and direct storage-root child path is opened exclusively; header and every complete record CRC are revalidated before truncating only bytes beyond the last complete frame. Verified prefix bytes are preserved. CRC-invalid, malformed, manifest-backed, compressed, or reparse-point segments are not repaired/truncated; new append proceeds in a fresh segment. SQLite initialization runs quick_check before schema migration; startup rebuilds a missing index beside authoritative segments or one classified as structurally corrupt, deleting only the derived SQLite database and sidecars. Unsupported schema is not classified as corruption, and tests assert the DB bytes remain unchanged; busy, permission, and unrelated I/O failures are not in the corruption filter. Tests cover incomplete-tail recovery, CRC-corrupt full-frame preservation, automatic missing/corrupt-index rebuild, and unsupported-schema preservation. The 1M small-record Storage benchmark fixture is bounded-batch and discoverable, but its measurement was not run and no performance target is claimed. Benchmark containers are exclusively created under the OS temp root, bound by a run GUID marker and data child, and recursively cleaned only after boundary/marker/reparse checks; source-contract tests cover these guards. This narrows accidental cleanup risk but does not prove race-free recursive deletion. Test-All passed at 8314865 with zero build warnings/errors, all 24 Fast projects, Quality/coverage, DocMirror, offline contracts, and UI. No product or physical runner was started. The broader callgraph, configured-root and hostile-race proof, host preflight, independent runtime write monitor, and physical evidence remain unverified.",
+    "currentDeltaReview": "The .open tail-recovery delta was inspected: only a manifest-free segment matching its header GUID and direct storage-root child path is opened exclusively; header and every complete record CRC are revalidated before truncating only bytes beyond the last complete frame. Verified prefix bytes are preserved. CRC-invalid, malformed, manifest-backed, compressed, or reparse-point segments are not repaired/truncated; new append proceeds in a fresh segment. SQLite initialization runs quick_check before schema migration; startup rebuilds a missing index beside authoritative segments or one classified as structurally corrupt, deleting only the derived SQLite database and sidecars. Unsupported schema is not classified as corruption, and tests assert the DB bytes remain unchanged; busy, permission, and unrelated I/O failures are not in the corruption filter. Tests cover incomplete-tail recovery, CRC-corrupt full-frame preservation, automatic missing/corrupt-index rebuild, and unsupported-schema preservation. The bounded-batch 1M small-record Storage diagnostic completed one million indexed records in the normal out-of-process .NET CLI toolchain: mean 108.339 seconds, N=1, 21,534,539,896 managed bytes; this is diagnostic only, not full-matrix or statistical acceptance. The runner uses one iteration/no warmup and DontEnforcePowerPlan; the Windows matrix uses a free temporary SUBST mapping for long checkout paths and releases it in finally. Benchmark containers are exclusively created under the OS temp root, bound by a run GUID marker and data child, and recursively cleaned only after boundary/marker/reparse checks; source-contract tests cover these guards. This narrows accidental cleanup risk but does not prove race-free recursive deletion. Test-All passed at f7a6e2f with zero build warnings/errors, all 24 Fast projects, Quality/coverage, DocMirror, offline contracts, and UI. No product or physical runner was started. The broader callgraph, configured-root and hostile-race proof, host preflight, independent runtime write monitor, and physical evidence remain unverified.",
     "findings": [
       {
         "id": "settings-path-write-boundary",
