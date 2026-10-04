@@ -4,7 +4,7 @@
 
 `Requirements/98_REQUIREMENTS_COVERAGE.md` remains authoritative. The table below assigns one verification ID to every row in that coverage document; it records executable evidence and does not weaken any product requirement.
 
-## Current requirement-level readiness (source commit `877ce6d`, 2026-10-04)
+## Current requirement-level readiness (tested code commit `517b6c5`, 2026-10-04; pushed on `origin/devenv` through `ac3b880`)
 
 This compact index closes the gap between the coverage-row verification IDs and each numbered requirement. `PASS` means the requirement's implementation/document/test evidence is present at the stated scope; it does not override environment-dependent acceptance gates. `PARTIAL`, `FAIL`, and `NOT_EXECUTED` remain open. Requirements 22 and 32–36 describe superseded whole-OS/VirtualBox execution paths; Requirement 37 is the active safety and acceptance authority.
 
@@ -13,7 +13,7 @@ This compact index closes the gap between the coverage-row verification IDs and 
 | [00 Product requirements](../../Requirements/00_PRODUCT_REQUIREMENTS.md) | PARTIAL | Core product code and deterministic tests are integrated; live Windows 10/11, service, media, Explorer, formal performance/resource evidence, and independent write monitoring remain open. |
 | [01 Architecture](../../Requirements/01_ARCHITECTURE_AND_PROJECT_LAYOUT.md) | PASS | Project boundaries, solution layout, and architecture tests are present. |
 | [02 Branch/worktree rules](../../Requirements/02_GIT_BRANCH_WORKTREE_RULES.md) | PARTIAL | `devenv` integrations and handoffs are recorded; complete evidence of every prescribed feature worktree, ownership review, and clean handoff is not established in one audit record. |
-| [03 Tests and quality](../../Requirements/03_TEST_AND_QUALITY_REQUIREMENTS.md) | PARTIAL | `build/Test-All.ps1` passed at `877ce6d`; physical/privileged lanes and formal performance acceptance are not executed, and all required fault/durability acceptance evidence is not complete. |
+| [03 Tests and quality](../../Requirements/03_TEST_AND_QUALITY_REQUIREMENTS.md) | PARTIAL | Post-merge `build/Test-All.ps1` passed on `devenv` code commit `517b6c5`, including build with 0 warnings/errors, Fast, Quality/coverage, DocMirror, and UI. Physical/privileged lanes and formal performance/fault-durability acceptance remain open. |
 | [04 Documentation](../../Requirements/04_DOCUMENTATION_REQUIREMENTS.md) | PASS | Source mirrors and release/handoff records exist; DocMirror passed. |
 | [05 Foundation](../../Requirements/05_FOUNDATION_PHASE.md) | PASS | Solution, shared contracts, build/validation scripts, and test/UI foundations are present. |
 | [06 Ownership matrix](../../Requirements/06_AGENT_OWNERSHIP_MATRIX.md) | PASS | Ownership paths are defined and feature handoffs are recorded. |
@@ -38,18 +38,18 @@ This compact index closes the gap between the coverage-row verification IDs and 
 | [25 Privileged capability matrix](../../Requirements/25_WINDOWS_PRIVILEGED_CAPABILITY_MATRIX.md) | NOT_EXECUTED | No eligible Windows 11 capability-matrix run artifact exists. |
 | [26 Windows 10 22H2](../../Requirements/26_WINDOWS10_22H2_ACCEPTANCE.md) | NOT_EXECUTED | Preflight/finalizer exist; no eligible physical Windows 10 22H2 run evidence exists. |
 | [27 Idle resource acceptance](../../Requirements/27_IDLE_RESOURCE_ACCEPTANCE.md) | PARTIAL | Diagnostic sampling is not the eligible 600-second run with independent quiet witness and accepted thresholds. |
-| [28 MFT performance matrix](../../Requirements/28_PERFORMANCE_MATRIX_WITH_MFT.md) | FAIL | Portable matrix is not the required MFT 10K/100K/1M matrix; seed provenance workflow and 60 GiB pre-seed gate are absent, so eligible correctness/performance evidence is unavailable. |
+| [28 MFT performance matrix](../../Requirements/28_PERFORMANCE_MATRIX_WITH_MFT.md) | PARTIAL | The create-new physical seed workflow, 60 GiB gates, independent process-attributed monitor contract, and final-gate provenance binding are implemented and pass offline contracts (31/31). No approved roots, actual seed/monitor artifacts, or MFT 10K/100K/1M physical matrix have been executed; acceptance remains ineligible. |
 | [29 Real-machine installer](../../Requirements/29_REAL_MACHINE_INSTALLER_ACCEPTANCE.md) | NOT_EXECUTED | No dedicated-PC install/repair/update/rollback/uninstall acceptance artifact exists. |
 | [30 Agent/Explorer correlation](../../Requirements/30_AGENT_EXPLORER_REAL_CORRELATION.md) | NOT_EXECUTED | No eligible physical Agent/Explorer workload artifact with zero false Exact attribution exists. |
-| [31 devenv/main integration](../../Requirements/31_DEVENV_MAIN_INTEGRATION.md) | PARTIAL | `devenv` is pushed and clean; final acceptance gates are unmet, and no merge to `main` is allowed. |
+| [31 devenv/main integration](../../Requirements/31_DEVENV_MAIN_INTEGRATION.md) | PARTIAL | `devenv` was integrated with `--no-ff`, passed post-merge `Test-All`, and was pushed to `origin/devenv` through `ac3b880`; `main` is untouched. Final acceptance gates are unmet, so no merge to `main` is allowed. |
 | [32 VirtualBox migration](../../Requirements/32_VIRTUALBOX_MIGRATION_AND_SUPERSESSION.md) | SUPERSEDED | Current OS-guest execution path is retired by Requirement 37. |
 | [33 VirtualBox TestLab](../../Requirements/33_SAFE_VIRTUALBOX_TESTLAB.md) | SUPERSEDED | Current OS-guest execution path is retired by Requirement 37. |
 | [34 VirtualBox host prerequisites](../../Requirements/34_VIRTUALBOX_HOST_PREREQUISITES_AND_HUMAN_HANDOFF.md) | SUPERSEDED | Current human-action boundary is Requirement 37 §6. |
 | [35 low-memory VirtualBox profile](../../Requirements/35_LOW_MEMORY_AND_STORAGE_TESTLAB_PROFILE.md) | SUPERSEDED | Whole-OS VM profile is retired; required dataset sizes and performance conditions remain governed by Requirements 27/28/37. |
 | [36 VirtualBox migration acceptance](../../Requirements/36_VIRTUALBOX_MIGRATION_ACCEPTANCE_AND_REAUDIT.md) | SUPERSEDED | Current audit and acceptance authority is Requirement 37. |
-| [37 Physical read-only acceptance](../../Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md) | FAIL | Source-to-sink audit is partial; approved fixture root, host preflight, independent process write monitor, and all required physical evidence are absent. Audit decision is `DO_NOT_RUN`. |
+| [37 Physical read-only acceptance](../../Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md) | FAIL | Current-commit source-to-sink audit, approved fixture root, host preflight, independent process write monitor, and physical evidence are absent. The latest audit JSON is bound to older commit `877ce6d` and is stale; its fail-closed `DO_NOT_RUN` is not authorization for current code. |
 
-The current machine-readable source audit and validation binding is [`physical-readonly-audit.json`](physical-readonly-audit.json); the explanatory findings and no-run decision are in [`physical-readonly-audit.md`](physical-readonly-audit.md). `Test-All` passing does not change any pending environment gate above.
+The latest recorded source audit and validation binding is [`physical-readonly-audit.json`](physical-readonly-audit.json), explained in [`physical-readonly-audit.md`](physical-readonly-audit.md). It targets `877ce6d`, not the current `devenv` code, so it cannot authorize any current product/physical execution; its `DO_NOT_RUN` status remains the safe decision until a fresh current-commit audit and independent runtime monitor pass. `Test-All` passing does not change any pending environment gate above.
 
 ## Family summary
 

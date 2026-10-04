@@ -1,6 +1,16 @@
 # Main readiness
 
-## Latest continuation (2026-10-04, source commit `877ce6d`)
+## Current status (2026-10-04, tested code commit `517b6c5`; `origin/devenv` through `ac3b880`)
+
+- The `feat/integration-quality-r37` R19/R28 seed-provenance change was reviewed and merged with `--no-ff` into `devenv` as `517b6c5`; no conflicts occurred. The clean integration branch was pushed normally to `origin/devenv` through `ac3b880`. `main` remains untouched.
+- Post-merge `pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1` passed with exit code 0: full solution build had 0 warnings/0 errors; all configured non-privileged Fast projects, Quality/coverage, 31/31 MFT provenance contracts, 9/9 retired-VirtualBox contracts, and UI tests passed. Privileged Windows acceptance is deliberately isolated and was not run.
+- MFT now has a guarded create-new VHDX seed workflow, 60 GiB pre-creation/pre-workload checks, external ArtifactRoot validation, independent process-attributed monitor evidence requirements, provenance hashing/identity binding, and offline failure-path tests. This only makes the lane implementable: no approved roots, VHDX, seed, monitor artifact, or MFT matrix exist, so physical MFT acceptance remains **NOT_EXECUTED**.
+- Requirement 37 remains **FAIL / DO NOT RUN**. The latest machine-readable audit targets `877ce6d`, so it is stale for the current code and cannot authorize execution. The source-to-sink review, dedicated-root host preflight, independent runtime write monitor, marker authenticity/race closure, and all environment-bound evidence remain open. No product, service, installer, UAC, media, VHDX, workload, or privileged runner was started.
+- Still blocking `main`: dedicated eligible physical hardware/roots and user-reviewed UAC actions; Windows 10 22H2; Windows capability, external-media, service/SMB/Explorer, and installer matrices; formal resource acceptance; and the actual 10K/100K/1M MFT/performance matrix. `devenv` is not main-ready.
+
+## Previous checkpoint (2026-10-04, source commit `877ce6d`)
+
+The notes below are a historical snapshot for `877ce6d`; claims that work was absent or pending describe that checkpoint only and are superseded by the current status above. They are retained as audit history, not as current implementation status.
 
 - Authenticated named-pipe SID now selects a freshly resolved per-user settings store from read-only Windows ProfileList/loaded User Shell Folders data. User-supplied SID/path fields are ignored; unavailable profile resolution fails closed; the LocalSystem fallback is a throwing sentinel. A synthetic two-SID dispatch test proves store isolation and projection preference routing. Live profile registry and multi-user Windows service acceptance remain outstanding.
 - Low-level external-media initialization, append, manifest, and recovery writes now fail closed without a configured authorization callback (`0c94f2f`). First-use approval still initializes the product tree before its complete post-creation ACL scan, and recovery across Agent termination/removal is not proven. Marker authenticity, effective-access/atomic ACL calculation, and hostile-race limits remain.
