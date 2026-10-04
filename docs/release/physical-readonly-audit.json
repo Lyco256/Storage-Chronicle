@@ -28,7 +28,8 @@
     "docs/release/performance-baseline.md",
     "docs/release/main-readiness.md",
     "docs/release/requirements-verification.md",
-    "docs/release/physical-readonly-audit.md"
+    "docs/release/physical-readonly-audit.md",
+    "docs/handoffs/completion-gaps.md"
   ],
   "currentAuditScope": "Partial audited-source-snapshot review at devenv integration a624c1d702101b783f2af563f7f0624f61d07625: carries forward earlier source-to-sink findings where source is unchanged from b8d4fb9; re-reviewed storage tail recovery, SQLite derived-index recovery, benchmark temporary fixture ownership/cleanup, and the updated BenchmarkDotNet runner/matrix path handling. A complete PortableOnly matrix completed all seven suites and 13 expected methods using benchmark-owned OS-temp metadata fixtures. It did not launch the product or touch user/media data. MFT and formal resource acceptance were not run; the matrix is diagnostic and ineligible. This is not exhaustive across every source, test, script, external command, configured root, host preflight, or runtime write monitor.",
   "historicalChangesFromPriorAudit": [
