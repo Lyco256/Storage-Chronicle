@@ -1,6 +1,6 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "f689f7e6fdd46f0a8cee33d5c495962cede2c6f2",
+  "targetCommit": "877ce6def71dc3d3bafabc141033c00da1eb8284",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -90,9 +90,26 @@
     "benchmarks/StorageChronicle.Benchmarks/BenchmarkMediaFileSystem.cs",
     "docs/src/StorageChronicle.Contracts/MediaFileAccess.cs.md",
     "docs/src/StorageChronicle.Platform.Windows.FileSystem/Interop/WindowsVolumeDirectorySession.cs.md",
-    "docs/benchmarks/StorageChronicle.Benchmarks/BenchmarkMediaFileSystem.cs.md"
+    "docs/benchmarks/StorageChronicle.Benchmarks/BenchmarkMediaFileSystem.cs.md",
+    "src/StorageChronicle.Agent/AuthenticatedUserSettingsStoreResolver.cs",
+    "src/StorageChronicle.Agent/UnscopedUserSettingsStore.cs",
+    "src/StorageChronicle.Agent/NamedPipeAgentServer.cs",
+    "src/StorageChronicle.Agent/AgentProjectionService.cs",
+    "src/StorageChronicle.Settings/AgentSettingsService.cs",
+    "tests/StorageChronicle.Agent.Tests/AuthenticatedUserSettingsRoutingTests.cs",
+    "docs/handoffs/settings.md"
   ],
   "workingTreeChanges": [],
+  "latestValidation": {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-Fast.ps1 -NoRestore",
+    "exitCode": 0,
+    "projects": 24,
+    "buildWarnings": 0,
+    "buildErrors": 0,
+    "agentTests": "75 total; 72 passed; 3 privileged cases skipped because no approved acceptance root is configured",
+    "docMirror": "passed after per-user implementation documentation was completed",
+    "physicalAcceptance": "NOT_EXECUTED"
+  },
   "overallStatus": "FAIL",
   "physicalAcceptanceStatus": "NOT_EXECUTED",
   "decision": "DO_NOT_RUN",
@@ -239,7 +256,7 @@
         "id": "pc-bound-media-consent-end-to-end-gate",
         "status": "PARTIAL",
         "path": "src/StorageChronicle.Agent/ExternalMediaCollector.cs",
-        "summary": "Commit 1b73cb3 wires per-PC persisted approval and live volume/product-root identity revalidation before existing-history import, recovery, and mirror append; MediaMirrors-only legacy settings do not grant access. Machine identity is read-only MachineGuid-derived. Commit 1277ab2 pins the exact validated root handle, closing a validation-to-pin name-reopen race. Commit be0adba invalidates uncertain mirror sessions without flushing after notification continuity loss and re-enumerates the next connection with UnverifiedGap quality; the targeted Agent suite passed 64 non-privileged tests and all 24 Fast projects passed. Remaining blockers are actual NTFS ACL/ancestor DELETE_CHILD inspection, forgeable JSON ownership marker, consent-decision executable signature authentication, and full independent approval-to-import/append acceptance. No physical media or product was accessed."
+        "summary": "Commit 1b73cb3 wires per-PC persisted approval and live volume/product-root identity revalidation before history import, recovery, and mirror append; legacy MediaMirrors mappings do not grant access. The approving user's exact SID is checked by the handle-bound NTFS descriptor/tree scanner, which rejects broad/unapproved write/delete rights and ancestor DELETE_CHILD. Commits 1277ab2 and be0adba pin the validated root and invalidate uncertain sessions on notification gaps. Remaining blockers are forgeable JSON ownership markers, scanner effective-access/atomicity and hostile-race limits, consent-decision binary signature authentication, and independent physical approval-to-import/append acceptance. No physical media or product was accessed."
       },
       {
         "id": "notification-continuity-mirror-session-invalidation",
@@ -270,21 +287,20 @@
         "status": "PARTIAL",
         "path": "src/StorageChronicle.ExternalMedia/ExternalMediaStore.cs",
         "lines": [303, 418, 482, 604],
-        "summary": "Commit f689f7e attaches the coordinator's persisted-consent/ACL check to the store's same pinned filesystem session and rechecks before directory creation, segment/manifest creation and final rename, and interrupted-segment finalization. Agent lifecycle tests cover ACL revocation before flush and after segment finalization but before manifest publication; failed unregister retains the in-process session for retry. Remaining limits: the public low-level store does not require a guard by default, initialization happens before post-creation ACL inspection after explicit approval, and retry/recovery across Agent process termination or physical removal is not proven. No media was accessed."
+        "summary": "Commits f689f7e and 0c94f2f bind coordinator mutations to live persisted-consent/volume/ACL checks on the pinned session and make the low-level store fail closed when no authorization callback is configured. Initialization/append/manifest/recovery mutation paths require a guard; Agent lifecycle tests cover revocation around flush and manifest publication. Remaining limits: first-use tree initialization necessarily precedes post-creation ACL inspection after explicit approval, ACL and path state are not an atomic effective-access snapshot, and retry/recovery across Agent process termination or physical removal is not proven. No media was accessed."
       },
       {
         "id": "interactive-user-settings-profile-boundary",
-        "status": "FAIL",
-        "path": "src/StorageChronicle.Agent/Program.cs",
-        "lines": [51, 62],
-        "summary": "The LocalSystem Agent constructs a singleton UserSettingsStore whose WindowsSettingsPathProvider uses the service process LocalApplicationData. Authenticated IPC confirms an interactive caller SID but does not select that user's profile path, so Requirement 09's per-user %LOCALAPPDATA% path is not met and users may share/misplace settings. Resolve the profile from authenticated session identity and test two distinct user profiles before release."
+        "status": "PARTIAL",
+        "path": "src/StorageChronicle.Agent/AuthenticatedUserSettingsStoreResolver.cs",
+        "summary": "Commit 877ce6d resolves a fresh per-user store from the SID authenticated by the named-pipe token and read-only ProfileList/loaded User Shell Folders data; payload SID/path fields are ignored and missing profiles fail closed. The LocalSystem DI fallback is replaced by a throwing sentinel. A two-SID synthetic dispatch test proves settings isolation and projection preference routing. Remaining: live Windows profile registry behavior, named-pipe token/session multi-user service acceptance, and profile corruption/recovery validation on a dedicated host."
       },
       {
         "id": "fresh-media-product-tree-disclosure",
         "status": "PARTIAL",
         "path": "src/StorageChronicle.Agent/MediaMirrorConsentService.cs",
         "lines": [151, 163],
-        "summary": "Commit f689f7e synchronizes the consent service, approval UI, and mirrored docs: first-use approval can initialize the .StorageChronicle tree, this PC's writer directory, and ownership markers; a complete post-creation ACL scan precedes grant persistence/import/event append. An empty product-owned tree can remain if that scan fails. This does not close the low-level optional-gate, marker-authenticity, or ACL race findings."
+        "summary": "Commit f689f7e synchronizes the consent service, approval UI, and mirrored docs: first-use approval can initialize the .StorageChronicle tree, this PC's writer directory, and ownership markers; a complete post-creation ACL scan precedes grant persistence/import/event append. Commit 0c94f2f additionally makes low-level writes fail closed without an authorization callback. An empty product-owned tree can remain if the first-use scan fails. Marker authenticity, effective-access/atomic ACL evaluation, and race/recovery acceptance findings remain open."
       }
     ]
   },
@@ -428,9 +444,9 @@
     },
     {
       "id": "installer-run-value-collision",
-      "status": "PARTIAL",
+        "status": "PASS",
       "path": "tools/PhysicalAcceptance/Run-RealMachineInstallerAcceptance.ps1",
-      "summary": "The preflight checks product registration/service/data roots but not the HKLM Run value authored by the MSI. Existing-value collision behavior is not proven; fail closed before UAC until added and tested."
+        "summary": "The preflight checks the exact MSI-authored StorageChronicleSessionAgent value read-only in both registry views before UAC; static InstallerManifestTests verify the gate ordering. Runtime collision behavior and complete MSI effect containment still require dedicated-PC acceptance."
     },
     {
       "id": "test-output-arbitrary-overwrite",
