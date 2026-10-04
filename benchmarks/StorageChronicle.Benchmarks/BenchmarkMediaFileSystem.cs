@@ -41,6 +41,7 @@ internal static class BenchmarkMediaFileSystem
     {
         private readonly HashSet<Stream> movable = new(ReferenceEqualityComparer.Instance);
         public VolumeId VolumeId { get; } = volumeId;
+        public string GetOwnedProductDirectoryIdentity() => throw new NotSupportedException("A benchmark path fixture cannot provide authoritative Windows file identity evidence.");
         public void EnsureDirectory(string relativePath) => Directory.CreateDirectory(Resolve(relativePath));
 
         public bool TryCreateDirectory(string relativePath)

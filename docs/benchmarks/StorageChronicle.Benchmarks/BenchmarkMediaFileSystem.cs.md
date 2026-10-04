@@ -8,6 +8,8 @@ Provides a volume-bound media filesystem for external-media benchmarks so benchm
 
 `BenchmarkMediaFileSystem` is internal. `Open` resolves the supplied benchmark root and returns its `VolumeId` with an `IVolumeBoundMediaFileSystem` implementation. The portable implementation exists only for non-Windows benchmark builds.
 
+The portable fixture explicitly does not synthesize `GetOwnedProductDirectoryIdentity()`; identity-sensitive consent tests must use an injected evidence provider or the Windows handle-bound implementation, never a path-derived substitute.
+
 ## Invariants
 
 Windows operations are rooted at an existing directory and pinned volume handle. The portable implementation confines relative paths beneath the supplied root, rejects traversal components, creates new files without overwriting, and permits moves only for streams created or opened for recovery by that instance. It never reads file contents except through the explicit media contract's `OpenRead` method.

@@ -125,6 +125,37 @@ public sealed class VolumeAndMediaTests
     }
 
     [Fact]
+    public void ProductDirectoryIdentityComesFromTheValidatedPinnedHandle()
+    {
+        var fixture = CreateOwnedFixture("storage-chronicle-root-identity-", out var runId);
+        try
+        {
+            var mountPoint = new char[1024];
+            Assert.True(GetVolumePathName(fixture.FullName, mountPoint, (uint)mountPoint.Length));
+            var volumeGuid = new char[1024];
+            Assert.True(GetVolumeNameForVolumeMountPoint(new string(mountPoint).TrimEnd('\0'), volumeGuid, (uint)volumeGuid.Length));
+            using var session = WindowsVolumeDirectorySession.OpenAtExistingDirectory(new string(volumeGuid).TrimEnd('\0'), new string(mountPoint).TrimEnd('\0'), fixture.FullName);
+
+            Assert.True(session.TryCreateDirectory(".StorageChronicle"));
+            using (var marker = session.CreateNew(".StorageChronicle/.storage-chronicle-owner.json"))
+            {
+                JsonSerializer.Serialize(marker, new { schema = "StorageChronicle.MediaOwnership.v1", writerId = (string?)null });
+                marker.Flush();
+            }
+
+            var first = session.GetOwnedProductDirectoryIdentity();
+            var second = session.GetOwnedProductDirectoryIdentity();
+
+            Assert.StartsWith("win-file-id-v1:", first, StringComparison.Ordinal);
+            Assert.Equal(first, second);
+        }
+        finally
+        {
+            DeleteOwnedFixture(fixture.FullName, "storage-chronicle-root-identity-", runId);
+        }
+    }
+
+    [Fact]
     public void VolumeDirectorySessionRejectsAReparseAncestorInAnExistingFixturePathWhenSupported()
     {
         var fixture = CreateOwnedFixture("storage-chronicle-reparse-ancestor-", out var runId);

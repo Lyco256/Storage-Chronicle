@@ -17,6 +17,8 @@ internal sealed class FixtureMediaFileSystem : IVolumeBoundMediaFileSystem
 
     public VolumeId VolumeId { get; }
 
+    public string GetOwnedProductDirectoryIdentity() => throw new NotSupportedException("A path-based test fixture cannot provide authoritative Windows file identity evidence.");
+
     public void EnsureDirectory(string relativePath) => Directory.CreateDirectory(Resolve(relativePath));
 
     public bool TryCreateDirectory(string relativePath)

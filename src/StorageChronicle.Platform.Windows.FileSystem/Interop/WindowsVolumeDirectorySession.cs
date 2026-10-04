@@ -38,6 +38,7 @@ public sealed class WindowsVolumeDirectorySession : IVolumeBoundMediaFileSystem
     private const uint FileOpenDisposition = 1;
     private const int FileRenameInformation = 10;
     private const int FileAttributeTagInfo = 9;
+    private const int FileIdInfo = 18;
     private const int FileNamesInformation = 12;
     private const int StatusNoMoreFiles = unchecked((int)0x80000006);
     private const uint FileAttributeReparsePoint = 0x00000400;
@@ -64,6 +65,20 @@ public sealed class WindowsVolumeDirectorySession : IVolumeBoundMediaFileSystem
 
     /// <inheritdoc />
     public VolumeId VolumeId => VolumeId.Create(expectedVolumeGuidPath.TrimEnd('\\').ToUpperInvariant());
+
+    /// <inheritdoc />
+    public string GetOwnedProductDirectoryIdentity()
+    {
+        lock (sync)
+        {
+            ThrowIfDisposed();
+            EnsureOwnedMediaRoot();
+            if (productRootHandle is null) throw new IOException("The validated product directory handle is unavailable.");
+            EnsureExpectedVolume(productRootHandle, expectedVolumeGuidPath);
+            EnsureDirectoryNotReparsePoint(productRootHandle);
+            return GetFileIdentity(productRootHandle);
+        }
+    }
 
     /// <summary>Opens and pins the root directory of one expected volume GUID path.</summary>
     /// <param name="volumeGuidPath">A Windows volume GUID root path, such as <c>\\?\Volume{...}\</c>.</param>
@@ -805,6 +820,26 @@ public sealed class WindowsVolumeDirectorySession : IVolumeBoundMediaFileSystem
         return (FileAttributes)info.FileAttributes;
     }
 
+    private static string GetFileIdentity(SafeFileHandle handle)
+    {
+        const int fileIdInfoSize = sizeof(long) + 16;
+        var buffer = Marshal.AllocHGlobal(fileIdInfoSize);
+        try
+        {
+            if (!GetFileInformationByHandleEx(handle, FileIdInfo, buffer, fileIdInfoSize))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "The validated media directory identity could not be read from its pinned handle.");
+
+            var volumeSerial = unchecked((ulong)Marshal.ReadInt64(buffer));
+            var fileId = new byte[16];
+            Marshal.Copy(IntPtr.Add(buffer, sizeof(long)), fileId, 0, fileId.Length);
+            return $"win-file-id-v1:{volumeSerial:X16}:{Convert.ToHexString(fileId)}";
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
     private static string GetFinalPath(SafeFileHandle handle)
     {
         var buffer = new char[32768];
@@ -924,6 +959,10 @@ public sealed class WindowsVolumeDirectorySession : IVolumeBoundMediaFileSystem
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass, out FileAttributeTagInformation info, uint bufferSize);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass, IntPtr info, int bufferSize);
 
     [DllImport("kernel32.dll")]
     private static extern IntPtr GetCurrentProcess();

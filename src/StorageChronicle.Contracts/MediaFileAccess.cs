@@ -13,6 +13,10 @@ public interface IVolumeBoundMediaFileSystem : IDisposable
     /// <summary>Gets the verified volume identity held by this session.</summary>
     VolumeId VolumeId { get; }
 
+    /// <summary>Gets the file-system identity of the existing, validated <c>.StorageChronicle</c> directory.</summary>
+    /// <remarks>The identity is obtained from the pinned directory handle, not from its path. It must not create the directory.</remarks>
+    string GetOwnedProductDirectoryIdentity();
+
     /// <summary>Creates missing directories one component at a time beneath the pinned volume root.</summary>
     void EnsureDirectory(string relativePath);
 

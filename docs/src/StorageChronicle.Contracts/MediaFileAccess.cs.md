@@ -1,5 +1,7 @@
 # MediaFileAccess.cs
 
+`IVolumeBoundMediaFileSystem.GetOwnedProductDirectoryIdentity()` returns the opaque identity of an already-existing, validated `.StorageChronicle` directory using the pinned volume-bound session. The operation is read-only and must not create the directory; absence, invalid ownership evidence, reparse points, or inability to obtain the underlying file identity fails closed. Test-only path adapters deliberately throw because a normalized path is not authoritative file identity evidence.
+
 ## Role
 
 Defines the platform-neutral volume-bound filesystem capability used by external-media persistence, so stores do not accept mount-point paths as write authority.

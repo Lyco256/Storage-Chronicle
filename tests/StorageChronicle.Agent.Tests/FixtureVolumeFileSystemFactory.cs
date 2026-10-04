@@ -13,6 +13,7 @@ internal sealed class FixtureVolumeFileSystemFactory(string root) : IVolumeBound
     {
         private readonly HashSet<Stream> movableStreams = new(ReferenceEqualityComparer.Instance);
         public VolumeId VolumeId { get; } = volumeId;
+        public string GetOwnedProductDirectoryIdentity() => throw new NotSupportedException("A path-based test fixture cannot provide authoritative Windows file identity evidence.");
         public void EnsureDirectory(string relativePath) => Directory.CreateDirectory(Resolve(relativePath));
 
         public bool TryCreateDirectory(string relativePath)

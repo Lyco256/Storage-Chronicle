@@ -1,5 +1,7 @@
 # WindowsVolumeDirectorySession.cs
 
+`GetOwnedProductDirectoryIdentity()` validates the existing product root through the held directory handle and returns its `FILE_ID_INFO` volume serial and 128-bit file ID. It performs no creation or mutation. Failure to read the ID, validate the volume, or validate the non-reparse owned root is an error; callers must not substitute a path string.
+
 ## Role
 
 Implements the Windows volume-bound media filesystem contract. It pins and validates a volume identity and confines production operations to the product-owned `.StorageChronicle` subtree.
