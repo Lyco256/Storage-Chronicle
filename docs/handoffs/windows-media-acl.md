@@ -39,3 +39,7 @@ build/quality/Test-DocMirror.ps1
 ## Commit policy
 
 Commit this work locally on `feat/windows-media-acl` only. No merge or push is part of this handoff.
+
+## Integration follow-up (2026-10-04, `59374aa`)
+
+The top-agent integration added explicit synthetic DACL cases for broad-principal `DELETE` and `FILE_DELETE_CHILD` grants. The focused `WindowsMediaAclPolicyTests` run passes 24/24, and the Windows filesystem test project builds with zero warnings and zero errors. These cases validate the descriptor-policy function only; they do not establish live Windows effective access or physical-media behavior.
