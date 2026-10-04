@@ -119,3 +119,9 @@ This ownership scope has no audited create-new VHDX/seed workflow that can prove
 ### Physical operations and known limits
 
 `-WhatIf`, dry-run, and all contract tests perform no storage mutation. This task did not execute `New-VHD`, attach, initialize, partition, format, invoke the one-million-file workload, query a real seed volume, or run a physical MFT benchmark; all are **NOT_EXECUTED**. No VHDX/fixture/evidence was created by this task. The VHDX collision test injects an AlreadyExists failure into the creation seam; it does not invoke Hyper-V or establish a physical-host race result for the native `New-VHD` cmdlet. Therefore physical acceptance remains blocked and `AcceptanceEligible` must not be inferred from creator-owned records. It requires user-designated isolated roots on eligible non-protected fixed NTFS volumes, the separately collected external monitor artifact, and the explicit approved/UAC workflow. No merge or push was performed.
+
+### Post-merge integration verification (2026-10-04, `devenv` merge `517b6c5`)
+
+- Feature commit `4bc5453` was merged with `--no-ff` into the clean `devenv` worktree; no merge conflicts occurred.
+- `pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1`: PASS, exit code 0. The full solution build reported 0 warnings/0 errors; every configured non-privileged test project, Quality gate (including 31/31 MFT contracts, coverage aggregation, and 9/9 retired VirtualBox contract checks), and UI test passed.
+- The privileged Windows acceptance lane is explicitly isolated by `Test-All.ps1` and was not run. No product, service, installer, external medium, VHDX create/attach/initialize/partition/format, MFT workload, or physical benchmark was started. MFT and all environment-bound acceptances remain NOT_EXECUTED pending separately approved isolated roots and independent monitor evidence.
