@@ -50,7 +50,7 @@ $hashPath = Join-Path $BundleRoot 'hash-manifest.json'
     if (@($manifest.MissingInputs).Count -gt 0) { throw ('Bundle is incomplete; missing inputs: ' + (@($manifest.MissingInputs) -join ', ')) }
     $hashManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $hashPath | ConvertFrom-Json
     $integrityFailures = [System.Collections.Generic.List[string]]::new()
-    $requiredPayload = @('StorageChronicle.msi', 'StorageChronicle.updated.msi', 'StorageChronicle.rollback.msi', 'Test-Installer.ps1', 'Invoke-RealInstallerCase.ps1', 'Probe-WriteAccess.ps1', 'Collect-PhysicalAcceptanceResults.ps1')
+    $requiredPayload = @('StorageChronicle.msi', 'StorageChronicle.updated.msi', 'StorageChronicle.rollback.msi', 'Test-Installer.ps1', 'InstallerAuthorizationProtocol.cs', 'Invoke-RealInstallerCase.ps1', 'Probe-WriteAccess.ps1', 'Collect-PhysicalAcceptanceResults.ps1')
     $hashEntries = @($hashManifest.Files | ForEach-Object { [string]$_.RelativePath })
     foreach ($relative in $requiredPayload) {
         $path = Join-Path $BundleRoot $relative

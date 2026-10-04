@@ -154,6 +154,8 @@ public sealed class InstallerManifestTests
         var root = FindRoot();
         var harness = File.ReadAllText(Path.Combine(root, "build", "package", "Test-Installer.ps1"));
         var driver = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Invoke-RealInstallerCase.ps1"));
+        var helperManifestCheck = harness.IndexOf("$actualProtocolHash.Equals([string]$protocolEntries[0].SHA256", StringComparison.Ordinal);
+        var helperCompile = harness.IndexOf("Add-Type -TypeDefinition $protocolSource", StringComparison.Ordinal);
         var runCheck = harness.IndexOf("Assert-HklmRunValueNameAbsent -ValueName 'StorageChronicleSessionAgent'", StringComparison.Ordinal);
         var payloadLock = harness.IndexOf("VerifiedPayloadLock]::OpenAndVerify($candidatePath", StringComparison.Ordinal);
         var driverGuard = harness.IndexOf("Assert-BundledDriverTimeoutContract -Path $DriverScript", StringComparison.Ordinal);
@@ -165,6 +167,11 @@ public sealed class InstallerManifestTests
         var physicalLaunch = physicalCase.IndexOf("Start-UacInstallerCase -FilePath", StringComparison.Ordinal);
 
         Assert.True(runCheck >= 0 && runCheck < launch);
+        Assert.Contains("Read-BytesThroughReadOnlyHandle", harness, StringComparison.Ordinal);
+        Assert.Contains("$actualManifestFingerprint.Equals($ExpectedHashManifestSha256", harness, StringComparison.Ordinal);
+        Assert.True(helperManifestCheck >= 0 && helperManifestCheck < helperCompile);
+        Assert.True(helperCompile >= 0 && helperCompile < payloadLock && payloadLock < launch);
+        Assert.DoesNotContain("Add-Type -Path $script:InstallerAuthorizationProtocolPath", harness, StringComparison.Ordinal);
         Assert.True(payloadLock >= 0 && payloadLock < launch);
         Assert.True(driverGuard >= 0 && driverGuard < launch);
         Assert.True(physicalCaseStart >= 0 && physicalCaseEnd > physicalCaseStart && justBeforeFirstLaunchCheck >= 0 && justBeforeFirstLaunchCheck < physicalLaunch);
@@ -626,10 +633,13 @@ public sealed class InstallerManifestTests
     {
         var root = FindRoot();
         var bundleGenerator = File.ReadAllText(Path.Combine(root, "build", "package", "New-ManualAcceptanceBundle.ps1"));
+        var physicalRunner = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Run-RealMachineInstallerAcceptance.ps1"));
         var finalizer = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Finalize-Windows10PhysicalAcceptance.ps1"));
 
         Assert.Contains("AcceptanceContracts.ps1", bundleGenerator, StringComparison.Ordinal);
         Assert.Contains("payloadFiles.Add('AcceptanceContracts.ps1')", bundleGenerator, StringComparison.Ordinal);
+        Assert.Contains("build/package/InstallerAuthorizationProtocol.cs", bundleGenerator, StringComparison.Ordinal);
+        Assert.Contains("'InstallerAuthorizationProtocol.cs'", physicalRunner, StringComparison.Ordinal);
         Assert.Contains("Copy-Item -LiteralPath $acceptanceContracts -Destination (Join-Path $bundle 'AcceptanceContracts.ps1')", bundleGenerator, StringComparison.Ordinal);
         Assert.Contains("Write-NewJsonArtifact", bundleGenerator, StringComparison.Ordinal);
         Assert.Contains("FileMode]::CreateNew", bundleGenerator, StringComparison.Ordinal);
