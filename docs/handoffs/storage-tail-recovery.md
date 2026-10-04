@@ -9,14 +9,15 @@ Implemented the Req.12 recovery choice confirmed by the user: truncate only an i
 - Reopen only manifest-free `.open` segments for append; finalized segments are never append candidates.
 - Before appending to a candidate, re-open it exclusively, revalidate its canonical storage-root boundary, filename/header identity, header, and all complete frame CRCs, then shorten only an incomplete trailing frame.
 - Preserve invalid complete frames without mutation and continue new writes in a fresh segment.
-- Add isolated storage-engine tests for incomplete-tail recovery and CRC-corrupt complete-frame preservation.
-- Synchronize the two source mirror documents.
+- On startup, rebuild the SQLite index/state cache automatically when the DB is missing beside authoritative segments or when SQLite integrity checking reports structural corruption. Do not classify unsupported schema, busy, permission, or unrelated I/O failures as corruption.
+- Add isolated storage-engine tests for incomplete-tail recovery, CRC-corrupt complete-frame preservation, automatic missing/corrupt SQLite rebuild, and preservation of unsupported-schema DBs.
+- Synchronize source mirrors for SegmentLog, AppendOnlyStorageEngine, and SqliteIndex.
 
 ## Validation
 
-- `dotnet test tests/StorageChronicle.Storage.Tests/StorageChronicle.Storage.Tests.csproj --no-restore --verbosity minimal` — passed (20/20).
+- `dotnet test tests/StorageChronicle.Storage.Tests/StorageChronicle.Storage.Tests.csproj --no-restore --verbosity minimal` — passed (22/22), including tail recovery, automatic missing/corrupt-index rebuild, and unsupported-schema preservation.
 - `pwsh -NoProfile -ExecutionPolicy Bypass -File build/Build.ps1` — passed, 0 warnings / 0 errors.
-- `pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-Fast.ps1 -NoRestore` — passed for all 24 non-privileged Fast projects, including Storage (20/20).
+- `pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-Fast.ps1 -NoRestore` — passed for all 24 non-privileged Fast projects, including Storage (22/22).
 - `pwsh -NoProfile -ExecutionPolicy Bypass -File build/quality/Test-DocMirror.ps1` — passed.
 - `git diff --check` — passed.
 - Integrated with `--no-ff` into `devenv` as `dde919b` without conflicts; post-merge `pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1` passed (exit 0), including all 24 Fast projects, Quality/coverage, DocMirror, MFT/retired-VM offline contracts, and UI. Build warnings/errors: 0. Privileged Windows acceptance was not run.
@@ -24,4 +25,4 @@ Implemented the Req.12 recovery choice confirmed by the user: truncate only an i
 
 ## Limitations
 
-- This handoff covers storage tail recovery only. It does not establish physical-machine acceptance, the exhaustive read-only audit, or release readiness.
+- This handoff covers Req.12 storage recovery only. It does not establish physical-machine acceptance, the exhaustive read-only audit, or release readiness.

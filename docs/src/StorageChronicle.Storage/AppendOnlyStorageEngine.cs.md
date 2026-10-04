@@ -4,13 +4,17 @@ The Agent also uses its bounded indexed canonical/source page and count methods 
 
 `AppendCanonicalBatchAsync` accepts at most 512 events per call. It preserves event order in immutable segments, performs one coupled SQLite transaction after the segment appends, and retains the existing rebuild-from-segments recovery boundary; it does not read file contents or content hashes. The ownership-entry validator is shared with `ReadOnlyStorageHistoryReader` so writer and reader paths enforce the same recognized child set.
 
-SQLite recovery and relocation rebuild in finite 512-record batches, keeping the log authoritative while avoiding an unbounded in-memory event list or a transaction per recovered record.
+At startup, a missing SQLite index with authoritative segments or a structurally corrupt existing SQLite database triggers a rebuild from the segments. SQLite `quick_check(1)` runs before schema pragmas or migrations; only explicit corruption findings trigger derived-index replacement, while unsupported schema and unrelated I/O failures remain errors. Startup recovery rebuilds in finite 512-record batches, restoring event indexes, canonical state, process-lifecycle rows, and sequence metadata without an unbounded in-memory event list. Explicit SQLite recovery and relocation use the same batched replay path.
 
-Process exit observations are stored as a separate `ProcessLifecycleEvent` segment record, not as a Source or Canonical file event. A bounded background writer persists them off the ETW callback and forces the append segment to disk before publishing its rebuildable SQLite lifecycle-index row. Queue saturation/persistence failure is visible through the collector or Agent health path; graceful disposal drains accepted facts. Startup scans authoritative segments in bounded batches to repair missing lifecycle-index rows; explicit SQLite rebuild and history relocation rebuild that index as well. Queries are restricted to requested process-instance IDs and UTC intervals so Replay can restore observed exit boundaries after Agent restart without loading all lifecycle history into memory.
+Process exit observations are stored as a separate `ProcessLifecycleEvent` segment record, not as a Source or Canonical file event. A bounded background writer persists them off the ETW callback and forces the append segment to disk before publishing its rebuildable SQLite lifecycle-index row. Queue saturation/persistence failure is visible through the collector or Agent health path; graceful disposal drains accepted facts. Startup scans authoritative segments in bounded batches to repair missing lifecycle-index rows; when the whole index is absent/corrupt, the same startup rebuild restores all three record kinds plus the lifecycle rows. Queries are restricted to requested process-instance IDs and UTC intervals so Replay can restore observed exit boundaries after Agent restart without loading all lifecycle history into memory.
 
 ## 役割
 
 `IEventStore`と`IStateStore`を実装し、SegmentLogとSqliteIndexを単一writer境界で統合する。source eventはSQLiteなしでもセグメントから読み出せ、canonical eventの状態適用だけがSQLite state cacheを更新する。履歴移設先が既存なら空ディレクトリであっても触らず拒否する。起動時は所有markerと再解析ポイントを確認し、未知ファイルを含む未所有の履歴ディレクトリを復旧・削除しない。
+
+## 起動時回復
+
+既存のSQLite DBはmigrationやWAL設定の前に`quick_check(1)`で検査する。欠落DBとSQLiteが明示した構造破損は、追記ログを正本として索引、canonical state、process-lifecycle索引、Sequence情報を512件ずつ再生成する。破損時の再作成対象は製品領域のSQLite本体とWAL/SHM/rollback-journal sidecarに限定する。未対応の新schema、権限、busy、その他のI/O失敗はDBを削除せず起動失敗として返す。
 
 ## 書込み順序
 
@@ -22,7 +26,7 @@ Process exit observations are stored as a separate `ProcessLifecycleEvent` segme
 
 ## 依存関係・テスト
 
-共有契約、Domain contracts、SegmentLog、SqliteIndexに依存する。`StorageEngineTests`は正常往復、実SQLite、再構築、破損スキップ、容量停止、キャンセル、single-writer、複数reader、履歴移動を実行する。
+共有契約、Domain contracts、SegmentLog、SqliteIndexに依存する。`StorageEngineTests`は正常往復、実SQLite、欠落・構造破損後の起動時再構築、未対応schemaの保護、破損スキップ、容量停止、キャンセル、single-writer、複数reader、履歴移動を実行する。
 
 ## Role
 

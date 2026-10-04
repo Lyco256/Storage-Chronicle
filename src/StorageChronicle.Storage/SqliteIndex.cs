@@ -28,8 +28,20 @@ internal sealed class SqliteIndex : IAsyncDisposable
         _databasePath = Path.Combine(options.StorageDirectory, "index.sqlite");
         _busyTimeout = options.BusyTimeout;
         _connection = CreateConnection(_databasePath, _busyTimeout);
-        Initialize();
+        try
+        {
+            Initialize();
+        }
+        catch
+        {
+            _connection.Dispose();
+            throw;
+        }
     }
+
+    internal static bool IsDatabaseCorruption(Exception exception) =>
+        exception is InvalidDataException ||
+        exception is SqliteException { SqliteErrorCode: 11 or 26 };
 
     internal async ValueTask AppendEventAsync(StorageRecordKind kind, long sequence, EventId eventId, EventSchemaVersion schemaVersion, EventTime time, FileId? fileId, FileId? parentFileId, string? name, byte[] payload, CancellationToken cancellationToken)
     {
@@ -504,7 +516,7 @@ internal sealed class SqliteIndex : IAsyncDisposable
             _connection.Close();
             _connection.Dispose();
             SqliteConnection.ClearAllPools();
-            foreach (var path in new[] { _databasePath, _databasePath + "-wal", _databasePath + "-shm" })
+            foreach (var path in new[] { _databasePath, _databasePath + "-wal", _databasePath + "-shm", _databasePath + "-journal" })
             {
                 if (File.Exists(path)) File.Delete(path);
             }
@@ -520,6 +532,7 @@ internal sealed class SqliteIndex : IAsyncDisposable
 
     private void Initialize()
     {
+        ValidateIntegrity();
         ExecutePragma("PRAGMA journal_mode=WAL;");
         ExecutePragma("PRAGMA synchronous=FULL;");
         ExecutePragma("PRAGMA foreign_keys=ON;");
@@ -661,6 +674,15 @@ internal sealed class SqliteIndex : IAsyncDisposable
         using var command = _connection.CreateCommand();
         command.CommandText = sql;
         command.ExecuteNonQuery();
+    }
+
+    private void ValidateIntegrity()
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = "PRAGMA quick_check(1);";
+        var result = command.ExecuteScalar();
+        if (result is not string message || !message.Equals("ok", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException($"SQLite index integrity check failed: {result ?? "no result"}.");
     }
 
     private static SqliteConnection CreateConnection(string path, TimeSpan busyTimeout)
