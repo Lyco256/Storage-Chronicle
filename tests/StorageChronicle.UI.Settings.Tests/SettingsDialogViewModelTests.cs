@@ -66,6 +66,63 @@ public sealed class SettingsDialogViewModelTests
     }
 
     [Fact]
+    public async Task MachineChangesRequireReviewAndConfirmationUsesTheCapturedSnapshot()
+    {
+        var gateway = new FakeGateway();
+        var viewModel = new SettingsDialogViewModel(gateway);
+        await viewModel.LoadAsync(TestContext.Current.CancellationToken);
+        var proposed = gateway.Machine with { MonitoringPaths = ["C:\\watched", "D:\\archive"] };
+        viewModel.MachineDraft = proposed;
+
+        await viewModel.ApplyCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, gateway.ApplyCalls);
+        Assert.True(viewModel.HasImpactPreview);
+        Assert.Contains(viewModel.ImpactPreview!.Changes, change => change.Setting == "Monitoring paths" && change.NewValue.Contains("D:\\archive", StringComparison.Ordinal));
+        Assert.Contains("Source file contents are not read or stored", viewModel.ImpactPreview.WriteBoundary, StringComparison.Ordinal);
+
+        viewModel.MachineDraft = proposed with { MonitoringPaths = ["C:\\watched", "D:\\changed"] };
+        Assert.False(viewModel.HasImpactPreview);
+        await viewModel.ApplyCommand.ExecuteAsync(null);
+        await viewModel.ConfirmImpactAndApplyCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, gateway.ApplyCalls);
+        Assert.Equal("D:\\changed", gateway.AppliedMachineSettings!.MonitoringPaths[1]);
+        Assert.Equal("Settings applied.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task CancelImpactReviewDoesNotApplySettings()
+    {
+        var gateway = new FakeGateway();
+        var viewModel = new SettingsDialogViewModel(gateway);
+        await viewModel.LoadAsync(TestContext.Current.CancellationToken);
+        viewModel.MachineDraft = gateway.Machine with { NoiseFilter = NoiseFilterProfile.Aggressive };
+
+        await viewModel.ApplyCommand.ExecuteAsync(null);
+        viewModel.CancelImpactPreviewCommand.Execute(null);
+
+        Assert.Equal(0, gateway.ApplyCalls);
+        Assert.False(viewModel.HasImpactPreview);
+        Assert.Equal("Impact review cancelled. No settings were applied.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task UserSettingsOnlyApplyDoesNotRequireMachineImpactReview()
+    {
+        var gateway = new FakeGateway();
+        var viewModel = new SettingsDialogViewModel(gateway);
+        await viewModel.LoadAsync(TestContext.Current.CancellationToken);
+        viewModel.UserDraft = gateway.User with { EventStackPageSize = 500 };
+
+        await viewModel.ApplyCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, gateway.ApplyCalls);
+        Assert.False(viewModel.HasImpactPreview);
+        Assert.Equal(500, gateway.AppliedUserSettings!.EventStackPageSize);
+    }
+
+    [Fact]
     public void EditorPropertiesSynchronizeMachineAndUserDrafts()
     {
         var gateway = new FakeGateway();
@@ -173,6 +230,8 @@ public sealed class SettingsDialogViewModelTests
         public bool CancelMachine { get; init; }
         public int ApplyCalls { get; private set; }
         public int UserApplyCalls { get; private set; }
+        public MachineSettings? AppliedMachineSettings { get; private set; }
+        public UserSettings? AppliedUserSettings { get; private set; }
         public ValueTask<SettingsLoadResult<MachineSettings>> LoadMachineSettingsAsync(CancellationToken cancellationToken = default) =>
             ValueTask.FromResult(new SettingsLoadResult<MachineSettings>(Machine, MachineWarning is not null, false, MachineWarning));
         public ValueTask<SettingsLoadResult<UserSettings>> LoadUserSettingsAsync(CancellationToken cancellationToken = default) =>
@@ -180,6 +239,7 @@ public sealed class SettingsDialogViewModelTests
         public ValueTask<SettingsApplyResult> ApplyMachineSettingsAsync(MachineSettings settings, CancellationToken cancellationToken = default)
         {
             ApplyCalls++;
+            AppliedMachineSettings = settings;
             if (MachineException is not null) throw MachineException;
             if (CancelMachine) throw new OperationCanceledException(cancellationToken);
             return ValueTask.FromResult(MachineResult);
@@ -187,6 +247,7 @@ public sealed class SettingsDialogViewModelTests
         public ValueTask<SettingsApplyResult> ApplyUserSettingsAsync(UserSettings settings, CancellationToken cancellationToken = default)
         {
             UserApplyCalls++;
+            AppliedUserSettings = settings;
             return ValueTask.FromResult(UserResult);
         }
     }

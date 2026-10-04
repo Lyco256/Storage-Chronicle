@@ -2,11 +2,11 @@
 
 ## Role
 
-This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle.
+Avalonia modal settings view. It binds Machine and User Settings editors to `SettingsDialogViewModel`; it never opens settings files or performs Agent I/O directly.
 
 ## Public types and responsibilities
 
-Public types preserve source facts and the explicitly owned responsibility; UI interpretation and correlation remain outside this boundary.
+The view declares `SettingsDialogWindow`. The impact-review panel displays the complete old/new change set and write-boundary disclosure. Its Cancel Review and Confirm and Apply buttons are bound to explicit ViewModel commands; the ordinary Apply button cannot bypass a pending review.
 
 ## Inputs and outputs
 
@@ -14,11 +14,11 @@ Inputs and outputs are the declared contracts of the source file. File contents 
 
 ## Dependencies
 
-Dependencies are limited to the referenced project contracts and platform services shown by the source file.
+Depends on Avalonia controls and the `SettingsDialogViewModel` binding surface.
 
 ## Invariants
 
-The source keeps canonical facts distinguishable from reconstructed state and does not synthesize descendant events.
+Machine-setting changes that alter monitoring, exclusions, collection behavior, history location, flush behavior, or media mirror scope/destination are not applied until the user reviews and confirms the displayed impact. User-only preference changes do not trigger a machine impact review.
 
 ## Threading and lifetime
 
@@ -29,6 +29,8 @@ Callers own cancellation and lifetime; asynchronous work must not outlive the ow
 Failure, corruption, cancellation, and recovery remain observable and are not converted into a false successful observation.
 
 ## Tests
+
+`tests/StorageChronicle.UI.Settings.Tests/SettingsDialogViewModelTests.cs` covers preview, explicit confirmation, cancellation, snapshot invalidation, and user-only apply. `tests/StorageChronicle.UI.Headless.Tests` covers the compiled dialog/view integration.
 
 Validated by tests/StorageChronicle.Integration.Tests and the affected integration tests.
 

@@ -73,6 +73,37 @@
             <TextBox x:Name="SavedFiltersInput" Grid.Row="8" Grid.Column="1" Text="{Binding SavedFiltersText, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="64" PlaceholderText="One saved filter per line" AutomationProperties.Name="Saved filters" />
           </Grid>
         </Expander>
+
+        <Border IsVisible="{Binding HasImpactPreview}" BorderBrush="#808080" BorderThickness="1" CornerRadius="4" Padding="12">
+          <StackPanel Spacing="10">
+            <TextBlock Text="Review machine-settings impact" FontSize="18" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding ImpactPreview.WriteBoundary}" TextWrapping="Wrap" AutomationProperties.Name="Settings impact write boundary" />
+            <ItemsControl ItemsSource="{Binding ImpactPreview.Changes}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Border BorderBrush="#40808080" BorderThickness="0,0,0,1" Padding="0,6">
+                    <StackPanel Spacing="3">
+                      <TextBlock Text="{Binding Setting}" FontWeight="SemiBold" />
+                      <StackPanel Orientation="Horizontal" Spacing="4">
+                        <TextBlock Text="Current:" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding OldValue}" TextWrapping="Wrap" />
+                      </StackPanel>
+                      <StackPanel Orientation="Horizontal" Spacing="4">
+                        <TextBlock Text="Proposed:" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding NewValue}" TextWrapping="Wrap" />
+                      </StackPanel>
+                      <TextBlock Text="{Binding Impact}" Opacity="0.78" TextWrapping="Wrap" />
+                    </StackPanel>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+              <Button Content="Cancel review" Command="{Binding CancelImpactPreviewCommand}" AutomationProperties.Name="Cancel machine-settings impact review" />
+              <Button Content="Confirm and apply" Command="{Binding ConfirmImpactAndApplyCommand}" AutomationProperties.Name="Confirm reviewed machine settings" />
+            </StackPanel>
+          </StackPanel>
+        </Border>
       </StackPanel>
     </ScrollViewer>
 

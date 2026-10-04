@@ -18,7 +18,7 @@
 
 ## 関連テスト
 
-Settings ????????????????????? ProgramData/LocalAppData ???????
+`tests/StorageChronicle.Settings.Tests/SettingsTests.cs` verifies canonical machine/user paths, authenticated profile paths, isolation across two users, malformed SID/profile rejection, and corruption recovery scoped to one profile.
 
 ## Role
 

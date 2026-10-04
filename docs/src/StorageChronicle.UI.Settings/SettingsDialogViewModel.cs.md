@@ -2,7 +2,7 @@
 
 `LoadAsync` retrieves Machine and User settings through the asynchronous `IAgentSettingsGateway` boundary. Validation errors and Agent apply failures remain visible and are never represented as success; machine restart state is reported only after an accepted Agent result. The ViewModel has no path or filesystem access.
 
-## ??
+## Role
 
 Provides the headless state and command flow for the modal settings dialog. It receives settings only through `IAgentSettingsGateway`; it does not open or write settings files.
 
@@ -23,7 +23,7 @@ Provides the headless state and command flow for the modal settings dialog. It r
 
 ## Failure behavior
 
-`tests/StorageChronicle.UI.Settings.Tests/SettingsDialogViewModelTests.cs` ? Headless load???????????Agent ????????????????
+`tests/StorageChronicle.UI.Settings.Tests/SettingsDialogViewModelTests.cs` covers async load, validation, review, confirmation, cancellation, snapshot invalidation, user-only apply, failure, and cancellation. `tests/StorageChronicle.UI.Headless.Tests` covers the compiled modal view.
 
 ## Role
 

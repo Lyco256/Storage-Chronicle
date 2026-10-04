@@ -19,7 +19,7 @@ Machine SettingsとUser Settingsをversioned JSONとして保存し、UTF-8、�
 
 ## 関連テスト
 
-`tests/StorageChronicle.Settings.Tests/SettingsTests.cs` ? UTF-8????schema ??/??????????/?????atomic replace ??????????????
+`tests/StorageChronicle.Settings.Tests/SettingsTests.cs` verifies UTF-8 persistence, schema/fallback behavior, corruption recovery, atomic-replace failure, and two authenticated user stores remaining isolated during normal writes and recovery.
 
 ## Role
 

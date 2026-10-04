@@ -10,6 +10,10 @@ public sealed class SettingsDialogViewModel : ObservableObject
     private readonly IAgentSettingsGateway gateway;
     private MachineSettings machineDraft;
     private UserSettings userDraft;
+    private MachineSettings? loadedMachineSettings;
+    private MachineSettings? pendingMachineSettings;
+    private UserSettings? pendingUserSettings;
+    private SettingsImpactPreview? impactPreview;
     private string monitoringPathsText = string.Empty;
     private string excludedPathsText = string.Empty;
     private NoiseFilterProfile noiseFilter;
@@ -40,6 +44,8 @@ public sealed class SettingsDialogViewModel : ObservableObject
         machineDraft = new MachineSettings();
         userDraft = new UserSettings();
         ApplyCommand = new AsyncRelayCommand(ApplyAsync, CanApply);
+        ConfirmImpactAndApplyCommand = new AsyncRelayCommand(ConfirmImpactAndApplyAsync, CanConfirmImpactAndApply);
+        CancelImpactPreviewCommand = new RelayCommand(CancelImpactPreview, CanCancelImpactPreview);
         CancelApplyCommand = new RelayCommand(CancelApply, CanCancelApply);
     }
 
@@ -52,6 +58,7 @@ public sealed class SettingsDialogViewModel : ObservableObject
             ArgumentNullException.ThrowIfNull(value);
             if (SetProperty(ref machineDraft, value) && !synchronizingInputs)
             {
+                ClearImpactPreview();
                 SynchronizeMachineInputs();
             }
         }
@@ -66,6 +73,7 @@ public sealed class SettingsDialogViewModel : ObservableObject
             ArgumentNullException.ThrowIfNull(value);
             if (SetProperty(ref userDraft, value) && !synchronizingInputs)
             {
+                ClearImpactPreview();
                 SynchronizeUserInputs();
             }
         }
@@ -355,6 +363,8 @@ public sealed class SettingsDialogViewModel : ObservableObject
             if (SetProperty(ref isBusy, value))
             {
                 ApplyCommand.NotifyCanExecuteChanged();
+                ConfirmImpactAndApplyCommand.NotifyCanExecuteChanged();
+                CancelImpactPreviewCommand.NotifyCanExecuteChanged();
                 CancelApplyCommand.NotifyCanExecuteChanged();
             }
         }
@@ -384,6 +394,31 @@ public sealed class SettingsDialogViewModel : ObservableObject
     /// <summary>Gets the command bound to the modal Apply button.</summary>
     public IAsyncRelayCommand ApplyCommand { get; }
 
+    /// <summary>Gets the explicit confirmation command for the currently displayed impact preview.</summary>
+    public IAsyncRelayCommand ConfirmImpactAndApplyCommand { get; }
+
+    /// <summary>Gets the command that cancels a displayed impact preview without applying settings.</summary>
+    public IRelayCommand CancelImpactPreviewCommand { get; }
+
+    /// <summary>Gets the impact details that must be reviewed before a machine-settings apply.</summary>
+    public SettingsImpactPreview? ImpactPreview
+    {
+        get => impactPreview;
+        private set
+        {
+            if (SetProperty(ref impactPreview, value))
+            {
+                OnPropertyChanged(nameof(HasImpactPreview));
+                ApplyCommand.NotifyCanExecuteChanged();
+                ConfirmImpactAndApplyCommand.NotifyCanExecuteChanged();
+                CancelImpactPreviewCommand.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>Gets whether a machine-settings impact preview is awaiting confirmation.</summary>
+    public bool HasImpactPreview => ImpactPreview is not null;
+
     /// <summary>Gets the command that cancels an in-flight Agent apply request.</summary>
     public IRelayCommand CancelApplyCommand { get; }
 
@@ -393,12 +428,14 @@ public sealed class SettingsDialogViewModel : ObservableObject
     /// <summary>Loads both settings scopes through the Agent.</summary>
     public async ValueTask LoadAsync(CancellationToken cancellationToken = default)
     {
+        ClearImpactPreview();
         inputErrors.Clear();
         InputErrorMessage = null;
         var machine = await gateway.LoadMachineSettingsAsync(cancellationToken).ConfigureAwait(false);
         var user = await gateway.LoadUserSettingsAsync(cancellationToken).ConfigureAwait(false);
-        MachineDraft = machine.Settings;
-        UserDraft = user.Settings;
+        loadedMachineSettings = Snapshot(machine.Settings);
+        MachineDraft = Snapshot(machine.Settings);
+        UserDraft = Snapshot(user.Settings);
         var warnings = new[] { machine.Warning, user.Warning }.Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
         StatusMessage = warnings.Length == 0 ? "Settings loaded." : string.Join(" ", warnings);
         ErrorMessage = null;
@@ -482,14 +519,15 @@ public sealed class SettingsDialogViewModel : ObservableObject
         applyCancellation = cancellation;
         try
         {
-            var machineResult = await gateway.ApplyMachineSettingsAsync(MachineDraft, cancellation.Token);
+            var machineResult = await gateway.ApplyMachineSettingsAsync(machine, cancellation.Token);
             if (!machineResult.Succeeded)
             {
                 ErrorMessage = machineResult.Error ?? "Machine settings were rejected by the Agent.";
                 return;
             }
 
-            var userResult = await gateway.ApplyUserSettingsAsync(UserDraft, cancellation.Token);
+            loadedMachineSettings = Snapshot(machine);
+            var userResult = await gateway.ApplyUserSettingsAsync(user, cancellation.Token);
             if (!userResult.Succeeded)
             {
                 ErrorMessage = userResult.Error ?? "User settings were rejected by the Agent.";
@@ -512,16 +550,67 @@ public sealed class SettingsDialogViewModel : ObservableObject
         {
             ErrorMessage = $"Settings could not be applied: {exception.Message}";
         }
-        catch (Exception exception)
-        {
-            ErrorMessage = $"Settings could not be applied: {exception.Message}";
-        }
         finally
         {
             applyCancellation = null;
             IsBusy = false;
         }
     }
+
+    private void CancelImpactPreview()
+    {
+        ClearImpactPreview();
+        ErrorMessage = null;
+        StatusMessage = "Impact review cancelled. No settings were applied.";
+    }
+
+    private void ClearImpactPreview()
+    {
+        pendingMachineSettings = null;
+        pendingUserSettings = null;
+        ImpactPreview = null;
+    }
+
+    private static MachineSettings Snapshot(MachineSettings settings) => settings with
+    {
+        MonitoringPaths = settings.MonitoringPaths.ToArray(),
+        ExcludedPaths = settings.ExcludedPaths.ToArray(),
+        MediaMirrors = settings.MediaMirrors.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase)
+    };
+
+    private static UserSettings Snapshot(UserSettings settings) => settings with { SavedFilters = settings.SavedFilters.ToArray() };
+
+    private static List<SettingsImpactChange> BuildImpactChanges(MachineSettings before, MachineSettings after)
+    {
+        var changes = new List<SettingsImpactChange>();
+        AddListChange(changes, "Monitoring paths", before.MonitoringPaths, after.MonitoringPaths,
+            "Changes which exact paths the Agent monitors.");
+        AddListChange(changes, "Excluded paths", before.ExcludedPaths, after.ExcludedPaths,
+            "Changes which exact paths the Agent excludes from monitoring.");
+        if (before.NoiseFilter != after.NoiseFilter)
+            changes.Add(new("Noise filter", before.NoiseFilter.ToString(), after.NoiseFilter.ToString(), "Changes Agent event filtering behavior."));
+        if (!string.Equals(before.LogStoragePath, after.LogStoragePath, StringComparison.OrdinalIgnoreCase))
+            changes.Add(new("Log storage path", before.LogStoragePath, after.LogStoragePath, "Changes the product-owned durable history write destination."));
+        var mediaIds = before.MediaMirrors.Keys.Concat(after.MediaMirrors.Keys).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(id => id, StringComparer.OrdinalIgnoreCase);
+        foreach (var mediaId in mediaIds)
+        {
+            before.MediaMirrors.TryGetValue(mediaId, out var oldPath);
+            after.MediaMirrors.TryGetValue(mediaId, out var newPath);
+            if (!string.Equals(oldPath, newPath, StringComparison.OrdinalIgnoreCase))
+                changes.Add(new($"Media mirror · {mediaId}", oldPath ?? "(disabled)", newPath ?? "(disabled)", $"Changes the history-mirror destination and scope for media '{mediaId}'."));
+        }
+        if (before.FlushIntervalSeconds != after.FlushIntervalSeconds)
+            changes.Add(new("Flush interval", $"{before.FlushIntervalSeconds} seconds", $"{after.FlushIntervalSeconds} seconds", "Changes Agent persistence/flush behavior."));
+        return changes;
+    }
+
+    private static void AddListChange(List<SettingsImpactChange> changes, string name, IReadOnlyList<string> before, IReadOnlyList<string> after, string impact)
+    {
+        if (!before.SequenceEqual(after, StringComparer.OrdinalIgnoreCase))
+            changes.Add(new(name, FormatPaths(before), FormatPaths(after), impact));
+    }
+
+    private static string FormatPaths(IReadOnlyList<string> paths) => paths.Count == 0 ? "(none)" : string.Join(Environment.NewLine, paths);
 
     private void SynchronizeMachineInputs()
     {
