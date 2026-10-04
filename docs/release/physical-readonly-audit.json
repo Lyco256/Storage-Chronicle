@@ -21,7 +21,7 @@
     "tools/TestEnvironment/Test-Windows10StageACapability.ps1",
     "tests/StorageChronicle.Installer.Tests/InstallerManifestTests.cs"
   ],
-  "currentAuditScope": "Partial audited-source-snapshot review: carries forward historical source-to-sink findings where production source is unchanged from prior audit target 877ce6d; re-reviewed the changed MFT seed paths and the listed retired VM/Stage A entry-point delta at targetCommit. Retired script AST checks permit only Write-Error, exit, and a fixed error-preference assignment. Later changes in this audit packet are documentation-only. This is not exhaustive across every source, test, script, external command, host preflight, or runtime write monitor.",
+  "currentAuditScope": "Partial audited-source-snapshot review: carries forward historical source-to-sink findings where production source is unchanged from prior audit target 877ce6d; re-reviewed the changed MFT seed paths and retired VM/Stage A entry-point delta at targetCommit, then performed a supplemental focused search/review of selected durable-write and native-I/O call sites under src/. Retired script AST checks permit only Write-Error, exit, and a fixed error-preference assignment. Subsequent changes through 71f9586 are documentation-only. This is not exhaustive across every source, test, script, external command, host preflight, or runtime write monitor.",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -159,10 +159,10 @@
   "hostPreflight": "NOT_EXECUTED",
   "processWriteMonitoring": "NOT_EXECUTED",
   "currentCommitSourceAudit": {
-    "scope": "Partial source-to-sink review of Agent/Application/Windows NTFS/Session calls plus selected build/tools/installer flows and their service/OS-command reachability; prior findings are carried forward where source is unchanged from 877ce6d, and the changed MFT and retired VM/Stage A code/test paths are reviewed at current targetCommit. Does not exhaustively audit every source/test/script/external command, perform host preflight, or run an independent runtime write monitor.",
+    "scope": "Partial source-to-sink review of Agent/Application/Windows NTFS/Session calls plus selected build/tools/installer flows and their service/OS-command reachability; prior findings are carried forward where source is unchanged from 877ce6d, and changed MFT/retired VM paths plus a supplemental focused sweep of selected src durable-write/native-I/O sinks were reviewed against targetCommit. Does not exhaustively audit every source/test/script/external command, perform host preflight, or run an independent runtime write monitor.",
     "status": "PARTIAL",
     "reviewedAt": "2026-10-04",
-    "currentDeltaReview": "New MFT seed workflow paths were statically reviewed for explicit dry-run, Apply/typed confirmation/elevation/ShouldProcess gates, isolated create-new roots, 60 GiB checks before seed and workload, disk/partition/volume re-identification before initialize/partition/format, evidence-only retention on failure, and mandatory independent monitor provenance before benchmark suites. The eight remaining legacy VM/Stage A/transfer/preflight entry points were reduced to parameter-compatible fail-closed stubs; PowerShell AST validation and the 17-case source contract verify that only Write-Error/exit and a fixed error-preference assignment remain. Root/file path TOCTOU, external monitor authenticity, supported-host behavior, and physical evidence remain unverified.",
+    "currentDeltaReview": "New MFT seed workflow paths were statically reviewed for explicit dry-run, Apply/typed confirmation/elevation/ShouldProcess gates, isolated create-new roots, 60 GiB checks before seed and workload, disk/partition/volume re-identification before initialize/partition/format, evidence-only retention on failure, and mandatory independent monitor provenance before benchmark suites. The eight remaining legacy VM/Stage A/transfer/preflight entry points were reduced to parameter-compatible fail-closed stubs; PowerShell AST validation and the 17-case source contract verify that only Write-Error/exit and a fixed error-preference assignment remain. A focused src sink sweep classified selected local history, SQLite rebuild, settings, external-media, NTFS USN, directory enumeration, and I/O-priority calls; these narrow observations do not establish the complete callgraph or path/race safety. Root/file path TOCTOU, external monitor authenticity, supported-host behavior, and physical evidence remain unverified.",
     "findings": [
       {
         "id": "settings-path-write-boundary",
@@ -177,6 +177,12 @@
         "path": "src/StorageChronicle.Agent/AgentSettingsInfrastructure.cs",
         "lines": [49, 122],
         "summary": "New product folder uses a schema marker and checks unknown entries/reparse points before append+flush. Marker is forgeable and the append path is not handle-pinned after checks."
+      },
+      {
+        "id": "supplemental-core-product-io-sink-sweep",
+        "status": "PARTIAL",
+        "path": "src/StorageChronicle.Storage/SegmentLog.cs",
+        "summary": "A supplemental source search reviewed selected durable-write/native-I/O call sites in SegmentLog, AppendOnlyStorageEngine, SqliteIndex, SettingsPersistence, AgentSettingsInfrastructure, ExternalMediaStore, WindowsVolumeDirectorySession, WindowsNtfsApi, WindowsNativeApi, and WindowsReconciliationInfrastructure. Observed mutations are product-owned append/compression/index/settings/recovery or session-bound external-media operations; reviewed monitored-volume USN and directory APIs request read-only access, while reconciliation sets only an I/O priority hint. This is not an exhaustive caller/callgraph audit, does not prove all configured roots/handles are race-safe, and does not replace host preflight or independent runtime monitoring. No runtime operation was performed."
       },
       {
         "id": "usn-cursor-path-write-boundary",
