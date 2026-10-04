@@ -1,27 +1,15 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "b8d4fb9e6ec3afadb3fde6e2d197237f4391d722",
-  "priorAuditTargetCommit": "877ce6def71dc3d3bafabc141033c00da1eb8284",
+  "targetCommit": "dde919b",
+  "priorAuditTargetCommit": "b8d4fb9e6ec3afadb3fde6e2d197237f4391d722",
   "currentDeltaFromPriorAudit": [
-    "build/quality/MftPhysicalSeed.Contracts.ps1",
-    "build/quality/MftSeedWorkflow.Contracts.ps1",
-    "build/quality/New-MftPhysicalSeed.ps1",
-    "build/quality/Test-FinalAcceptance.ps1",
-    "build/quality/Test-FullBenchmarkMatrix.ps1",
-    "build/quality/Test-MftPhysicalSeedContracts.ps1",
-    "tests/StorageChronicle.Platform.Windows.FileSystem.Tests/WindowsMediaAclPolicyTests.cs",
-    "build/quality/Test-VirtualBoxTestLab.ps1",
-    "tools/PhysicalAcceptance/Invoke-VirtualBoxInstallerCase.ps1",
-    "tools/TestEnvironment/Compose-Windows10StageA.ps1",
-    "tools/TestEnvironment/Copy-TestArtifactsToVm.ps1",
-    "tools/TestEnvironment/Copy-TestResultsFromVm.ps1",
-    "tools/TestEnvironment/Invoke-Windows10StageACapabilityChecks.ps1",
-    "tools/TestEnvironment/Run-VirtualBoxInstallerAcceptance.ps1",
-    "tools/TestEnvironment/Test-TestLabPrerequisites.ps1",
-    "tools/TestEnvironment/Test-Windows10StageACapability.ps1",
-    "tests/StorageChronicle.Installer.Tests/InstallerManifestTests.cs"
+    "src/StorageChronicle.Storage/SegmentLog.cs",
+    "tests/StorageChronicle.Storage.Tests/StorageEngineTests.cs",
+    "docs/src/StorageChronicle.Storage/SegmentLog.cs.md",
+    "docs/src/StorageChronicle.Storage/AppendOnlyStorageEngine.cs.md",
+    "docs/handoffs/storage-tail-recovery.md"
   ],
-  "currentAuditScope": "Partial audited-source-snapshot review: carries forward historical source-to-sink findings where production source is unchanged from prior audit target 877ce6d; re-reviewed the changed MFT seed paths and retired VM/Stage A entry-point delta at targetCommit, then performed a supplemental focused search/review of selected durable-write and native-I/O call sites under src/. Retired script AST checks permit only Write-Error, exit, and a fixed error-preference assignment. Subsequent changes through 71f9586 are documentation-only. This is not exhaustive across every source, test, script, external command, host preflight, or runtime write monitor.",
+  "currentAuditScope": "Partial audited-source-snapshot review at devenv integration dde919b: carries forward earlier source-to-sink findings where source is unchanged from b8d4fb9; re-reviewed the storage-tail-recovery delta and focused on the exact owned-history mutation boundary. This is not exhaustive across every source, test, script, external command, configured root, host preflight, or runtime write monitor.",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -123,8 +111,8 @@
   "workingTreeChanges": [],
   "latestValidation": {
     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1",
-    "codeCommit": "8a72c54",
-    "currentAuditCommit": "b8d4fb9e6ec3afadb3fde6e2d197237f4391d722",
+    "codeCommit": "dde919b",
+    "currentAuditCommit": "dde919b",
     "exitCode": 0,
     "fastProjects": 24,
     "qualityGate": "passed",
@@ -147,7 +135,7 @@
     "mftSeedOfflineContracts": "31 passed; current scripts parsed; no VHDX, disk, partition, format, product, installer, media, or workload was executed",
     "legacyVmRetirementContracts": "17 passed; eight newly retired VM/Stage A scripts parsed without execution; AST contract rejects every command except Write-Error/exit and fixed error-preference assignment",
     "retiredEntryPointParser": "eight retired VM/Stage A entry points parsed successfully; none was invoked",
-    "integrationMerge": "feat/retire-legacy-vm-paths merged with --no-ff into devenv as 8a72c54 without conflicts; main unchanged",
+    "integrationMerge": "feat/storage-tail-recovery merged with --no-ff into devenv as dde919b without conflicts; main unchanged",
     "physicalAcceptance": "NOT_EXECUTED"
   },
   "overallStatus": "FAIL",
@@ -159,10 +147,10 @@
   "hostPreflight": "NOT_EXECUTED",
   "processWriteMonitoring": "NOT_EXECUTED",
   "currentCommitSourceAudit": {
-    "scope": "Partial source-to-sink review of Agent/Application/Windows NTFS/Session calls plus selected build/tools/installer flows and their service/OS-command reachability; prior findings are carried forward where source is unchanged from 877ce6d, and changed MFT/retired VM paths plus a supplemental focused sweep of selected src durable-write/native-I/O sinks were reviewed against targetCommit. Does not exhaustively audit every source/test/script/external command, perform host preflight, or run an independent runtime write monitor.",
+    "scope": "Partial source-to-sink review of Agent/Application/Windows NTFS/Session calls plus selected build/tools/installer flows and their service/OS-command reachability; prior findings are carried forward where source is unchanged from b8d4fb9. The storage-tail-recovery source delta was inspected against targetCommit, including direct-child root containment, GUID-bound .open naming, absence of a manifest, reparse-point rejection, exclusive handle, and complete header/frame CRC validation before SetLength. Does not exhaustively audit every source/test/script/external command, perform host preflight, or run an independent runtime write monitor.",
     "status": "PARTIAL",
     "reviewedAt": "2026-10-04",
-    "currentDeltaReview": "New MFT seed workflow paths were statically reviewed for explicit dry-run, Apply/typed confirmation/elevation/ShouldProcess gates, isolated create-new roots, 60 GiB checks before seed and workload, disk/partition/volume re-identification before initialize/partition/format, evidence-only retention on failure, and mandatory independent monitor provenance before benchmark suites. The eight remaining legacy VM/Stage A/transfer/preflight entry points were reduced to parameter-compatible fail-closed stubs; PowerShell AST validation and the 17-case source contract verify that only Write-Error/exit and a fixed error-preference assignment remain. A focused src sink sweep classified selected local history, SQLite rebuild, settings, external-media, NTFS USN, directory enumeration, and I/O-priority calls; these narrow observations do not establish the complete callgraph or path/race safety. Root/file path TOCTOU, external monitor authenticity, supported-host behavior, and physical evidence remain unverified.",
+    "currentDeltaReview": "The .open tail-recovery delta was inspected: only a manifest-free segment matching its header GUID and direct storage-root child path is opened exclusively; header and every complete record CRC are revalidated before truncating only bytes beyond the last complete frame. Verified prefix bytes are preserved. CRC-invalid, malformed, manifest-backed, compressed, or reparse-point segments are not repaired/truncated; new append proceeds in a fresh segment. Isolated tests cover incomplete-tail recovery and full-frame CRC corruption. Test-All passed at dde919b with zero build warnings/errors, all 24 Fast projects, Quality/coverage, DocMirror, and UI. No product or physical runner was started. The broader callgraph, configured-root and hostile-race proof, host preflight, independent runtime write monitor, and physical evidence remain unverified.",
     "findings": [
       {
         "id": "settings-path-write-boundary",

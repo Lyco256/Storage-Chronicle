@@ -19,6 +19,7 @@ Implemented the Req.12 recovery choice confirmed by the user: truncate only an i
 - `pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-Fast.ps1 -NoRestore` — passed for all 24 non-privileged Fast projects, including Storage (20/20).
 - `pwsh -NoProfile -ExecutionPolicy Bypass -File build/quality/Test-DocMirror.ps1` — passed.
 - `git diff --check` — passed.
+- Integrated with `--no-ff` into `devenv` as `dde919b` without conflicts; post-merge `pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1` passed (exit 0), including all 24 Fast projects, Quality/coverage, DocMirror, MFT/retired-VM offline contracts, and UI. Build warnings/errors: 0. Privileged Windows acceptance was not run.
 - Tests use temporary owned fixture directories only; no physical media or user history was accessed.
 
 ## Limitations
