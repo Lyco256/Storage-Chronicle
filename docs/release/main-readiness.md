@@ -1,11 +1,12 @@
 # Main readiness
 
-## Current status (2026-10-04, tested integration commit `8a72c54`; audited source snapshot `b8d4fb9`)
+## Current status (2026-10-04, tested integration commit `8a72c54`; audited source snapshot `b8d4fb9`; audit docs through `7c9470a`)
 
 - The `feat/retire-legacy-vm-paths` changes were reviewed and merged with `--no-ff` into `devenv` as `8a72c54`; no conflicts occurred. The remaining whole-OS VM installer, preflight, transfer, and Windows 10 guest Stage A entry points now fail closed without I/O. `main` remains untouched.
 - Post-merge `pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1` passed at `8a72c54` with exit code 0: full solution build had 0 warnings/0 errors; all 24 configured non-privileged Fast projects, Quality/coverage, 31/31 MFT provenance contracts, 17/17 retired-VM contracts, and UI tests passed. Privileged Windows acceptance is deliberately isolated and was not run.
 - MFT now has a guarded create-new VHDX seed workflow, 60 GiB pre-creation/pre-workload checks, external ArtifactRoot validation, independent process-attributed monitor evidence requirements, provenance hashing/identity binding, and offline failure-path tests. This only makes the lane implementable: no approved roots, VHDX, seed, monitor artifact, or MFT matrix exist, so physical MFT acceptance remains **NOT_EXECUTED**.
 - Requirement 37 remains **FAIL / DO NOT RUN**. The partial machine-readable audit is bound to source snapshot `b8d4fb9`; it carries forward prior findings only for unchanged sources and reviews the MFT workflow and VM-entrypoint retirement deltas. The exhaustive source-to-sink review, dedicated-root host preflight, independent runtime write monitor, marker authenticity/race closure, and all environment-bound evidence remain open. No product, service, installer, UAC, media, VHDX, workload, or privileged runner was started.
+- A supplemental top-agent static sweep classified selected product history, index, settings, external-media, NTFS, directory, and reconciliation sinks; it narrows those sink-family descriptions but is not an exhaustive caller/callgraph audit. The existing Windows 10 read-only preflight is host/version-specific and unexecuted; MFT monitor validation consumes external evidence for that lane and is not a general runtime write-monitor implementation.
 - Still blocking `main`: dedicated eligible physical hardware/roots and user-reviewed UAC actions; Windows 10 22H2; Windows capability, external-media, service/SMB/Explorer, and installer matrices; formal resource acceptance; and the actual 10K/100K/1M MFT/performance matrix. `devenv` is not main-ready.
 
 ## Previous checkpoint (2026-10-04, source commit `877ce6d`)

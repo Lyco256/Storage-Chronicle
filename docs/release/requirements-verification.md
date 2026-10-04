@@ -4,7 +4,7 @@
 
 `Requirements/98_REQUIREMENTS_COVERAGE.md` remains authoritative. The table below assigns one verification ID to every row in that coverage document; it records executable evidence and does not weaken any product requirement.
 
-## Current requirement-level readiness (Test-All integration commit `8a72c54`, audited source snapshot `b8d4fb9`, documentation current through `3cfd884`, 2026-10-04)
+## Current requirement-level readiness (Test-All integration commit `8a72c54`, audited source snapshot `b8d4fb9`, documentation current through `7c9470a`, 2026-10-04)
 
 This compact index closes the gap between the coverage-row verification IDs and each numbered requirement. `PASS` means the requirement's implementation/document/test evidence is present at the stated scope; it does not override environment-dependent acceptance gates. `PARTIAL`, `FAIL`, and `NOT_EXECUTED` remain open. Requirements 22 and 32–36 describe superseded whole-OS/VirtualBox execution paths; Requirement 37 is the active safety and acceptance authority.
 
