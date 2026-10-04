@@ -53,6 +53,22 @@ public sealed class MediaMirrorConsentServiceTests
     }
 
     [Fact]
+    public async Task NewRootApprovalDoesNotPersistOrAuthorizeWhenPostCreationAclScanFails()
+    {
+        using var fixture = new ConsentFixture(createProductRoot: false);
+        fixture.CurrentAclStatus = MediaMirrorAclInspectionStatus.Unsafe;
+        var authorization = fixture.Service.AuthorizeAsync(fixture.Media, fixture.MediaRoot).AsTask();
+        var request = await fixture.WaitForRequestAsync();
+
+        Assert.False(await fixture.Service.DecideAsync(new MediaMirrorApprovalDecision(request.RequestId, Approve: true), ApproverSid));
+
+        Assert.False(await authorization);
+        Assert.True(Directory.Exists(Path.Combine(fixture.MediaRoot, ".StorageChronicle")));
+        Assert.Empty(fixture.MachineStore.Load().Settings.MediaMirrorConsents);
+        Assert.False(fixture.Service.CanReadExistingHistory(fixture.Media, fixture.MediaRoot));
+    }
+
+    [Fact]
     public async Task ApprovalWithoutAuthenticatedUserSidCannotCreateOrGrantMirrorRoot()
     {
         using var fixture = new ConsentFixture(createProductRoot: false);
@@ -161,9 +177,12 @@ public sealed class MediaMirrorConsentServiceTests
                 MediaMirrors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [Media.LogicalMediaId] = MediaRoot }
             });
             fileSystems = new FixtureVolumeFileSystemFactory(MediaRoot, () => RootIdentity, sid =>
-                sid == ApproverSid
-                    ? new(MediaMirrorAclInspectionStatus.Verified, CurrentAclFingerprint, 1, 0, [])
-                    : new(MediaMirrorAclInspectionStatus.Unknown, null, 0, 0, ["WrongApproverSid"]));
+                sid != ApproverSid
+                    ? new(MediaMirrorAclInspectionStatus.Unknown, null, 0, 0, ["WrongApproverSid"])
+                    : !Directory.Exists(Path.Combine(MediaRoot, ".StorageChronicle"))
+                        ? new(MediaMirrorAclInspectionStatus.Unknown, null, 0, 0, ["ProductRootNotCreated"])
+                        : new(CurrentAclStatus, CurrentAclStatus == MediaMirrorAclInspectionStatus.Verified ? CurrentAclFingerprint : null, 1, 0,
+                            CurrentAclStatus == MediaMirrorAclInspectionStatus.Verified ? [] : ["FixtureAclUnsafe"]));
             if (createProductRoot)
             {
                 using var store = new ExternalMediaStore(MediaRoot, "pc-test", VolumeId, fileSystems.Open(VolumeId));
@@ -179,6 +198,7 @@ public sealed class MediaMirrorConsentServiceTests
         public VolumeId VolumeId { get; }
         public string RootIdentity { get; set; } = "fixture-file-id-owned-root";
         public string CurrentAclFingerprint { get; set; } = AclFingerprint;
+        public MediaMirrorAclInspectionStatus CurrentAclStatus { get; set; } = MediaMirrorAclInspectionStatus.Verified;
         public MediaVolumeDescriptor Media { get; }
         public MutableSettingsStore<MachineSettings> MachineStore { get; }
         public MediaMirrorConsentService Service { get; }

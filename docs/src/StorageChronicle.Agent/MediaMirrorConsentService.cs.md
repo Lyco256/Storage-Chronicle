@@ -6,7 +6,7 @@
 
 ## Public types and responsibilities
 
-The public `MediaMirrorConsentService` queues a bounded `PendingMediaMirrorApproval`, awaits the local interactive user's explicit decision, re-enumerates the volume, rechecks the root identity and ACL through the same pinned filesystem session used for the operation, and persists a narrowly scoped grant through `AgentSettingsService`. The authenticated SID comes from the named-pipe client identity, never from the decision payload. Existing-history read/import permission is recorded separately from permission for future appends. A newly created root is created only after approval and receives no existing-history import permission.
+The public `MediaMirrorConsentService` queues a bounded `PendingMediaMirrorApproval`, awaits the local interactive user's explicit decision, re-enumerates the volume, rechecks the root identity and ACL through the same pinned filesystem session used for the operation, and persists a narrowly scoped grant through `AgentSettingsService`. The authenticated SID comes from the named-pipe client identity, never from the decision payload. Existing-history read/import permission is recorded separately from permission for future appends. If an approved NTFS medium has no product root yet, the service creates only that new root after the explicit approval, then requires a complete parent/tree ACL scan before it persists consent or permits import/mirror access. If that scan fails, the empty product-owned root may remain, but no grant, history import, or append is authorized.
 
 ## Dependencies
 
@@ -22,7 +22,7 @@ Inputs are the enumerated media descriptor, configured dedicated root, and an au
 - No pending or declined request authorizes media reads, import, recovery, or writes.
 - Approval applies only when the live media and root identities still match the disclosed request.
 - Non-NTFS filesystems are classified as not providing NTFS ACL protection. NTFS requires a verified handle-bound product-tree ACL scan; the exact approving user's SID may have the narrowly required history create/append rights. Broad group write/delete rights, delete/rename rights, parent `DELETE_CHILD`, unknown ACEs, and incomplete scans must fail closed in the Windows implementation.
-- NTFS grants require a valid exact SID and ACL descriptor fingerprint; the ACL is re-inspected against the saved SID before mirror/import use. Any mismatch, missing SID, or unavailable evidence denies access.
+- NTFS grants require a valid exact SID and ACL descriptor fingerprint; the ACL is re-inspected against the saved SID before mirror/import use. Any mismatch, missing SID, or unavailable evidence denies access. A new root's post-creation check must pass before any consent is persisted.
 - The ordinary settings update route cannot create, alter, or remove consent entries; only the explicit verified grant path may add a grant.
 - Consent persistence is PC-local and records the import capability separately from future append capability.
 
@@ -36,7 +36,7 @@ Approval waits are asynchronous and cancellation-aware. The owning collector con
 
 ## Relevant tests
 
-`tests/StorageChronicle.Agent.Tests/MediaMirrorConsentServiceTests.cs` covers approval persistence, authenticated-SID requirements, new-root creation, refusal, identity change, and ACL-fingerprint change. Collector tests cover legacy settings without consent. Tests use only run-owned temporary fixtures and do not constitute Windows identity or ACL evidence.
+`tests/StorageChronicle.Agent.Tests/MediaMirrorConsentServiceTests.cs` covers approval persistence, authenticated-SID requirements, new-root creation followed by ACL verification, refusal when the post-creation scan is unsafe, identity change, and ACL-fingerprint change. Collector tests cover legacy settings without consent. Tests use only run-owned temporary fixtures and do not constitute Windows identity or ACL evidence.
 
 ## OS constraints
 

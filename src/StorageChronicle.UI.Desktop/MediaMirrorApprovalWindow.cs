@@ -23,7 +23,7 @@ public sealed class MediaMirrorApprovalWindow : Window
         var aclDisclosure = request.AclDisclosure switch
         {
             MediaMirrorAclDisclosure.NtfsAclVerified => "The dedicated directory ACL was checked and verified on NTFS.",
-            MediaMirrorAclDisclosure.NtfsAclUnavailable => "The volume is NTFS. Before saving consent, the Agent will inspect the authenticated account's exact SID, the parent DELETE_CHILD rights, and the dedicated history tree ACLs. If any required descriptor cannot be checked or a broad principal has write/delete access, consent is rejected and no existing history is imported or mirrored.",
+            MediaMirrorAclDisclosure.NtfsAclUnavailable => "The volume is NTFS. After approval, if the dedicated product root does not exist, the Agent will create that empty root and then inspect the authenticated account's exact SID, the parent DELETE_CHILD rights, and the complete history tree ACLs before saving consent. If any required descriptor cannot be checked or a broad principal has write/delete access, consent is rejected; the empty product root may remain, but no existing history is imported and no mirror is started.",
             MediaMirrorAclDisclosure.NotProvidedByFileSystem => $"{request.FileSystem} does not provide NTFS ACL protection; Storage Chronicle will not describe this location as ACL-protected.",
             _ => "The filesystem/ACL protection could not be verified. Approval is disabled."
         };
