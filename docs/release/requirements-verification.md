@@ -71,7 +71,7 @@ The latest recorded source audit and validation binding is [`physical-readonly-a
 | ID | Coverage row | Verification evidence | Status |
 |---|---|---|---|
 | V-101 | Product name Storage Chronicle | installer manifest, project names, `Test-All` | verified |
-| V-102 | Windows 10/11 x64, future Ubuntu, upstream Win10 support boundary | `docs/release/windows10-compatibility.md`, architecture tests, `Test-Windows10StageACapability.ps1` | boundary and fail-closed Windows 10 capability probe verified; Win10 Stage A/physical hardware run pending |
+| V-102 | Windows 10/11 x64, future Ubuntu, upstream Win10 support boundary | `docs/release/windows10-compatibility.md`, architecture tests, physical acceptance gates | boundary verified; legacy guest capability probe retired under Requirements 26/37; Windows 10 physical hardware run pending |
 | V-103 | Avalonia; MVVM limited to UI | UI project references and architecture tests | verified |
 | V-104 | UI, Service Agent, Session Agent separation | `src/StorageChronicle.Agent`, `src/StorageChronicle.SessionAgent`, UI projects, architecture tests | verified |
 | V-105 | No MVP driver and future replacement seam | collector contracts, installer manifest test, architecture tests | verified |

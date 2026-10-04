@@ -289,24 +289,23 @@ public sealed class InstallerManifestTests
     }
 
     [Fact]
-    public void VirtualBoxInstallerDriverExistsButPhysicalPolicyDisablesHarnessVmExecution()
+    public void VirtualBoxInstallerEntryPointsAreRetiredAndInert()
     {
         var root = FindRoot();
         var genericHarness = File.ReadAllText(Path.Combine(root, "build", "package", "Test-Installer.ps1"));
         var driver = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Invoke-VirtualBoxInstallerCase.ps1"));
         var orchestrator = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Run-VirtualBoxInstallerAcceptance.ps1"));
 
-        Assert.Contains("GuestCredentialReference", genericHarness, StringComparison.Ordinal);
         Assert.Contains("$validTargetKind = $TargetKind -eq 'PhysicalMachine'", genericHarness, StringComparison.Ordinal);
         Assert.Contains("$validMode = $ExecutionMode -eq 'Local'", genericHarness, StringComparison.Ordinal);
         Assert.Contains("VM and non-physical installer execution are disabled", genericHarness, StringComparison.Ordinal);
-        Assert.Contains("Invoke-VBoxGuestControl", driver, StringComparison.Ordinal);
-        Assert.Contains("Copy-TestArtifactToVm", driver, StringComparison.Ordinal);
-        Assert.Contains("Copy-TestArtifactFromVm", driver, StringComparison.Ordinal);
-        Assert.Contains("Status = 'FAILED'", driver, StringComparison.Ordinal);
-        Assert.Contains("SC-CLEAN-BASELINE", orchestrator, StringComparison.Ordinal);
-        Assert.Contains("-Apply", orchestrator, StringComparison.Ordinal);
-        Assert.Contains("AcceptanceEligible", orchestrator, StringComparison.Ordinal);
+        Assert.Contains("Retired under Requirements 26 and 37", driver, StringComparison.Ordinal);
+        Assert.Contains("Retired under Requirements 26 and 37", orchestrator, StringComparison.Ordinal);
+        foreach (var forbidden in new[] { "Invoke-VBoxGuestControl", "Copy-TestArtifactToVm", "Copy-TestArtifactFromVm", "Restore-TestLabBaseline", "Set-VBoxVmProvisioningSettings", "Start-TestLabVm", "Start-Process", "New-Item", "Set-Content" })
+        {
+            Assert.DoesNotContain(forbidden, driver, StringComparison.Ordinal);
+            Assert.DoesNotContain(forbidden, orchestrator, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -316,10 +315,9 @@ public sealed class InstallerManifestTests
         var stageA = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Compose-Windows10StageA.ps1"));
         var physical = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Finalize-Windows10PhysicalAcceptance.ps1"));
 
-        Assert.Contains("StorageChronicle.Windows10StageAAcceptance.v1", stageA, StringComparison.Ordinal);
-        Assert.Contains("COMPLETED_REAL_IO_ACCEPTANCE", stageA, StringComparison.Ordinal);
-        Assert.Contains("StorageChronicle.Windows10StageACheck.v1", stageA, StringComparison.Ordinal);
-        Assert.Contains("EvidenceOrigin -ne 'real'", stageA, StringComparison.Ordinal);
+        Assert.Contains("Retired under Requirement 37", stageA, StringComparison.Ordinal);
+        Assert.DoesNotContain("StorageChronicle.Windows10StageAAcceptance.v1", stageA, StringComparison.Ordinal);
+        Assert.DoesNotContain("Set-Content", stageA, StringComparison.Ordinal);
         Assert.Contains("StorageChronicle.Windows10PhysicalAcceptance.v1", physical, StringComparison.Ordinal);
         Assert.Contains("Status = 'NOT_EXECUTED'", physical, StringComparison.Ordinal);
         Assert.Contains("Windows10PrivilegedManifestPath", physical, StringComparison.Ordinal);
@@ -333,22 +331,20 @@ public sealed class InstallerManifestTests
     }
 
     [Fact]
-    public void Windows10CapabilityChecksAreGuestRealAndFailClosed()
+    public void Windows10VmStageACapabilityChecksAreRetiredAndInert()
     {
         var root = FindRoot();
         var guest = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Test-Windows10StageACapability.ps1"));
         var host = File.ReadAllText(Path.Combine(root, "tools", "TestEnvironment", "Invoke-Windows10StageACapabilityChecks.ps1"));
 
-        Assert.Contains("StorageChronicle.Windows10StageACheck.v1", guest, StringComparison.Ordinal);
-        Assert.Contains("LoadLibrary/GetProcAddress", guest, StringComparison.Ordinal);
-        Assert.Contains("cldapi.dll", guest, StringComparison.Ordinal);
-        Assert.Contains("pnputil.exe", guest, StringComparison.Ordinal);
-        Assert.Contains("DriverPresent", guest, StringComparison.Ordinal);
-        Assert.Contains("ApiCalled = $false", guest, StringComparison.Ordinal);
-        Assert.Contains("SC-Test-W10-VBox", host, StringComparison.Ordinal);
-        Assert.Contains("Assert-VirtualBoxHostPrerequisites", host, StringComparison.Ordinal);
-        Assert.Contains("if (-not $Apply)", host, StringComparison.Ordinal);
-        Assert.Contains("AcceptanceEligible = $false", host, StringComparison.Ordinal);
+        foreach (var retiredEntryPoint in new[] { guest, host })
+        {
+            Assert.Contains("Retired under Requirement 37", retiredEntryPoint, StringComparison.Ordinal);
+            foreach (var forbidden in new[] { "Invoke-VBoxManage", "Invoke-VBoxGuestControl", "Invoke-TestLabCommand", "LoadLibrary", "Start-Process", "New-Item", "Set-Content", "Format-Volume" })
+            {
+                Assert.DoesNotContain(forbidden, retiredEntryPoint, StringComparison.Ordinal);
+            }
+        }
     }
 
     [Fact]
@@ -581,8 +577,7 @@ public sealed class InstallerManifestTests
             "build/quality/Test-CorrelationMetrics.ps1",
             "build/quality/Test-ResourceBudget.ps1",
             "tools/PhysicalAcceptance/Collect-PhysicalAcceptanceResults.ps1",
-            "tools/PhysicalAcceptance/Finalize-Windows10PhysicalAcceptance.ps1",
-            "tools/TestEnvironment/Compose-Windows10StageA.ps1"
+            "tools/PhysicalAcceptance/Finalize-Windows10PhysicalAcceptance.ps1"
         };
 
         Assert.Contains("function Write-NewJsonArtifact", contracts, StringComparison.Ordinal);

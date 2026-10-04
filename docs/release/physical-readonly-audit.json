@@ -1,6 +1,6 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "1e8d287a44a3323c735fc26b1a38cea2427e2844",
+  "targetCommit": "b8d4fb9e6ec3afadb3fde6e2d197237f4391d722",
   "priorAuditTargetCommit": "877ce6def71dc3d3bafabc141033c00da1eb8284",
   "currentDeltaFromPriorAudit": [
     "build/quality/MftPhysicalSeed.Contracts.ps1",
@@ -9,9 +9,19 @@
     "build/quality/Test-FinalAcceptance.ps1",
     "build/quality/Test-FullBenchmarkMatrix.ps1",
     "build/quality/Test-MftPhysicalSeedContracts.ps1",
-    "tests/StorageChronicle.Platform.Windows.FileSystem.Tests/WindowsMediaAclPolicyTests.cs"
+    "tests/StorageChronicle.Platform.Windows.FileSystem.Tests/WindowsMediaAclPolicyTests.cs",
+    "build/quality/Test-VirtualBoxTestLab.ps1",
+    "tools/PhysicalAcceptance/Invoke-VirtualBoxInstallerCase.ps1",
+    "tools/TestEnvironment/Compose-Windows10StageA.ps1",
+    "tools/TestEnvironment/Copy-TestArtifactsToVm.ps1",
+    "tools/TestEnvironment/Copy-TestResultsFromVm.ps1",
+    "tools/TestEnvironment/Invoke-Windows10StageACapabilityChecks.ps1",
+    "tools/TestEnvironment/Run-VirtualBoxInstallerAcceptance.ps1",
+    "tools/TestEnvironment/Test-TestLabPrerequisites.ps1",
+    "tools/TestEnvironment/Test-Windows10StageACapability.ps1",
+    "tests/StorageChronicle.Installer.Tests/InstallerManifestTests.cs"
   ],
-  "currentAuditScope": "Partial audited-source-snapshot review: carries forward historical source-to-sink findings where production source is unchanged from prior audit target 877ce6d; re-reviewed the seven changed code/test paths listed in currentDeltaFromPriorAudit at targetCommit. Later changes in this audit packet are documentation-only. This is not exhaustive across every source, test, script, external command, host preflight, or runtime write monitor.",
+  "currentAuditScope": "Partial audited-source-snapshot review: carries forward historical source-to-sink findings where production source is unchanged from prior audit target 877ce6d; re-reviewed the changed MFT seed paths and the listed retired VM/Stage A entry-point delta at targetCommit. Retired script AST checks permit only Write-Error, exit, and a fixed error-preference assignment. Later changes in this audit packet are documentation-only. This is not exhaustive across every source, test, script, external command, host preflight, or runtime write monitor.",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -112,9 +122,9 @@
   ],
   "workingTreeChanges": [],
   "latestValidation": {
-    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1",
-    "codeCommit": "517b6c5",
-    "currentAuditCommit": "1e8d287a44a3323c735fc26b1a38cea2427e2844",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-Fast.ps1 and build/quality/Test-Quality.ps1",
+    "codeCommit": "b8d4fb9",
+    "currentAuditCommit": "b8d4fb9e6ec3afadb3fde6e2d197237f4391d722",
     "exitCode": 0,
     "fastProjects": 24,
     "qualityGate": "passed",
@@ -135,6 +145,8 @@
     },
     "docMirror": "passed in Fast and direct DocMirror validation",
     "mftSeedOfflineContracts": "31 passed; current scripts parsed; no VHDX, disk, partition, format, product, installer, media, or workload was executed",
+    "legacyVmRetirementContracts": "17 passed; eight newly retired VM/Stage A scripts parsed without execution; AST contract rejects every command except Write-Error/exit and fixed error-preference assignment",
+    "retiredEntryPointParser": "eight retired VM/Stage A entry points parsed successfully; none was invoked",
     "physicalAcceptance": "NOT_EXECUTED"
   },
   "overallStatus": "FAIL",
@@ -146,10 +158,10 @@
   "hostPreflight": "NOT_EXECUTED",
   "processWriteMonitoring": "NOT_EXECUTED",
   "currentCommitSourceAudit": {
-    "scope": "Partial source-to-sink review of Agent/Application/Windows NTFS/Session calls plus selected build/tools/installer flows and their service/OS-command reachability; prior findings are carried forward where source is unchanged from 877ce6d, and seven changed code/test paths are reviewed at current targetCommit. Does not exhaustively audit every source/test/script/external command, perform host preflight, or run an independent runtime write monitor.",
+    "scope": "Partial source-to-sink review of Agent/Application/Windows NTFS/Session calls plus selected build/tools/installer flows and their service/OS-command reachability; prior findings are carried forward where source is unchanged from 877ce6d, and the changed MFT and retired VM/Stage A code/test paths are reviewed at current targetCommit. Does not exhaustively audit every source/test/script/external command, perform host preflight, or run an independent runtime write monitor.",
     "status": "PARTIAL",
     "reviewedAt": "2026-10-04",
-    "currentDeltaReview": "New MFT seed workflow paths were statically reviewed for explicit dry-run, Apply/typed confirmation/elevation/ShouldProcess gates, isolated create-new roots, 60 GiB checks before seed and workload, disk/partition/volume re-identification before initialize/partition/format, evidence-only retention on failure, and mandatory independent monitor provenance before benchmark suites. Root/file path TOCTOU, external monitor authenticity, supported-host behavior, and physical evidence remain unverified.",
+    "currentDeltaReview": "New MFT seed workflow paths were statically reviewed for explicit dry-run, Apply/typed confirmation/elevation/ShouldProcess gates, isolated create-new roots, 60 GiB checks before seed and workload, disk/partition/volume re-identification before initialize/partition/format, evidence-only retention on failure, and mandatory independent monitor provenance before benchmark suites. The eight remaining legacy VM/Stage A/transfer/preflight entry points were reduced to parameter-compatible fail-closed stubs; PowerShell AST validation and the 17-case source contract verify that only Write-Error/exit and a fixed error-preference assignment remain. Root/file path TOCTOU, external monitor authenticity, supported-host behavior, and physical evidence remain unverified.",
     "findings": [
       {
         "id": "settings-path-write-boundary",
@@ -347,7 +359,7 @@
     ]
   },
   "acceptanceScriptAudit": {
-    "scope": "Static review of selected build/**, tools/**, installer/** sinks and call paths; re-reviewed current MFT seed/benchmark delta, not exhaustive.",
+    "scope": "Static review of selected build/**, tools/**, installer/** sinks and call paths; re-reviewed current MFT seed/benchmark and legacy VM retirement deltas, not exhaustive.",
     "status": "PARTIAL_WITH_BLOCKING_FINDINGS",
     "findings": [
       "The file-mutation workload overwrite finding is narrowed by commit ddc293d: run GUID, marker-only root, no-reparse checks, create-new paths, run-bound in-root oracle, and exact deletion-tree checks are implemented and fast tests pass. Path-based TOCTOU and marker authenticity remain open, so workload execution remains gated.",
@@ -358,7 +370,8 @@
       "The old VirtualBox VDI cleanup sink was retired by commit e0529db; the old VDI creation/attachment helper is now also a no-I/O stub with a source-contract test. The old guest runner was reduced to a no-I/O stub by commit ddc293d. This does not authorize the separately gated file-backed VHDX physical workflow or close other runner risks.",
       "The Explorer scenario producer no longer uses overwrite-capable output paths, but several other evidence and build/package producers may still overwrite existing paths; full sink inventory and approved-root/new-only policy remain open.",
       "Commit 444565d separates raw ResourceMonitor evidence from queue-augmented output and uses create-only publication for both. A diagnostic shell-process sample verified preservation only; it does not satisfy the independent runtime write-monitor or formal resource gate.",
-      "At audited source snapshot 1e8d287, New-MftPhysicalSeed.ps1 has dry-run, typed/elevated Apply and ShouldProcess gates, repeated 60 GiB checks, create-new GUID-scoped evidence, VHDX/disk/volume identity rechecks, and no automatic rollback/deletion. Contract suite 31/31 and AST parse passed. This does not close path races, validate an independently supplied monitor, or authorize execution."
+      "At audited source snapshot 1e8d287, New-MftPhysicalSeed.ps1 has dry-run, typed/elevated Apply and ShouldProcess gates, repeated 60 GiB checks, create-new GUID-scoped evidence, VHDX/disk/volume identity rechecks, and no automatic rollback/deletion. Contract suite 31/31 and AST parse passed. This does not close path races, validate an independently supplied monitor, or authorize execution.",
+      "At audited source snapshot b8d4fb9, the old VirtualBox installer driver/orchestrator, host preflight, artifact transfer, and Windows 10 guest Stage A producer/checkers are no-I/O fail-closed entry points. The source contract parses all retired entry points and rejects executable commands/method invocations beyond the error-and-exit path; 17 VirtualBox retirement contracts, all 24 Fast projects, Quality, and DocMirror pass. This retires whole-OS guest acceptance only and does not authorize physical or lightweight VHDX acceptance."
     ],
     "runtimeExecution": "NOT_EXECUTED"
   },
@@ -504,6 +517,12 @@
       "path": "tools/TestEnvironment/Initialize-TestLab.ps1",
       "lines": [21, 43],
       "summary": "Commit 1ecfb41 retires Initialize-TestLab, Invoke-TestLabCommand, and Reset-TestVm with no-I/O fail-closed entry points. VirtualBox contract tests and Fast passed. This does not authorize the separately gated file-backed VHDX fixture workflow."
+    },
+    {
+      "id": "legacy-vm-stage-a-transfer-and-preflight-entry-points-retired",
+      "status": "PASS",
+      "path": "build/quality/Test-VirtualBoxTestLab.ps1",
+      "summary": "Commit b8d4fb9 retires the remaining VirtualBox installer driver/orchestrator, Windows 10 guest Stage A/check/composer, artifact transfer, and legacy host preflight scripts. A PowerShell AST contract permits only Write-Error/exit plus a fixed error-preference assignment; eight retired scripts parse successfully and 17 retirement contract cases pass. Whole-OS guest acceptance is retired; this does not authorize physical acceptance or file-backed VHDX use."
     },
     {
       "id": "mft-million-entry-free-space-gate",
