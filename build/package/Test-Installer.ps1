@@ -95,8 +95,19 @@ function Dispose-VerifiedPayloadLocks {
     $script:VerifiedPayloadLocks.Clear()
 }
 
+function Read-BytesThroughReadOnlyHandle([string]$Path) {
+    $inputStream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    $memory = [IO.MemoryStream]::new()
+    try {
+        $inputStream.CopyTo($memory)
+        return ,$memory.ToArray()
+    } finally {
+        $memory.Dispose()
+        $inputStream.Dispose()
+    }
+}
+
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$script:InstallerAuthorizationProtocolPath = Join-Path $PSScriptRoot 'InstallerAuthorizationProtocol.cs'
 $script:InstallerAuthorizationLoaded = $false
 $script:HasLaunchedFirstPrivilegedChild = $false
 $runId = if ([string]::IsNullOrWhiteSpace($RunId)) { [guid]::NewGuid().ToString('D') } else { $RunId }
@@ -148,9 +159,6 @@ $isPhysicalExecution = [bool]$Execute -and $TargetKind -eq 'PhysicalMachine' -an
 if ($Execute -and -not $isPhysicalExecution) { throw 'VM and non-physical installer execution are disabled by the physical-read-only acceptance policy.' }
 if ($isPhysicalExecution) {
     if ($env:OS -ne 'Windows_NT') { throw 'Physical installer execution requires a Windows host.' }
-    Add-Type -Path $script:InstallerAuthorizationProtocolPath -ErrorAction Stop
-    $script:InstallerAuthorizationLoaded = $true
-    $script:VerifiedPayloadLocks = [System.Collections.Generic.List[System.IDisposable]]::new()
     Assert-HklmRunValueNameAbsent -ValueName 'StorageChronicleSessionAgent'
 
     if (-not $ConfirmDedicatedPhysicalMachine) { throw 'Physical installer execution requires -ConfirmDedicatedPhysicalMachine.' }
@@ -175,9 +183,32 @@ if ($isPhysicalExecution) {
     if ([string]$bundleVolume.FileSystem -ne 'NTFS' -or [string]$bundleVolume.DriveType -ne 'Fixed') { throw 'The approved installer bundle must reside on a local fixed NTFS volume for handle-sharing guarantees.' }
     $bundleHashPath = Join-Path $bundleRoot 'hash-manifest.json'
     if (-not (Test-Path -LiteralPath $bundleHashPath -PathType Leaf)) { throw 'The trusted hash manifest is missing.' }
+    $hashManifestBytes = Read-BytesThroughReadOnlyHandle $bundleHashPath
+    $hashManifestHasher = [Security.Cryptography.SHA256]::Create()
+    try { $actualManifestFingerprint = [BitConverter]::ToString($hashManifestHasher.ComputeHash($hashManifestBytes)).Replace('-', '') } finally { $hashManifestHasher.Dispose() }
+    if (-not $actualManifestFingerprint.Equals($ExpectedHashManifestSha256, [StringComparison]::OrdinalIgnoreCase)) { throw 'The hash-manifest SHA-256 does not match the separately supplied, user-approved fingerprint.' }
+    $bundleHashText = [IO.StreamReader]::new([IO.MemoryStream]::new($hashManifestBytes), [Text.Encoding]::UTF8, $true)
+    try { $bundleHashes = $bundleHashText.ReadToEnd() | ConvertFrom-Json } finally { $bundleHashText.Dispose() }
+    if ([string]$bundleHashes.Schema -cne 'StorageChronicle.ManualAcceptanceHashManifest.v1' -or $null -eq $bundleHashes.Files -or @($bundleHashes.Files).Count -eq 0) { throw 'The externally fingerprinted hash manifest has an unsupported schema or no payload entries.' }
+
+    $protocolRelativePath = 'InstallerAuthorizationProtocol.cs'
+    $protocolEntries = @($bundleHashes.Files | Where-Object { [string]$_.RelativePath -ceq $protocolRelativePath })
+    $protocolPath = [IO.Path]::GetFullPath((Join-Path $bundleRoot $protocolRelativePath))
+    if ($protocolEntries.Count -ne 1 -or -not $protocolPath.StartsWith($bundleRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $protocolPath -PathType Leaf) -or [string]$protocolEntries[0].SHA256 -notmatch '^[A-Fa-f0-9]{64}$') {
+        throw 'The approved installer bundle must contain exactly one fingerprinted InstallerAuthorizationProtocol.cs payload.'
+    }
+    $protocolBytes = Read-BytesThroughReadOnlyHandle $protocolPath
+    $protocolHasher = [Security.Cryptography.SHA256]::Create()
+    try { $actualProtocolHash = [BitConverter]::ToString($protocolHasher.ComputeHash($protocolBytes)).Replace('-', '') } finally { $protocolHasher.Dispose() }
+    if (-not $actualProtocolHash.Equals([string]$protocolEntries[0].SHA256, [StringComparison]::OrdinalIgnoreCase)) { throw 'InstallerAuthorizationProtocol.cs does not match the externally fingerprinted bundle bytes.' }
+    $protocolTextReader = [IO.StreamReader]::new([IO.MemoryStream]::new($protocolBytes), [Text.Encoding]::UTF8, $true)
+    try { $protocolSource = $protocolTextReader.ReadToEnd() } finally { $protocolTextReader.Dispose() }
+    Add-Type -TypeDefinition $protocolSource -ErrorAction Stop
+    $script:InstallerAuthorizationLoaded = $true
+
+    $script:VerifiedPayloadLocks = [System.Collections.Generic.List[System.IDisposable]]::new()
     $manifestLock = [StorageChronicle.InstallerAuthorization.VerifiedPayloadLock]::OpenAndVerify($bundleHashPath, $ExpectedHashManifestSha256)
     [void]$script:VerifiedPayloadLocks.Add($manifestLock)
-    $bundleHashes = Get-Content -Raw -Encoding UTF8 -LiteralPath $bundleHashPath | ConvertFrom-Json
     $verifiedBundleFiles = @{}
     foreach ($entry in @($bundleHashes.Files)) {
         $relativePath = [string]$entry.RelativePath
@@ -420,12 +451,9 @@ function Test-UacEnabled {
 }
 
 function Import-InstallerAuthorizationProtocol {
-    if ($script:InstallerAuthorizationLoaded) { return }
-    if (-not (Test-Path -LiteralPath $script:InstallerAuthorizationProtocolPath -PathType Leaf)) {
-        throw 'The installer authorization protocol implementation is missing.'
+    if (-not $script:InstallerAuthorizationLoaded) {
+        throw 'The installer authorization protocol must be fingerprint-verified and compiled from memory before use.'
     }
-    Add-Type -Path $script:InstallerAuthorizationProtocolPath -ErrorAction Stop
-    $script:InstallerAuthorizationLoaded = $true
 }
 
 function New-CurrentUserInstallerPipe {

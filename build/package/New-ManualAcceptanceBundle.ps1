@@ -55,6 +55,7 @@ if (-not $AllowIncompleteBundle -and $missing.Count -gt 0) { throw ('Bundle inpu
 $targets = if ($Target -eq 'Both') { @('Windows10-22H2', 'Windows11') } else { @($Target) }
 $commonScripts = @(
     (Join-Path $root 'build/package/Test-Installer.ps1'),
+    (Join-Path $root 'build/package/InstallerAuthorizationProtocol.cs'),
     (Join-Path $root 'tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1'),
     (Join-Path $root 'tools/PhysicalAcceptance/Probe-WriteAccess.ps1'),
     (Join-Path $root 'tools/PhysicalAcceptance/Run-RealMachineInstallerAcceptance.ps1'),
