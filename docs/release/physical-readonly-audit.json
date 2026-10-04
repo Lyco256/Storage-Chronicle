@@ -1,15 +1,18 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "dde919b",
+  "targetCommit": "9d78c50",
   "priorAuditTargetCommit": "b8d4fb9e6ec3afadb3fde6e2d197237f4391d722",
   "currentDeltaFromPriorAudit": [
     "src/StorageChronicle.Storage/SegmentLog.cs",
+    "src/StorageChronicle.Storage/AppendOnlyStorageEngine.cs",
+    "src/StorageChronicle.Storage/SqliteIndex.cs",
     "tests/StorageChronicle.Storage.Tests/StorageEngineTests.cs",
     "docs/src/StorageChronicle.Storage/SegmentLog.cs.md",
     "docs/src/StorageChronicle.Storage/AppendOnlyStorageEngine.cs.md",
+    "docs/src/StorageChronicle.Storage/SqliteIndex.cs.md",
     "docs/handoffs/storage-tail-recovery.md"
   ],
-  "currentAuditScope": "Partial audited-source-snapshot review at devenv integration dde919b: carries forward earlier source-to-sink findings where source is unchanged from b8d4fb9; re-reviewed the storage-tail-recovery delta and focused on the exact owned-history mutation boundary. This is not exhaustive across every source, test, script, external command, configured root, host preflight, or runtime write monitor.",
+  "currentAuditScope": "Partial audited-source-snapshot review at devenv integration 9d78c50: carries forward earlier source-to-sink findings where source is unchanged from b8d4fb9; re-reviewed the storage-tail-recovery and SQLite derived-index recovery delta and focused on the exact owned-history mutation boundary. This is not exhaustive across every source, test, script, external command, configured root, host preflight, or runtime write monitor.",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -111,8 +114,8 @@
   "workingTreeChanges": [],
   "latestValidation": {
     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1",
-    "codeCommit": "dde919b",
-    "currentAuditCommit": "dde919b",
+    "codeCommit": "9d78c50",
+    "currentAuditCommit": "9d78c50",
     "exitCode": 0,
     "fastProjects": 24,
     "qualityGate": "passed",
@@ -124,7 +127,7 @@
       "Domain": 82.41,
       "State": 94.25,
       "Projection": 89.28,
-      "Storage": 87.96
+      "Storage": 89.53
     },
     "gatedViewModelCoveragePercent": {
       "DiffView": 92.23,
@@ -135,7 +138,7 @@
     "mftSeedOfflineContracts": "31 passed; current scripts parsed; no VHDX, disk, partition, format, product, installer, media, or workload was executed",
     "legacyVmRetirementContracts": "17 passed; eight newly retired VM/Stage A scripts parsed without execution; AST contract rejects every command except Write-Error/exit and fixed error-preference assignment",
     "retiredEntryPointParser": "eight retired VM/Stage A entry points parsed successfully; none was invoked",
-    "integrationMerge": "feat/storage-tail-recovery merged with --no-ff into devenv as dde919b without conflicts; main unchanged",
+    "integrationMerge": "feat/storage-tail-recovery tail recovery merged at dde919b and SQLite startup recovery merged at 9d78c50 with --no-ff and no conflicts; main unchanged",
     "physicalAcceptance": "NOT_EXECUTED"
   },
   "overallStatus": "FAIL",
@@ -147,10 +150,10 @@
   "hostPreflight": "NOT_EXECUTED",
   "processWriteMonitoring": "NOT_EXECUTED",
   "currentCommitSourceAudit": {
-    "scope": "Partial source-to-sink review of Agent/Application/Windows NTFS/Session calls plus selected build/tools/installer flows and their service/OS-command reachability; prior findings are carried forward where source is unchanged from b8d4fb9. The storage-tail-recovery source delta was inspected against targetCommit, including direct-child root containment, GUID-bound .open naming, absence of a manifest, reparse-point rejection, exclusive handle, and complete header/frame CRC validation before SetLength. Does not exhaustively audit every source/test/script/external command, perform host preflight, or run an independent runtime write monitor.",
+    "scope": "Partial source-to-sink review of Agent/Application/Windows NTFS/Session calls plus selected build/tools/installer flows and their service/OS-command reachability; prior findings are carried forward where source is unchanged from b8d4fb9. The storage-tail-recovery and SQLite derived-index recovery source deltas were inspected against targetCommit. Does not exhaustively audit every source/test/script/external command, perform host preflight, or run an independent runtime write monitor.",
     "status": "PARTIAL",
     "reviewedAt": "2026-10-04",
-    "currentDeltaReview": "The .open tail-recovery delta was inspected: only a manifest-free segment matching its header GUID and direct storage-root child path is opened exclusively; header and every complete record CRC are revalidated before truncating only bytes beyond the last complete frame. Verified prefix bytes are preserved. CRC-invalid, malformed, manifest-backed, compressed, or reparse-point segments are not repaired/truncated; new append proceeds in a fresh segment. Isolated tests cover incomplete-tail recovery and full-frame CRC corruption. Test-All passed at dde919b with zero build warnings/errors, all 24 Fast projects, Quality/coverage, DocMirror, and UI. No product or physical runner was started. The broader callgraph, configured-root and hostile-race proof, host preflight, independent runtime write monitor, and physical evidence remain unverified.",
+    "currentDeltaReview": "The .open tail-recovery delta was inspected: only a manifest-free segment matching its header GUID and direct storage-root child path is opened exclusively; header and every complete record CRC are revalidated before truncating only bytes beyond the last complete frame. Verified prefix bytes are preserved. CRC-invalid, malformed, manifest-backed, compressed, or reparse-point segments are not repaired/truncated; new append proceeds in a fresh segment. SQLite initialization runs quick_check before schema migration; startup rebuilds a missing index beside authoritative segments or one classified as structurally corrupt, deleting only the derived SQLite database and sidecars. Unsupported schema is not classified as corruption, and tests assert the DB bytes remain unchanged; busy, permission, and unrelated I/O failures are not in the corruption filter. Tests cover incomplete-tail recovery, CRC-corrupt full-frame preservation, automatic missing/corrupt-index rebuild, and unsupported-schema preservation. Test-All passed at 9d78c50 with zero build warnings/errors, all 24 Fast projects, Quality/coverage, DocMirror, and UI. No product or physical runner was started. The broader callgraph, configured-root and hostile-race proof, host preflight, independent runtime write monitor, and physical evidence remain unverified.",
     "findings": [
       {
         "id": "settings-path-write-boundary",
