@@ -1,43 +1,33 @@
-# NamedPipeAgentServer
+# NamedPipeAgentServer.cs
 
-Hosts the local four-byte little-endian/source-generated JSON IPC endpoint. It applies the 8 MiB and protocol-major gates, DACLs SYSTEM/Administrators and authenticated users, validates client SID/session/admin identity, requires a verified Desktop UI or published Session Agent role hello, and dispatches projection/diff/activity-timeline/health/settings/clipboard and media-approval messages. Media approval decisions require the current interactive session and the UI executable at the expected sibling path beneath Program Files; Session Agent and arbitrary same-session processes are rejected. This executable-path gate relies on the protected installer directory and is not a code-signature verification. For media approval, it passes the SID from the authenticated pipe identity to `MediaMirrorConsentService`; an SID supplied in the request payload is never trusted. The Agent verifies the request is pending and delegates live-volume/root/ACL revalidation and consent persistence to the service. Activity timeline requests are bounded metadata-only pages. Session Agent connections are limited to ClipboardCandidate messages. Authentication and Windows pipe failures are isolated and fail closed for mutating endpoints; malformed or disconnected clients do not stop the Agent or prevent the next connection.
+## Role and public type
 
-## Role
+`NamedPipeAgentServer` owns the local versioned JSON IPC endpoint and dispatches projection, settings, health, clipboard, reconciliation, and media-consent requests after authenticating the named-pipe client. It enforces message-size/protocol gates and the endpoint's identity/role rules.
 
-This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle.
+## Invariants and dependencies
+
+Interactive User Settings snapshot/update and Pane-timeout projection use a store freshly resolved from the authenticated pipe-token SID and matching Windows profile. Payload SID/path values are ignored. A missing resolver, non-current session, or unavailable profile is rejected; there is no LocalSystem-profile fallback. Machine settings remain machine-scoped and require administrator identity. The server depends on the Agent settings service, storage/projection services, Windows pipe identity, and the profile-store resolver. No file contents or content hashes are exposed.
+
+## Failure behavior and tests
+
+Malformed messages, authorization failures, profile lookup errors, cancellation, and disconnected clients fail closed without stopping the Agent listener. `tests/StorageChronicle.Agent.Tests/AuthenticatedUserSettingsRoutingTests.cs` verifies two-SID isolation and hostile payload SID/path rejection. Existing Agent IPC tests cover endpoint behavior. Synthetic dispatch tests do not replace live multi-user token/profile service acceptance; consent UI executable-path verification is not an Authenticode signature check.
 
 ## Public types and responsibilities
 
-Public types preserve source facts and the explicitly owned responsibility; UI interpretation and correlation remain outside this boundary.
+`NamedPipeAgentServer` is the hosted IPC endpoint. Authentication establishes caller identity; handlers enforce operation-specific authorization and delegate settings persistence to the settings service/store.
 
 ## Inputs and outputs
 
-Inputs and outputs are the declared contracts of the source file. File contents and file-content hashes are never an input or output.
-
-## Dependencies
-
-Dependencies are limited to the referenced project contracts and platform services shown by the source file.
-
-## Invariants
-
-The source keeps canonical facts distinguishable from reconstructed state and does not synthesize descendant events.
+Inputs are versioned bounded IPC envelopes. Responses contain protocol data and event metadata only; no file contents or hashes are exchanged.
 
 ## Threading and lifetime
 
-Callers own cancellation and lifetime; asynchronous work must not outlive the owning pipeline or UI scope.
-
-## Failure behavior
-
-Failure, corruption, cancellation, and recovery remain observable and are not converted into a false successful observation.
-
-## Tests
-
-Validated by tests/StorageChronicle.Integration.Tests and the affected integration tests.
+The hosted listener owns pipe instances and request cancellation. Per-request profile resolution is not cached, and client disconnect/cancellation is isolated from the service lifetime.
 
 ## OS constraints
 
-Platform-neutral behavior remains portable; Windows-only APIs are isolated in the Windows platform projects.
+Named-pipe token and session identity are Windows-specific. The settings contracts and serialized envelopes remain platform-neutral.
 
 ## Change-sensitive contracts
 
-Public names, serialized fields, persistence boundaries, and the mirrored path are compatibility-sensitive contracts.
+Message names/shapes, authenticated-SID provenance, authorization gates, and fail-closed resolver behavior are security- and compatibility-sensitive.

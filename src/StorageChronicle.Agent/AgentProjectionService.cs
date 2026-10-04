@@ -105,7 +105,11 @@ public sealed class AgentProjectionService : IProjectionService
     }
 
     /// <summary>Loads the rich Tree/Explorer diff projection for the desktop IPC client.</summary>
-    public async ValueTask<DiffProjectionResponse> GetDiffProjectionAsync(DiffProjectionRequest request, CancellationToken cancellationToken = default)
+    public ValueTask<DiffProjectionResponse> GetDiffProjectionAsync(DiffProjectionRequest request, CancellationToken cancellationToken = default) =>
+        GetDiffProjectionAsync(request, userSettingsStore?.Load().Settings, cancellationToken);
+
+    /// <summary>Loads a rich diff projection using the authenticated user's preferences.</summary>
+    public async ValueTask<DiffProjectionResponse> GetDiffProjectionAsync(DiffProjectionRequest request, UserSettings? authenticatedUserSettings, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentOutOfRangeException.ThrowIfLessThan(request.Page, 1);
@@ -151,7 +155,7 @@ public sealed class AgentProjectionService : IProjectionService
         var activityFramesTotalCount = 0;
         if (request.Mode is DiffMode.Live or DiffMode.Replay)
         {
-            var timeout = GetPaneTimeout();
+            var timeout = GetPaneTimeout(authenticatedUserSettings);
             var lookbackFrom = SubtractTimeout(request.FromUtc, timeout);
             var frameEvents = await ReadCanonicalRangeAsync(lookbackFrom, request.ToUtc, cancellationToken).ConfigureAwait(false);
             var groups = new ActivityGrouper().Group(frameEvents, timeout);
@@ -194,7 +198,11 @@ public sealed class AgentProjectionService : IProjectionService
     }
 
     /// <summary>Loads one bounded canonical-event timeline page for a grouped Activity Frame.</summary>
-    public async ValueTask<DiffActivityFrameTimelineResponse> GetActivityFrameTimelineAsync(DiffActivityFrameTimelineRequest request, CancellationToken cancellationToken = default)
+    public ValueTask<DiffActivityFrameTimelineResponse> GetActivityFrameTimelineAsync(DiffActivityFrameTimelineRequest request, CancellationToken cancellationToken = default) =>
+        GetActivityFrameTimelineAsync(request, userSettingsStore?.Load().Settings, cancellationToken);
+
+    /// <summary>Loads an Activity Frame timeline using the authenticated user's pane-timeout preference.</summary>
+    public async ValueTask<DiffActivityFrameTimelineResponse> GetActivityFrameTimelineAsync(DiffActivityFrameTimelineRequest request, UserSettings? authenticatedUserSettings, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.FrameId);
@@ -204,7 +212,7 @@ public sealed class AgentProjectionService : IProjectionService
         if (request.ToUtc == default) throw new ArgumentException("A timeline end time is required.", nameof(request));
         if (request.FromUtc is { } from && from > request.ToUtc) throw new ArgumentException("Timeline start must not be after its end.", nameof(request));
 
-        var timeout = GetPaneTimeout();
+        var timeout = GetPaneTimeout(authenticatedUserSettings);
         var canonical = await ReadCanonicalRangeAsync(SubtractTimeout(request.FromUtc, timeout), request.ToUtc, cancellationToken).ConfigureAwait(false);
         var group = new ActivityGrouper().Group(canonical, timeout).FirstOrDefault(value => string.Equals(value.GroupId, request.FrameId, StringComparison.Ordinal));
         var events = group?.Events.Where(value => value.Time.RecordedUtc >= (request.FromUtc ?? DateTimeOffset.MinValue) && value.Time.RecordedUtc <= request.ToUtc)
@@ -220,9 +228,9 @@ public sealed class AgentProjectionService : IProjectionService
         return new DiffActivityFrameTimelineResponse(request.FrameId, page, request.Page, request.PageSize, events.Length, skip + page.Length < events.Length);
     }
 
-    private TimeSpan GetPaneTimeout()
+    private TimeSpan GetPaneTimeout(UserSettings? authenticatedUserSettings)
     {
-        var seconds = userSettingsStore?.Load().Settings.PaneTimeoutSeconds ?? 5;
+        var seconds = authenticatedUserSettings?.PaneTimeoutSeconds ?? userSettingsStore?.Load().Settings.PaneTimeoutSeconds ?? 5;
         return TimeSpan.FromSeconds(seconds);
     }
 

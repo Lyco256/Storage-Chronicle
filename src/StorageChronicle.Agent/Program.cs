@@ -48,9 +48,11 @@ public static class Program
         builder.Services.AddSingleton<IEventNormalizer, EventNormalizer>();
         builder.Services.AddSingleton(machineSettingsStore);
         builder.Services.AddSingleton<ISettingsStore<MachineSettings>>(services => services.GetRequiredService<MachineSettingsStore>());
-        builder.Services.AddSingleton<ISettingsStore<UserSettings>, UserSettingsStore>();
+        builder.Services.AddSingleton<ISettingsStore<UserSettings>, UnscopedUserSettingsStore>();
         builder.Services.AddSingleton<ISettingsChangeHistory, SettingsHistoryStore>();
         builder.Services.AddSingleton<IAgentSettingsAuthorizer, NamedPipeSettingsAuthorizer>();
+        builder.Services.AddSingleton<IWindowsUserProfileResolver, WindowsUserProfileResolver>();
+        builder.Services.AddSingleton<IAuthenticatedUserSettingsStoreResolver, WindowsAuthenticatedUserSettingsStoreResolver>();
         builder.Services.AddSingleton<AgentWorker>();
         builder.Services.AddSingleton<IMonitoringLifecycle, AgentMonitoringLifecycle>();
         builder.Services.AddSingleton<AgentSettingsService>();

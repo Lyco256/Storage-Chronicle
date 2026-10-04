@@ -74,8 +74,17 @@ public sealed class AgentSettingsService : IAgentSettingsGateway, IDisposable
     /// <inheritdoc />
     public ValueTask<SettingsLoadResult<UserSettings>> LoadUserSettingsAsync(CancellationToken cancellationToken = default)
     {
+        return LoadUserSettingsAsync(userStore, cancellationToken);
+    }
+
+    /// <summary>Loads User Settings from the store selected for the authenticated IPC user.</summary>
+    /// <param name="authenticatedUserStore">The store resolved for the authenticated user's profile.</param>
+    /// <param name="cancellationToken">Cancels the read before loading.</param>
+    public ValueTask<SettingsLoadResult<UserSettings>> LoadUserSettingsAsync(ISettingsStore<UserSettings> authenticatedUserStore, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(authenticatedUserStore);
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(userStore.Load());
+        return ValueTask.FromResult(authenticatedUserStore.Load());
     }
 
     /// <inheritdoc />
@@ -204,7 +213,15 @@ public sealed class AgentSettingsService : IAgentSettingsGateway, IDisposable
 
     /// <inheritdoc />
     public async ValueTask<SettingsApplyResult> ApplyUserSettingsAsync(UserSettings settings, CancellationToken cancellationToken = default)
+        => await ApplyUserSettingsAsync(settings, userStore, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>Validates and applies User Settings using the store selected for the authenticated IPC user.</summary>
+    /// <param name="settings">The proposed settings, validated before persistence.</param>
+    /// <param name="authenticatedUserStore">The store resolved for the authenticated user's profile.</param>
+    /// <param name="cancellationToken">Cancels before persistence or history append.</param>
+    public async ValueTask<SettingsApplyResult> ApplyUserSettingsAsync(UserSettings settings, ISettingsStore<UserSettings> authenticatedUserStore, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(authenticatedUserStore);
         var validation = SettingsValidator.Validate(settings);
         if (!validation.IsValid)
         {
@@ -212,8 +229,8 @@ public sealed class AgentSettingsService : IAgentSettingsGateway, IDisposable
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        var previous = userStore.Load().Settings;
-        userStore.Save(settings);
+        var previous = authenticatedUserStore.Load().Settings;
+        authenticatedUserStore.Save(settings);
         await history.RecordAsync(new("User", clock(), ChangedUserProperties(previous, settings)), cancellationToken).ConfigureAwait(false);
         return new(true, false, false, null);
     }

@@ -1,65 +1,33 @@
 # AgentSettingsService.cs
 
-The canonical `IAgentSettingsGateway` exposes asynchronous snapshot reads and apply calls. `AgentSettingsService` implements reads as cancellation-aware `ValueTask` operations; the UI uses the IPC-backed implementation so settings files remain Agent-owned. The service validates and authorizes ordinary Machine settings, performs safe restart/rollback, and records history. A semaphore serializes machine-setting updates with the consent-only `GrantMediaMirrorConsentAsync` operation, which replaces one PC/media binding, validates and saves it, records a settings-history fact, and restores the prior settings if history recording fails. Consent persistence does not restart monitoring and cannot apply arbitrary settings.
+## Role and public API
 
-Ordinary Machine settings updates preserve the current `MediaMirrorConsents` list exactly; clients cannot add, replace, or revoke grants through the general settings API. The narrow grant method refuses unverified NTFS consent: it requires `NtfsAclVerified`, a bound approving-user SID, and a 64-hex ACL-descriptor fingerprint. This strict new-grant check is separate from legacy settings loading so old entries can be migrated but are not thereby authorized.
+`AgentSettingsService` implements the Agent-side settings gateway. It validates, authorizes, persists, and records changes for machine settings and user preferences. Overloads accepting `ISettingsStore<UserSettings>` let authenticated IPC supply the store selected for the caller's profile; machine settings remain in their dedicated machine store.
 
-## ??
+## Invariants and dependencies
 
-UI ???????? Agent ? IPC ??????????????????????????????????????????????
+Production user-settings IPC never uses the LocalSystem process profile: an authenticated profile store is required. Ordinary machine updates preserve media-consent records; consent grant changes use a dedicated verified path. Machine updates coordinate restart/rollback through `IMonitoringLifecycle`, and changes are recorded through `ISettingsChangeHistory`. Dependencies are the settings stores, validator, authorizer, history, lifecycle, clock, and cancellation tokens.
 
-## ????????
+## Failure behavior and tests
 
-`IAgentSettingsGateway` ? UI ???????????UI ? Settings store ????????????????Machine ??? `IAgentSettingsAuthorizer` ????????????????? `SettingsChangeHistoryEvent` ??????????????? Machine ??? `IMonitoringLifecycle.RestartAsync` ??????
-
-## ?????????
-
-Store???????lifecycle ???????????????????? `SettingsApplyResult.Succeeded == false` ???UI ????????????????????????????????????????????????????????
-
-## ?????
-
-Settings ???? IPC ???????????????????????
-
-## Role
-
-This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle.
+Invalid settings, authorization denial, cancellation, persistence/history errors, and restart failures are surfaced as failed results or exceptions according to the gateway contract; no missing profile falls back to another store. `tests/StorageChronicle.Settings.Tests` covers settings validation, history, and consent invariants. `tests/StorageChronicle.Agent.Tests/AuthenticatedUserSettingsRoutingTests.cs` covers SID-scoped store selection and payload spoof resistance. Actual Windows service/profile behavior remains unverified until acceptance testing.
 
 ## Public types and responsibilities
 
-Public types preserve source facts and the explicitly owned responsibility; UI interpretation and correlation remain outside this boundary.
+`AgentSettingsService` implements `IAgentSettingsGateway` and owns validation/persistence orchestration. The IPC server authenticates the caller and selects the per-user store; this service does not infer identity from a settings payload.
 
 ## Inputs and outputs
 
-Inputs and outputs are the declared contracts of the source file. File contents and file-content hashes are never an input or output.
-
-## Dependencies
-
-Dependencies are limited to the referenced project contracts and platform services shown by the source file.
-
-## Invariants
-
-The source keeps canonical facts distinguishable from reconstructed state and does not synthesize descendant events.
+Inputs are typed machine/user settings and cancellation tokens. Outputs are load/apply results and recorded settings-change events; file contents and content hashes are outside this API.
 
 ## Threading and lifetime
 
-Callers own cancellation and lifetime; asynchronous work must not outlive the owning pipeline or UI scope.
-
-## Failure behavior
-
-Failure, corruption, cancellation, and recovery remain observable and are not converted into a false successful observation.
-
-## Tests
-
-`tests/StorageChronicle.Settings.Tests/SettingsTests.cs` proves that ordinary updates cannot forge/revoke consents and that an unverified NTFS grant is rejected.
-
-Validated by tests/StorageChronicle.Integration.Tests and the affected integration tests.
+Machine updates and consent persistence use the service's synchronization boundary. User-store operations are scoped to the supplied authenticated profile store and do not retain it for another caller.
 
 ## OS constraints
 
-Platform-neutral behavior remains portable; Windows-only APIs are isolated in the Windows platform projects.
+The service is platform-neutral. Windows profile discovery is isolated in the Agent resolver; settings data is written only through the supplied store.
 
 ## Change-sensitive contracts
 
-Public names, serialized fields, persistence boundaries, and the mirrored path are compatibility-sensitive contracts.
-
-The `MachineSettings.MediaMirrorConsents` list is PC-local and included in change detection. The dedicated IPC decision path must authenticate a current interactive Desktop UI caller; Session Agent clients cannot submit consent decisions. The settings service's narrow grant method is called only after the Agent revalidates the pending request and live media/root identities. Cancellation, invalid settings, storage errors, and history-recording failures remain visible and fail closed. `tests/StorageChronicle.Settings.Tests` and `tests/StorageChronicle.Agent.Tests` cover settings behavior and consent persistence.
+Settings validation, consent preservation, authorization requirements, history semantics, and the authenticated-user store overloads are compatibility-sensitive.

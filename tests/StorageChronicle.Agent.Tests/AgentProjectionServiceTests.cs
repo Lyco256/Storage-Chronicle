@@ -284,7 +284,9 @@ public sealed class AgentProjectionServiceTests
             var now = DateTimeOffset.UtcNow;
             var value = Event(now, 1, "process-1", "C:\\data\\pipe.txt");
             await storage.AppendCanonicalAsync(value);
-            using var server = new NamedPipeAgentServer(new AgentProjectionService(storage), storage, new AgentHealthState(), new StorageChronicle.Normalization.EventNormalizer());
+            using var server = new NamedPipeAgentServer(
+                new AgentProjectionService(storage), storage, new AgentHealthState(), new StorageChronicle.Normalization.EventNormalizer(),
+                userSettingsStoreResolver: new StaticUserSettingsStoreResolver(new FixedUserSettingsStore(new UserSettings { PaneTimeoutSeconds = 5 })));
             using var stopped = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             await server.StartAsync(stopped.Token);
 

@@ -27,12 +27,13 @@ public sealed class NamedPipeAgentServer : BackgroundService
     private readonly IEventNormalizer normalizer;
     private readonly IConfirmedReconciliationRunner? reconciliationRunner;
     private readonly MediaMirrorConsentService? mediaConsent;
+    private readonly IAuthenticatedUserSettingsStoreResolver? userSettingsStoreResolver;
     private readonly ConcurrentDictionary<string, byte> clipboardDedup = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<string> clipboardDedupOrder = new();
     private const int ClipboardDedupCapacity = 4096;
 
     /// <summary>Initializes the named pipe server.</summary>
-    public NamedPipeAgentServer(IProjectionService projection, AppendOnlyStorageEngine store, AgentHealthState health, IEventNormalizer normalizer, AgentSettingsService? settings = null, IMonitoringLifecycle? monitoringLifecycle = null, IConfirmedReconciliationRunner? reconciliationRunner = null, MediaMirrorConsentService? mediaConsent = null)
+    public NamedPipeAgentServer(IProjectionService projection, AppendOnlyStorageEngine store, AgentHealthState health, IEventNormalizer normalizer, AgentSettingsService? settings = null, IMonitoringLifecycle? monitoringLifecycle = null, IConfirmedReconciliationRunner? reconciliationRunner = null, MediaMirrorConsentService? mediaConsent = null, IAuthenticatedUserSettingsStoreResolver? userSettingsStoreResolver = null)
     {
         this.projection = projection ?? throw new ArgumentNullException(nameof(projection));
         this.store = store ?? throw new ArgumentNullException(nameof(store));
@@ -41,6 +42,7 @@ public sealed class NamedPipeAgentServer : BackgroundService
         this.settings = settings;
         this.reconciliationRunner = reconciliationRunner;
         this.mediaConsent = mediaConsent;
+        this.userSettingsStoreResolver = userSettingsStoreResolver;
     }
 
     /// <inheritdoc />
@@ -142,7 +144,7 @@ public sealed class NamedPipeAgentServer : BackgroundService
         }
     }
 
-    private async ValueTask<IpcEnvelope?> DispatchAsync(IpcEnvelope request, NamedPipeClientIdentity identity, CancellationToken cancellationToken)
+    internal async ValueTask<IpcEnvelope?> DispatchAsync(IpcEnvelope request, NamedPipeClientIdentity identity, CancellationToken cancellationToken)
     {
         if (request.MessageType == "ProjectionPageRequest")
         {
@@ -161,7 +163,10 @@ public sealed class NamedPipeAgentServer : BackgroundService
             var value = IpcProtocol.Read<DiffProjectionRequest>(request);
             if (projection is AgentProjectionService agent)
             {
-                return IpcProtocol.Create("DiffProjectionResponse", await agent.GetDiffProjectionAsync(value, cancellationToken).ConfigureAwait(false));
+                var userSettingsStore = ResolveUserSettingsStore(identity);
+                if (userSettingsStore is null) return Rejected("The authenticated user's profile settings are unavailable.");
+                var userSettings = userSettingsStore.Load().Settings;
+                return IpcProtocol.Create("DiffProjectionResponse", await agent.GetDiffProjectionAsync(value, userSettings, cancellationToken).ConfigureAwait(false));
             }
 
             var rows = await projection.GetDiffAsync(value.FromUtc, value.ToUtc, value.Mode, cancellationToken).ConfigureAwait(false);
@@ -172,7 +177,10 @@ public sealed class NamedPipeAgentServer : BackgroundService
         {
             var value = IpcProtocol.Read<DiffActivityFrameTimelineRequest>(request);
             if (projection is not AgentProjectionService agent) return Rejected("Activity Frame timelines are unavailable.");
-            return IpcProtocol.Create("DiffActivityFrameTimelineResponse", await agent.GetActivityFrameTimelineAsync(value, cancellationToken).ConfigureAwait(false));
+            var userSettingsStore = ResolveUserSettingsStore(identity);
+            if (userSettingsStore is null) return Rejected("The authenticated user's profile settings are unavailable.");
+            var userSettings = userSettingsStore.Load().Settings;
+            return IpcProtocol.Create("DiffActivityFrameTimelineResponse", await agent.GetActivityFrameTimelineAsync(value, userSettings, cancellationToken).ConfigureAwait(false));
         }
 
         if (request.MessageType == "AgentHealthRequest")
@@ -221,8 +229,10 @@ public sealed class NamedPipeAgentServer : BackgroundService
         if (request.MessageType == "SettingsSnapshotRequest")
         {
             if (settings is null) return Rejected("Settings endpoint is unavailable.");
+            var userSettingsStore = ResolveUserSettingsStore(identity);
+            if (userSettingsStore is null) return Rejected("The authenticated user's profile settings are unavailable.");
             var machine = await settings.LoadMachineSettingsAsync(cancellationToken).ConfigureAwait(false);
-            var user = await settings.LoadUserSettingsAsync(cancellationToken).ConfigureAwait(false);
+            var user = await settings.LoadUserSettingsAsync(userSettingsStore, cancellationToken).ConfigureAwait(false);
             return IpcProtocol.Create("SettingsSnapshot", new SettingsSnapshot(ToJson(machine.Settings), ToJson(user.Settings), machine.Warning, user.Warning));
         }
 
@@ -233,7 +243,7 @@ public sealed class NamedPipeAgentServer : BackgroundService
             var value = IpcProtocol.Read<SettingsUpdateRequest>(request);
             if (value.Scope == SettingsScope.Machine && !identity.IsAdministrator) return Rejected("Machine settings require an administrator token.");
             using var authorization = SettingsAuthorizationContext.Enter(identity.IsAdministrator);
-            var result = await ApplySettingsAsync(value, cancellationToken).ConfigureAwait(false);
+            var result = await ApplySettingsAsync(value, identity, cancellationToken).ConfigureAwait(false);
             return IpcProtocol.Create("SettingsApplyResult", ToJson(result));
         }
 
@@ -282,7 +292,7 @@ public sealed class NamedPipeAgentServer : BackgroundService
             _ => false
         };
 
-    private async ValueTask<SettingsApplyResult> ApplySettingsAsync(SettingsUpdateRequest request, CancellationToken cancellationToken)
+    private async ValueTask<SettingsApplyResult> ApplySettingsAsync(SettingsUpdateRequest request, NamedPipeClientIdentity identity, CancellationToken cancellationToken)
     {
         using var document = request.Settings.ValueKind == JsonValueKind.Undefined
             ? throw new InvalidDataException("Settings payload is empty.")
@@ -295,7 +305,19 @@ public sealed class NamedPipeAgentServer : BackgroundService
         }
 
         var user = document.RootElement.Deserialize<UserSettings>() ?? throw new InvalidDataException("User settings payload is invalid.");
-        return await settings.ApplyUserSettingsAsync(user, cancellationToken).ConfigureAwait(false);
+        var userSettingsStore = ResolveUserSettingsStore(identity);
+        if (userSettingsStore is null) return SettingsApplyResult.Failed("The authenticated user's profile settings are unavailable.");
+        return await settings.ApplyUserSettingsAsync(user, userSettingsStore, cancellationToken).ConfigureAwait(false);
+    }
+
+    private ISettingsStore<UserSettings>? ResolveUserSettingsStore(NamedPipeClientIdentity identity)
+    {
+        if (!identity.IsCurrentUserSession || userSettingsStoreResolver is null) return null;
+        try { return userSettingsStoreResolver.Resolve(identity.Sid); }
+        catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException or System.Security.SecurityException)
+        {
+            return null;
+        }
     }
 
     private IpcEnvelope Rejected(string reason) => IpcProtocol.Create("Error", new AgentHealth("Rejected", reason, store.Status.LastSequence, Array.Empty<VolumeHealth>()));
