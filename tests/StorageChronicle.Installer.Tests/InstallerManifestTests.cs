@@ -5,6 +5,9 @@ namespace StorageChronicle.Installer.Tests;
 
 public sealed class InstallerManifestTests
 {
+    private static readonly string[] ExistingRunValueNames = { "OtherValue", "storagechroniclesessionagent" };
+    private static readonly string[] MissingRunValueNames = { "OtherValue", "StorageChronicleSessionAgentBackup" };
+
     [Fact]
     public void InstallerAuthorizationHelloAcceptsOnlyTheExactChildAndCaseContext()
     {
@@ -43,6 +46,149 @@ public sealed class InstallerManifestTests
         Assert.Equal("NOT_EXECUTED", InstallerAuthorizationProtocol.MapLaunchFailure(1223));
         Assert.Equal("FAILED", InstallerAuthorizationProtocol.MapLaunchFailure(5));
         Assert.Equal("FAILED", InstallerAuthorizationProtocol.MapLaunchFailure(-1));
+    }
+
+    [Fact]
+    public void VerifiedPayloadLockRejectsCorruptedPayloadAndReleasesFailedOpen()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var path = Path.Combine(Path.GetTempPath(), "sc-installer-payload-" + Guid.NewGuid().ToString("N") + ".bin");
+        var bytes = new byte[] { 0x10, 0x20, 0x30, 0x40 };
+        try
+        {
+            File.WriteAllBytes(path, bytes);
+            var expected = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
+
+            Assert.Throws<InvalidDataException>(() => VerifiedPayloadLock.OpenAndVerify(path, new string('0', 64)));
+
+            using var verified = VerifiedPayloadLock.OpenAndVerify(path, expected);
+            Assert.Equal(Path.GetFullPath(path), verified.Path);
+            Assert.Equal(expected, verified.Sha256);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void VerifiedPayloadLockPreventsWriteAndRenameUntilTheConsumerReleasesIt()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var directory = Path.Combine(Path.GetTempPath(), "sc-installer-held-payload-" + Guid.NewGuid().ToString("N"));
+        var renamedDirectory = directory + ".replacement";
+        var path = Path.Combine(directory, "payload.bin");
+        var renamedPayload = path + ".replacement";
+        var bytes = new byte[] { 0x41, 0x42, 0x43 };
+        try
+        {
+            Directory.CreateDirectory(directory);
+            File.WriteAllBytes(path, bytes);
+            var expected = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
+            var held = VerifiedPayloadLock.OpenAndVerify(path, expected);
+            try
+            {
+                using (var reader = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                {
+                    Assert.Equal(bytes[0], (byte)reader.ReadByte());
+                    Assert.Equal(bytes[1], (byte)reader.ReadByte());
+                    Assert.Equal(bytes[2], (byte)reader.ReadByte());
+                }
+                Assert.Throws<IOException>(() => new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete));
+                Assert.Throws<IOException>(() => File.Move(path, renamedPayload));
+                Assert.Throws<IOException>(() => Directory.Move(directory, renamedDirectory));
+                Assert.True(File.Exists(path));
+            }
+            finally
+            {
+                held.Dispose();
+            }
+
+            using (var writer = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None))
+            {
+                writer.WriteByte(0x55);
+            }
+        }
+        finally
+        {
+            foreach (var candidate in new[] { directory, renamedDirectory })
+            {
+                var candidateFile = Path.Combine(candidate, "payload.bin");
+                if (File.Exists(candidateFile)) File.Delete(candidateFile);
+                if (File.Exists(candidateFile + ".replacement")) File.Delete(candidateFile + ".replacement");
+                if (Directory.Exists(candidate)) Directory.Delete(candidate);
+            }
+        }
+    }
+
+    [Fact]
+    public void ExactHklmRunValueNameUsesCaseInsensitiveRegistryComparison()
+    {
+        Assert.True(InstallerAuthorizationProtocol.ContainsRegistryValueName(
+            ExistingRunValueNames, "StorageChronicleSessionAgent"));
+        Assert.False(InstallerAuthorizationProtocol.ContainsRegistryValueName(
+            MissingRunValueNames, "StorageChronicleSessionAgent"));
+        Assert.Throws<ArgumentNullException>(() => InstallerAuthorizationProtocol.ContainsRegistryValueName(null!, "StorageChronicleSessionAgent"));
+    }
+
+    [Fact]
+    public void TimedOutChildRemainsIndeterminateUntilItsExactHandleProvesExit()
+    {
+        var state = new InstallerChildCompletionState();
+
+        Assert.False(state.TryProveTerminal(false, 0));
+        state.MarkTimedOut();
+        Assert.True(state.MustRemainIndeterminate);
+        Assert.False(state.TerminalProven);
+        Assert.False(state.TryProveTerminal(false, 124));
+        Assert.False(state.TerminalProven);
+        Assert.True(state.TryProveTerminal(true, 0));
+        Assert.True(state.TerminalProven);
+        Assert.True(state.MustRemainIndeterminate);
+        Assert.Equal(0, state.ExitCode);
+    }
+
+    [Fact]
+    public void InstallerHarnessPinsPayloadHandlesAndFailsClosedOnUnsafeDriverTimeoutCode()
+    {
+        var root = FindRoot();
+        var harness = File.ReadAllText(Path.Combine(root, "build", "package", "Test-Installer.ps1"));
+        var driver = File.ReadAllText(Path.Combine(root, "tools", "PhysicalAcceptance", "Invoke-RealInstallerCase.ps1"));
+        var runCheck = harness.IndexOf("Assert-HklmRunValueNameAbsent -ValueName 'StorageChronicleSessionAgent'", StringComparison.Ordinal);
+        var payloadLock = harness.IndexOf("VerifiedPayloadLock]::OpenAndVerify($candidatePath", StringComparison.Ordinal);
+        var driverGuard = harness.IndexOf("Assert-BundledDriverTimeoutContract -Path $DriverScript", StringComparison.Ordinal);
+        var launch = harness.IndexOf("Start-UacInstallerCase -FilePath", StringComparison.Ordinal);
+        var physicalCaseStart = harness.IndexOf("function Invoke-PhysicalInstallerCase", StringComparison.Ordinal);
+        var physicalCaseEnd = harness.IndexOf("function Invoke-InstallerCase", physicalCaseStart, StringComparison.Ordinal);
+        var physicalCase = harness.Substring(physicalCaseStart, physicalCaseEnd - physicalCaseStart);
+        var justBeforeFirstLaunchCheck = physicalCase.IndexOf("if (-not $script:HasLaunchedFirstPrivilegedChild)", StringComparison.Ordinal);
+        var physicalLaunch = physicalCase.IndexOf("Start-UacInstallerCase -FilePath", StringComparison.Ordinal);
+
+        Assert.True(runCheck >= 0 && runCheck < launch);
+        Assert.True(payloadLock >= 0 && payloadLock < launch);
+        Assert.True(driverGuard >= 0 && driverGuard < launch);
+        Assert.True(physicalCaseStart >= 0 && physicalCaseEnd > physicalCaseStart && justBeforeFirstLaunchCheck >= 0 && justBeforeFirstLaunchCheck < physicalLaunch);
+        var authorization = File.ReadAllText(Path.Combine(root, "build", "package", "InstallerAuthorizationProtocol.cs"));
+        Assert.Contains("FileShareRead", authorization, StringComparison.Ordinal);
+        Assert.Contains("FileFlagOpenReparsePoint", authorization, StringComparison.Ordinal);
+        Assert.Contains("AcquireParentDirectoryHandles", authorization, StringComparison.Ordinal);
+        Assert.Contains("ParseInput($source", harness, StringComparison.Ordinal);
+        Assert.Contains("RegistryView]::Registry64", harness, StringComparison.Ordinal);
+        Assert.Contains("RegistryView]::Registry32", harness, StringComparison.Ordinal);
+        Assert.Contains("ChildTerminatedByHarness = $false", harness, StringComparison.Ordinal);
+        Assert.Contains("$Process.WaitForExit()", harness, StringComparison.Ordinal);
+        Assert.Contains("TryProveTerminal($Process.HasExited, $Process.ExitCode)", harness, StringComparison.Ordinal);
+        Assert.Contains("Status 'INDETERMINATE'", harness, StringComparison.Ordinal);
+        Assert.DoesNotContain("$process.Kill(", harness, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Get-FileHash", harness, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Dispose-VerifiedPayloadLocks", harness, StringComparison.Ordinal);
+        Assert.Contains("if ($script:StopAfterLiveChild)", harness, StringComparison.Ordinal);
+
+        var invokeCapturedStart = driver.IndexOf("function Invoke-Captured", StringComparison.Ordinal);
+        var invokeCapturedEnd = driver.IndexOf("function Invoke-Msi", invokeCapturedStart, StringComparison.Ordinal);
+        Assert.True(invokeCapturedStart >= 0 && invokeCapturedEnd > invokeCapturedStart);
+        Assert.Contains("$process.Kill()", driver.Substring(invokeCapturedStart, invokeCapturedEnd - invokeCapturedStart), StringComparison.Ordinal);
+        Assert.Contains("physical execution is refused before UAC", harness, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

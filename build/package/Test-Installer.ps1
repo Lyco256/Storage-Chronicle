@@ -30,9 +30,75 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+function Assert-BundledDriverTimeoutContract {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $source = [IO.File]::ReadAllText($Path)
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors.Count -gt 0) { throw 'The approved installer driver does not parse; physical execution is refused.' }
+
+    $functions = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-Captured' }, $true))
+    if ($functions.Count -ne 1) { throw 'The approved installer driver must define exactly one auditable Invoke-Captured timeout boundary.' }
+    $calls = @($functions[0].Body.FindAll({ param($node) $node -is [Management.Automation.Language.InvokeMemberExpressionAst] }, $true))
+    $kills = @($calls | Where-Object {
+        $_.Expression -is [Management.Automation.Language.VariableExpressionAst] -and
+        $_.Expression.VariablePath.UserPath -ieq 'process' -and
+        $_.Member.Extent.Text.Trim([char[]]@([char]39, [char]34)) -ieq 'Kill'
+    })
+    $waits = @($calls | Where-Object {
+        $_.Expression -is [Management.Automation.Language.VariableExpressionAst] -and
+        $_.Expression.VariablePath.UserPath -ieq 'process' -and
+        $_.Member.Extent.Text.Trim([char[]]@([char]39, [char]34)) -ieq 'WaitForExit'
+    })
+    $boundedWait = @($waits | Where-Object { $_.Arguments.Count -gt 0 }).Count -gt 0
+    $terminalWait = @($waits | Where-Object { $_.Arguments.Count -eq 0 }).Count -gt 0
+    if ($kills.Count -gt 0 -or -not $boundedWait -or -not $terminalWait) {
+        throw 'The approved installer driver timeout boundary is unsafe: timeout must not kill the child and must wait on the exact process handle for terminal state. Physical execution is refused before UAC.'
+    }
+}
+
+function Assert-HklmRunValueNameAbsent {
+    param([Parameter(Mandatory = $true)][string]$ValueName)
+
+    try {
+        foreach ($view in @([Microsoft.Win32.RegistryView]::Registry64, [Microsoft.Win32.RegistryView]::Registry32)) {
+            $baseKey = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, $view)
+            $runKey = $null
+            try {
+                $runKey = $baseKey.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Run', $false)
+                if ($null -eq $runKey) { continue }
+                $valueNames = $runKey.GetValueNames()
+                if ([StorageChronicle.InstallerAuthorization.InstallerAuthorizationProtocol]::ContainsRegistryValueName($valueNames, $ValueName)) {
+                    throw "The exact HKLM Run value '$ValueName' already exists in registry view '$view'. The installer acceptance refuses to execute any privileged case because MSI authoring could overwrite it."
+                }
+            } finally {
+                if ($null -ne $runKey) { $runKey.Dispose() }
+                $baseKey.Dispose()
+            }
+        }
+    } catch [UnauthorizedAccessException] {
+        throw 'HKLM Run could not be inspected read-only; physical installer execution is refused.'
+    }
+}
+
+function Dispose-VerifiedPayloadLocks {
+    if ($null -eq $script:VerifiedPayloadLocks) { return }
+    if ($null -ne $script:ActiveChildProcess -and -not $script:ActiveChildProcess.HasExited) {
+        $script:StopAfterLiveChild = $true
+        $script:ActiveChildProcess.WaitForExit()
+    }
+    for ($index = $script:VerifiedPayloadLocks.Count - 1; $index -ge 0; $index--) {
+        $script:VerifiedPayloadLocks[$index].Dispose()
+    }
+    $script:VerifiedPayloadLocks.Clear()
+}
+
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $script:InstallerAuthorizationProtocolPath = Join-Path $PSScriptRoot 'InstallerAuthorizationProtocol.cs'
 $script:InstallerAuthorizationLoaded = $false
+$script:HasLaunchedFirstPrivilegedChild = $false
 $runId = if ([string]::IsNullOrWhiteSpace($RunId)) { [guid]::NewGuid().ToString('D') } else { $RunId }
 $parsedRunId = [guid]::Empty
 if (-not [guid]::TryParse($runId, [ref]$parsedRunId)) { throw 'Installer acceptance RunId must be a GUID.' }
@@ -81,6 +147,12 @@ $OutputDirectory = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) "run-$ru
 $isPhysicalExecution = [bool]$Execute -and $TargetKind -eq 'PhysicalMachine' -and $ExecutionMode -eq 'Local'
 if ($Execute -and -not $isPhysicalExecution) { throw 'VM and non-physical installer execution are disabled by the physical-read-only acceptance policy.' }
 if ($isPhysicalExecution) {
+    if ($env:OS -ne 'Windows_NT') { throw 'Physical installer execution requires a Windows host.' }
+    Add-Type -Path $script:InstallerAuthorizationProtocolPath -ErrorAction Stop
+    $script:InstallerAuthorizationLoaded = $true
+    $script:VerifiedPayloadLocks = [System.Collections.Generic.List[System.IDisposable]]::new()
+    Assert-HklmRunValueNameAbsent -ValueName 'StorageChronicleSessionAgent'
+
     if (-not $ConfirmDedicatedPhysicalMachine) { throw 'Physical installer execution requires -ConfirmDedicatedPhysicalMachine.' }
     if ([string]::IsNullOrWhiteSpace($ExpectedComputerName) -or -not $ExpectedComputerName.Equals($env:COMPUTERNAME, [StringComparison]::OrdinalIgnoreCase)) { throw 'ExpectedComputerName must exactly match the current physical test PC.' }
     $physicalModel = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
@@ -98,8 +170,13 @@ if ($isPhysicalExecution) {
     if ($physicalIsElevated -or -not $isAdminGroupMember -or [int]$physicalUac.EnableLUA -ne 1 -or $promptBehavior -notin @(1, 2, 3, 4)) { throw 'Physical installer acceptance requires a non-elevated filtered token for a local Administrators member, EnableLUA=1, and ConsentPromptBehaviorAdmin in {1,2,3,4}.' }
     if ($ExpectedHashManifestSha256 -notmatch '^[A-Fa-f0-9]{64}$') { throw 'An externally reviewed hash-manifest SHA-256 is required for physical execution.' }
     $bundleRoot = [IO.Path]::GetFullPath((Split-Path -Parent $DriverScript)).TrimEnd('\')
+    if ($bundleRoot.StartsWith('\\', [StringComparison]::Ordinal) -or $bundleRoot -notmatch '^[A-Za-z]:\\') { throw 'The approved installer bundle must reside on a local drive, not UNC or a device namespace.' }
+    $bundleVolume = Get-Volume -FilePath $bundleRoot -ErrorAction Stop
+    if ([string]$bundleVolume.FileSystem -ne 'NTFS' -or [string]$bundleVolume.DriveType -ne 'Fixed') { throw 'The approved installer bundle must reside on a local fixed NTFS volume for handle-sharing guarantees.' }
     $bundleHashPath = Join-Path $bundleRoot 'hash-manifest.json'
-    if (-not (Test-Path -LiteralPath $bundleHashPath -PathType Leaf) -or -not (Get-FileHash -Algorithm SHA256 -LiteralPath $bundleHashPath).Hash.Equals($ExpectedHashManifestSha256, [StringComparison]::OrdinalIgnoreCase)) { throw 'The trusted hash-manifest fingerprint does not match the bundle.' }
+    if (-not (Test-Path -LiteralPath $bundleHashPath -PathType Leaf)) { throw 'The trusted hash manifest is missing.' }
+    $manifestLock = [StorageChronicle.InstallerAuthorization.VerifiedPayloadLock]::OpenAndVerify($bundleHashPath, $ExpectedHashManifestSha256)
+    [void]$script:VerifiedPayloadLocks.Add($manifestLock)
     $bundleHashes = Get-Content -Raw -Encoding UTF8 -LiteralPath $bundleHashPath | ConvertFrom-Json
     $verifiedBundleFiles = @{}
     foreach ($entry in @($bundleHashes.Files)) {
@@ -107,10 +184,11 @@ if ($isPhysicalExecution) {
         if ([string]::IsNullOrWhiteSpace($relativePath) -or [IO.Path]::IsPathRooted($relativePath) -or $relativePath -match '(^|[\\/])\.\.([\\/]|$)' -or $relativePath.Contains(':') -or $entry.SHA256 -notmatch '^[A-Fa-f0-9]{64}$') { throw "Bundle hash entry is unsafe or malformed: $relativePath" }
         $candidatePath = [IO.Path]::GetFullPath((Join-Path $bundleRoot $relativePath))
         if (-not $candidatePath.StartsWith($bundleRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $candidatePath -PathType Leaf)) { throw "Bundle hash entry is missing or escapes the bundle root: $($entry.RelativePath)" }
-        if (-not (Get-FileHash -Algorithm SHA256 -LiteralPath $candidatePath).Hash.Equals([string]$entry.SHA256, [StringComparison]::OrdinalIgnoreCase)) { throw "Bundle payload hash mismatch: $($entry.RelativePath)" }
         $normalizedRelativePath = $relativePath.Replace('/', '\')
         if ($verifiedBundleFiles.ContainsKey($normalizedRelativePath)) { throw "Bundle hash manifest contains a duplicate payload path: $relativePath" }
-        $verifiedBundleFiles[$normalizedRelativePath] = [string]$entry.SHA256
+        $payloadLock = [StorageChronicle.InstallerAuthorization.VerifiedPayloadLock]::OpenAndVerify($candidatePath, [string]$entry.SHA256)
+        [void]$script:VerifiedPayloadLocks.Add($payloadLock)
+        $verifiedBundleFiles[$normalizedRelativePath] = $payloadLock.Sha256
     }
     foreach ($expectedPayload in @(
         @{ RelativePath = 'StorageChronicle.msi'; Path = $MsiPath },
@@ -121,8 +199,8 @@ if ($isPhysicalExecution) {
         $expectedPath = [IO.Path]::GetFullPath((Join-Path $bundleRoot $expectedPayload.RelativePath))
         $suppliedPath = [IO.Path]::GetFullPath($expectedPayload.Path)
         if (-not $suppliedPath.Equals($expectedPath, [StringComparison]::OrdinalIgnoreCase) -or -not $verifiedBundleFiles.ContainsKey($expectedPayload.RelativePath)) { throw "Physical installer input must be the exact fingerprinted bundle payload: $($expectedPayload.RelativePath)" }
-        if (-not (Get-FileHash -Algorithm SHA256 -LiteralPath $suppliedPath).Hash.Equals($verifiedBundleFiles[$expectedPayload.RelativePath], [StringComparison]::OrdinalIgnoreCase)) { throw "Physical installer input hash does not match the approved bundle entry: $($expectedPayload.RelativePath)" }
     }
+    Assert-BundledDriverTimeoutContract -Path $DriverScript
     $script:ApprovedPayloadHashes = [ordered]@{
         BaseMsiSha256 = $verifiedBundleFiles['StorageChronicle.msi']
         UpdatedMsiSha256 = $verifiedBundleFiles['StorageChronicle.updated.msi']
@@ -172,7 +250,7 @@ if ($isPhysicalExecution) {
     if ($OutputDirectory -match '(?i)\\OneDrive\\|\\Documents\\') { throw 'Physical installer output must not be under OneDrive or Documents.' }
     $testDataFullPath = [IO.Path]::GetFullPath($env:STORAGE_CHRONICLE_ACCEPTANCE_TEST_ROOT).TrimEnd('\')
     if ($OutputDirectory.Equals($testDataFullPath, [StringComparison]::OrdinalIgnoreCase) -or $OutputDirectory.StartsWith($testDataFullPath + '\', [StringComparison]::OrdinalIgnoreCase) -or $testDataFullPath.StartsWith($OutputDirectory + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Evidence output and mutable TestDataRoot must be separate, non-overlapping paths.' }
-    $answer = Read-Host "This will install/repair/update/rollback/uninstall Storage Chronicle and temporarily change then restore ACLs on a new fixture. Verify this is a dedicated physical test PC with no existing product/history. PC=$env:COMPUTERNAME; RunId=$runId; TestData=$testDataFullPath; History=$HistoryPath; Install=$InstallPath; Evidence=$OutputDirectory; MSI SHA256: base=$((Get-FileHash -Algorithm SHA256 -LiteralPath $MsiPath).Hash); updated=$((Get-FileHash -Algorithm SHA256 -LiteralPath $UpdatedMsiPath).Hash); rollback=$((Get-FileHash -Algorithm SHA256 -LiteralPath $RollbackMsiPath).Hash). Type I CONFIRM DEDICATED PC $env:COMPUTERNAME RUN $runId to authorize"
+    $answer = Read-Host "This will install/repair/update/rollback/uninstall Storage Chronicle and temporarily change then restore ACLs on a new fixture. Verify this is a dedicated physical test PC with no existing product/history. PC=$env:COMPUTERNAME; RunId=$runId; TestData=$testDataFullPath; History=$HistoryPath; Install=$InstallPath; Evidence=$OutputDirectory; MSI SHA256: base=$($script:ApprovedPayloadHashes.BaseMsiSha256); updated=$($script:ApprovedPayloadHashes.UpdatedMsiSha256); rollback=$($script:ApprovedPayloadHashes.RollbackMsiSha256). Type I CONFIRM DEDICATED PC $env:COMPUTERNAME RUN $runId to authorize"
     if ($answer -cne "I CONFIRM DEDICATED PC $env:COMPUTERNAME RUN $runId") { throw 'Physical installer user confirmation did not exactly match the dedicated PC and run ID.' }
     $script:PhysicalMachineConfirmation = $answer
 }
@@ -264,14 +342,17 @@ function Add-CaseResult {
     param(
         [Parameter(Mandatory = $true)][string]$Id,
         [Parameter(Mandatory = $true)][string]$Name,
-        [Parameter(Mandatory = $true)][ValidateSet('PASSED', 'FAILED', 'NOT_EXECUTED')][string]$Status,
+        [Parameter(Mandatory = $true)][ValidateSet('PASSED', 'FAILED', 'NOT_EXECUTED', 'INDETERMINATE')][string]$Status,
         [string]$Reason,
         [Nullable[int]]$ExitCode = $null,
         [Nullable[double]]$DurationSeconds = $null,
         [string]$ResultPath,
         [string]$LogPath,
         [object]$Assertions,
-        [object]$Target
+        [object]$Target,
+        [string]$IndeterminateEvidencePath,
+        [Nullable[bool]]$TerminalObserved = $null,
+        [Nullable[int]]$TerminalExitCode = $null
     )
 
     $assertionList = New-Object System.Collections.ArrayList
@@ -293,6 +374,9 @@ function Add-CaseResult {
         LogPath = $LogPath
         Assertions = $assertionList
         Target = $Target
+        IndeterminateEvidencePath = $IndeterminateEvidencePath
+        TerminalObserved = $TerminalObserved
+        TerminalExitCode = $TerminalExitCode
     }
     [void]$script:CaseResults.Add([pscustomobject]$record)
     Write-Host ("{0} [{1}] {2}" -f $Status, $Id, $(if ([string]::IsNullOrWhiteSpace($Reason)) { $Name } else { $Reason })) -ForegroundColor $(switch ($Status) { 'PASSED' { 'Green' } 'FAILED' { 'Red' } default { 'Yellow' } })
@@ -384,6 +468,46 @@ function Write-NewUtf8File([string]$Path, [string]$Value) {
     $bytes = [Text.UTF8Encoding]::new($false).GetBytes($Value)
     $stream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
     try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
+}
+
+function Record-IndeterminateChildAndWait {
+    param(
+        [Parameter(Mandatory = $true)][string]$CaseId,
+        [Parameter(Mandatory = $true)][string]$CaseName,
+        [Parameter(Mandatory = $true)][Diagnostics.Process]$Process,
+        [Parameter(Mandatory = $true)][StorageChronicle.InstallerAuthorization.InstallerChildCompletionState]$CompletionState,
+        [Parameter(Mandatory = $true)][string]$Reason,
+        [Parameter(Mandatory = $true)][double]$DurationSeconds
+    )
+
+    $CompletionState.MarkTimedOut()
+    $script:StopAfterLiveChild = $true
+    $evidencePath = Join-Path $caseDirectory "$CaseId.indeterminate.json"
+    $timeoutEvidence = [ordered]@{
+        Schema = 'StorageChronicle.InstallerCaseTimeout.v1'
+        RunId = $runId
+        CaseId = $CaseId
+        ComputerName = $env:COMPUTERNAME
+        ChildProcessId = $Process.Id
+        State = 'INDETERMINATE'
+        TimedOutUtc = [DateTimeOffset]::UtcNow.ToString('O')
+        Reason = $Reason
+        ChildTerminatedByHarness = $false
+        DependentCasesLaunched = $false
+    }
+    Add-CaseResult -Id $CaseId -Name $CaseName -Status 'INDETERMINATE' -Reason $Reason -DurationSeconds $DurationSeconds -IndeterminateEvidencePath $evidencePath -TerminalObserved $false
+    Write-NewJsonFile $evidencePath $timeoutEvidence
+
+    Write-Warning "Case '$CaseId' is INDETERMINATE. The harness will not terminate child PID $($Process.Id), will retain verified payload handles, and will wait on that exact process handle before writing final results. Dependent cases remain disabled."
+    $Process.WaitForExit()
+    if (-not $CompletionState.TryProveTerminal($Process.HasExited, $Process.ExitCode)) {
+        throw "The exact child process handle did not prove terminal completion for '$CaseId'."
+    }
+
+    $caseRecord = $script:CaseResults[$script:CaseResults.Count - 1]
+    $caseRecord.TerminalObserved = $true
+    $caseRecord.TerminalExitCode = $Process.ExitCode
+    $caseRecord.Reason = "$Reason Terminal state was later proven by the exact process handle (exit $($Process.ExitCode)); the timed-out case remains INDETERMINATE and dependent cases remain NOT_EXECUTED."
 }
 
 function Assert-NoReparsePath([string]$Path) {
@@ -684,12 +808,18 @@ function Invoke-PhysicalInstallerCase {
 
     $pipe = $null
     $process = $null
+    $completionState = $null
+    $caseResultRecorded = $false
     $started = [DateTime]::UtcNow
     try {
         $pipe = New-CurrentUserInstallerPipe -PipeName $script:AuthorizationPipeName
         $invocation = Get-DriverInvocation -CaseId $caseId -ResultPath $CaseResultPath -LogPath $CaseLogPath
+        if (-not $script:HasLaunchedFirstPrivilegedChild) {
+            Assert-HklmRunValueNameAbsent -ValueName 'StorageChronicleSessionAgent'
+        }
         try {
             $process = Start-UacInstallerCase -FilePath $invocation.FilePath -Arguments $invocation.Arguments
+            if ($null -ne $process) { $script:HasLaunchedFirstPrivilegedChild = $true }
         } catch {
             $launchException = $_.Exception
             while ($null -ne $launchException -and $launchException -isnot [ComponentModel.Win32Exception]) { $launchException = $launchException.InnerException }
@@ -700,12 +830,21 @@ function Invoke-PhysicalInstallerCase {
             return
         }
         if ($null -eq $process) { throw 'The UAC launcher returned no child process.' }
+        $script:ActiveChildProcess = $process
+        $completionState = [StorageChronicle.InstallerAuthorization.InstallerChildCompletionState]::new()
 
         $connectTask = $pipe.WaitForConnectionAsync()
         $pipeTimeout = [Math]::Min(30000, $CaseTimeoutSeconds * 1000)
         if (-not $connectTask.Wait($pipeTimeout)) {
-            if (-not $process.HasExited) { $script:StopAfterLiveChild = $true }
-            Add-CaseResult -Id $caseId -Name ([string]$Definition.Name) -Status 'FAILED' -Reason 'The elevated child did not connect to the one-case broker; no authorization grant was sent.' -DurationSeconds (([DateTime]::UtcNow - $started).TotalSeconds)
+            if (-not $process.HasExited) {
+                $pipe.Dispose()
+                $pipe = $null
+                Record-IndeterminateChildAndWait -CaseId $caseId -CaseName ([string]$Definition.Name) -Process $process -CompletionState $completionState -Reason 'The elevated child did not connect to the one-case broker before timeout; no authorization grant was sent.' -DurationSeconds (([DateTime]::UtcNow - $started).TotalSeconds)
+                $caseResultRecorded = $true
+            } else {
+                Add-CaseResult -Id $caseId -Name ([string]$Definition.Name) -Status 'FAILED' -Reason 'The elevated child exited without connecting to the one-case broker; no authorization grant was sent.' -DurationSeconds (([DateTime]::UtcNow - $started).TotalSeconds)
+                $caseResultRecorded = $true
+            }
             return
         }
         $actualClientPid = [StorageChronicle.InstallerAuthorization.InstallerAuthorizationProtocol]::GetClientProcessId($pipe)
@@ -747,22 +886,45 @@ function Invoke-PhysicalInstallerCase {
         }
 
         if (-not $process.WaitForExit($CaseTimeoutSeconds * 1000)) {
-            $script:StopAfterLiveChild = $true
-            Add-CaseResult -Id $caseId -Name ([string]$Definition.Name) -Status 'FAILED' -Reason "The elevated child exceeded $CaseTimeoutSeconds seconds and remains live; it was not terminated and later dependent cases will not be launched." -DurationSeconds (([DateTime]::UtcNow - $started).TotalSeconds)
+            Record-IndeterminateChildAndWait -CaseId $caseId -CaseName ([string]$Definition.Name) -Process $process -CompletionState $completionState -Reason "The elevated child exceeded $CaseTimeoutSeconds seconds; the harness did not terminate it and keeps the case indeterminate." -DurationSeconds (([DateTime]::UtcNow - $started).TotalSeconds)
+            $caseResultRecorded = $true
             return
         }
+        if (-not $completionState.TryProveTerminal($process.HasExited, $process.ExitCode)) { throw 'The exact elevated child process handle did not prove terminal completion.' }
 
         # Do not inspect child-created artifacts until the exact RunAs process has exited.
         $driverLog = Read-PhysicalDriverLog -LogPath $CaseLogPath -CaseId $caseId
         $driverResult = Read-DriverResult -CaseId $caseId -ResultPath $CaseResultPath
         if ($process.ExitCode -ne 0 -and $driverResult.Status -eq 'PASSED') { throw 'The elevated driver exited unsuccessfully while reporting a passing result.' }
-        Add-CaseResult -Id $caseId -Name ([string]$Definition.Name) -Status $driverResult.Status -Reason $driverResult.Reason -ExitCode $process.ExitCode -DurationSeconds (([DateTime]::UtcNow - $started).TotalSeconds) -ResultPath $CaseResultPath -LogPath $CaseLogPath -Assertions $driverResult.Assertions -Target $driverResult.Target
+        Add-CaseResult -Id $caseId -Name ([string]$Definition.Name) -Status $driverResult.Status -Reason $driverResult.Reason -ExitCode $process.ExitCode -DurationSeconds (([DateTime]::UtcNow - $started).TotalSeconds) -ResultPath $CaseResultPath -LogPath $CaseLogPath -Assertions $driverResult.Assertions -Target $driverResult.Target -TerminalObserved $true -TerminalExitCode $process.ExitCode
+        $caseResultRecorded = $true
     } catch {
-        if ($null -ne $process -and -not $process.HasExited) { $script:StopAfterLiveChild = $true }
-        Add-CaseResult -Id $caseId -Name ([string]$Definition.Name) -Status 'FAILED' -Reason $_.Exception.Message -DurationSeconds (([DateTime]::UtcNow - $started).TotalSeconds)
+        if ($null -ne $process -and -not $process.HasExited) {
+            $script:StopAfterLiveChild = $true
+            if ($null -ne $pipe) { $pipe.Dispose(); $pipe = $null }
+            if (-not $caseResultRecorded) {
+                Record-IndeterminateChildAndWait -CaseId $caseId -CaseName ([string]$Definition.Name) -Process $process -CompletionState $completionState -Reason "The broker failed while the elevated child was still live: $($_.Exception.Message)" -DurationSeconds (([DateTime]::UtcNow - $started).TotalSeconds)
+                $caseResultRecorded = $true
+            }
+        } elseif (-not $caseResultRecorded) {
+            Add-CaseResult -Id $caseId -Name ([string]$Definition.Name) -Status 'FAILED' -Reason $_.Exception.Message -DurationSeconds (([DateTime]::UtcNow - $started).TotalSeconds)
+            $caseResultRecorded = $true
+        }
     } finally {
+        if ($null -ne $process) {
+            if (-not $process.HasExited) {
+                $script:StopAfterLiveChild = $true
+                if ($null -ne $pipe) { $pipe.Dispose(); $pipe = $null }
+                if ($null -ne $completionState -and -not $completionState.TimedOut) { $completionState.MarkTimedOut() }
+                $process.WaitForExit()
+            }
+            if ($null -ne $completionState -and -not $completionState.TerminalProven) {
+                if (-not $completionState.TryProveTerminal($process.HasExited, $process.ExitCode)) { throw 'The exact child handle did not prove terminal state before releasing verified payload locks.' }
+            }
+            $script:ActiveChildProcess = $null
+            $process.Dispose()
+        }
         if ($null -ne $pipe) { $pipe.Dispose() }
-        if ($null -ne $process) { $process.Dispose() }
         $script:AuthorizationNonce = $null
         $script:AuthorizationPipeName = $null
         $script:CaseAuthorizationPhrase = $null
@@ -818,7 +980,7 @@ function Write-MarkdownArtifact {
     [void]$builder.AppendLine(('- Target OS: `{0}`' -f $script:Manifest.TargetOs))
     [void]$builder.AppendLine(('- Execution mode: `{0}`' -f $script:Manifest.ExecutionMode))
     [void]$builder.AppendLine()
-    [void]$builder.AppendLine('This is an acceptance result, not an MSI build result. The run is successful only when every listed case is `PASSED` with an isolated target declaration and host-visible evidence. `NOT_EXECUTED` is never treated as success.')
+    [void]$builder.AppendLine('This is an acceptance result, not an MSI build result. The run is successful only when every listed case is `PASSED` with an isolated target declaration and host-visible evidence. `NOT_EXECUTED` and `INDETERMINATE` are never treated as success.')
     [void]$builder.AppendLine()
     [void]$builder.AppendLine('## Preconditions')
     [void]$builder.AppendLine()
@@ -835,6 +997,7 @@ function Write-MarkdownArtifact {
     foreach ($case in @($script:Manifest.Tests)) {
         $evidence = @($case.Assertions | ForEach-Object { $_.EvidencePath } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
         $evidenceText = if ($evidence.Count -gt 0) { $evidence -join '<br>' } elseif (-not [string]::IsNullOrWhiteSpace([string]$case.ResultPath)) { [string]$case.ResultPath } else { '' }
+        if (-not [string]::IsNullOrWhiteSpace([string]$case.IndeterminateEvidencePath)) { $evidenceText = (@($evidenceText, [string]$case.IndeterminateEvidencePath) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join '<br>' }
         $caseLine = '| {0} (`{1}`) | {2} | {3} | {4} | {5} | {6} |' -f (Escape-MarkdownCell $case.Name), (Escape-MarkdownCell $case.Id), (Escape-MarkdownCell $case.Status), (Escape-MarkdownCell $case.ExitCode), (Escape-MarkdownCell $case.DurationSeconds), (Escape-MarkdownCell $case.Reason), (Escape-MarkdownCell $evidenceText)
         [void]$builder.AppendLine($caseLine)
     }
@@ -853,6 +1016,7 @@ function Write-MarkdownArtifact {
     [void]$builder.AppendLine('- `0`: every case passed and every required precondition was ready.')
     [void]$builder.AppendLine('- `1`: a case or the harness failed.')
     [void]$builder.AppendLine('- `2`: one or more cases were `NOT_EXECUTED` because the target, ISO/VM, driver, artifact, or required privilege was unavailable.')
+    [void]$builder.AppendLine('- `3`: one or more cases timed out and remain `INDETERMINATE`; the exact child handle was awaited without termination, and dependent cases were not launched.')
     Write-NewUtf8File $markdownPath $builder.ToString()
 }
 
@@ -920,9 +1084,9 @@ try {
             HistoryPath = [IO.Path]::GetFullPath($HistoryPath)
             StoragePermissionPath = [IO.Path]::GetFullPath($StoragePermissionPath)
             InstallPath = [IO.Path]::GetFullPath($InstallPath)
-            BaseMsiSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $MsiPath).Hash
-            UpdatedMsiSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $UpdatedMsiPath).Hash
-            RollbackMsiSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $RollbackMsiPath).Hash
+            BaseMsiSha256 = $script:ApprovedPayloadHashes.BaseMsiSha256
+            UpdatedMsiSha256 = $script:ApprovedPayloadHashes.UpdatedMsiSha256
+            RollbackMsiSha256 = $script:ApprovedPayloadHashes.RollbackMsiSha256
             MarkerTestId = [string]$markerValue.TestId
             CreatedUtc = [DateTimeOffset]::UtcNow
         })
@@ -930,7 +1094,7 @@ try {
         $script:StopAfterLiveChild = $false
         foreach ($definition in $caseDefinitions) {
             if ($script:StopAfterLiveChild) {
-                Add-CaseResult -Id ([string]$definition.Id) -Name ([string]$definition.Name) -Status 'NOT_EXECUTED' -Reason 'A prior elevated case process is still live; dependent cases were not launched.'
+                Add-CaseResult -Id ([string]$definition.Id) -Name ([string]$definition.Name) -Status 'NOT_EXECUTED' -Reason 'A prior elevated case timed out or failed with a live child; dependent cases were not launched, including after terminal recovery.'
                 continue
             }
             Invoke-InstallerCase -Definition $definition
@@ -938,6 +1102,8 @@ try {
         $statuses = @($script:CaseResults | ForEach-Object { $_.Status })
         if ($statuses -contains 'FAILED') {
             $script:ExitCode = 1
+        } elseif ($statuses -contains 'INDETERMINATE') {
+            $script:ExitCode = 3
         } elseif ($statuses -contains 'NOT_EXECUTED') {
             $script:ExitCode = 2
         } else {
@@ -953,7 +1119,7 @@ try {
 try {
     Add-MissingCaseResults 'The case was not reached because an earlier harness failure stopped execution.'
     $script:Manifest.CompletedUtc = [DateTime]::UtcNow.ToString('O')
-    $script:Manifest.Status = if ($script:ExitCode -eq 0) { 'PASSED' } elseif ($script:ExitCode -eq 2) { 'NOT_EXECUTED' } else { 'FAILED' }
+    $script:Manifest.Status = if ($script:ExitCode -eq 0) { 'PASSED' } elseif ($script:ExitCode -eq 2) { 'NOT_EXECUTED' } elseif ($script:ExitCode -eq 3) { 'INDETERMINATE' } else { 'FAILED' }
     $script:Manifest.ExitCode = $script:ExitCode
     $script:Manifest.Preconditions = @($script:Preflight)
     $script:Manifest.Tests = @($script:CaseResults)
@@ -963,9 +1129,10 @@ try {
         Passed = @($script:Manifest.Tests | Where-Object { $_.Status -eq 'PASSED' }).Count
         Failed = @($script:Manifest.Tests | Where-Object { $_.Status -eq 'FAILED' }).Count
         NotExecuted = @($script:Manifest.Tests | Where-Object { $_.Status -eq 'NOT_EXECUTED' }).Count
+        Indeterminate = @($script:Manifest.Tests | Where-Object { $_.Status -eq 'INDETERMINATE' }).Count
     }
     $script:Manifest.Summary = $summary
-    $script:Manifest.AcceptanceEligible = $script:Manifest.Status -eq 'PASSED' -and $summary.Total -eq $summary.Passed -and $summary.Failed -eq 0 -and $summary.NotExecuted -eq 0
+    $script:Manifest.AcceptanceEligible = $script:Manifest.Status -eq 'PASSED' -and $summary.Total -eq $summary.Passed -and $summary.Failed -eq 0 -and $summary.NotExecuted -eq 0 -and $summary.Indeterminate -eq 0
     $json = $script:Manifest | ConvertTo-Json -Depth 20
     Write-NewUtf8File $manifestPath $json
     Write-MarkdownArtifact
@@ -977,4 +1144,5 @@ try {
     $script:ExitCode = 1
 }
 
+Dispose-VerifiedPayloadLocks
 exit $script:ExitCode
