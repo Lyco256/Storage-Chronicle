@@ -35,7 +35,7 @@ public interface IMonitoringLifecycle
 }
 
 /// <summary>Implements the settings Agent endpoint independently from UI file access.</summary>
-public sealed class AgentSettingsService : IAgentSettingsGateway
+public sealed class AgentSettingsService : IAgentSettingsGateway, IDisposable
 {
     private readonly ISettingsStore<MachineSettings> machineStore;
     private readonly ISettingsStore<UserSettings> userStore;
@@ -43,6 +43,7 @@ public sealed class AgentSettingsService : IAgentSettingsGateway
     private readonly IAgentSettingsAuthorizer authorizer;
     private readonly IMonitoringLifecycle lifecycle;
     private readonly Func<DateTimeOffset> clock;
+    private readonly SemaphoreSlim machineSettingsGate = new(1, 1);
 
     /// <summary>Initializes the Agent settings service.</summary>
     public AgentSettingsService(
@@ -77,6 +78,65 @@ public sealed class AgentSettingsService : IAgentSettingsGateway
 
     /// <inheritdoc />
     public async ValueTask<SettingsApplyResult> ApplyMachineSettingsAsync(MachineSettings settings, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await machineSettingsGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await ApplyMachineSettingsCoreAsync(settings, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            machineSettingsGate.Release();
+        }
+    }
+
+    /// <summary>Persists one explicit media-mirror consent after the Agent authenticated the interactive user's decision.</summary>
+    /// <remarks>This narrow operation changes only the consent binding and does not authorize arbitrary machine-setting changes.</remarks>
+    public async ValueTask<SettingsApplyResult> GrantMediaMirrorConsentAsync(MediaMirrorConsentSettings consent, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(consent);
+        cancellationToken.ThrowIfCancellationRequested();
+        await machineSettingsGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var previous = machineStore.Load().Settings;
+            var updatedConsents = previous.MediaMirrorConsents
+                .Where(value => !string.Equals(value.PcIdentity, consent.PcIdentity, StringComparison.Ordinal) ||
+                    !string.Equals(value.LogicalMediaId, consent.LogicalMediaId, StringComparison.Ordinal))
+                .Append(consent)
+                .ToArray();
+            var updated = previous with { MediaMirrorConsents = updatedConsents };
+            var validation = SettingsValidator.Validate(updated);
+            if (!validation.IsValid)
+                return SettingsApplyResult.Failed(string.Join("; ", validation.Errors.Select(error => $"{error.Property}: {error.Message}")));
+
+            cancellationToken.ThrowIfCancellationRequested();
+            machineStore.Save(updated);
+            try
+            {
+                await history.RecordAsync(new("Machine", clock(), [nameof(MachineSettings.MediaMirrorConsents)]), cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                RestoreMachineSettings(previous);
+                throw;
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                RestoreMachineSettings(previous);
+                return SettingsApplyResult.Failed($"Media consent history could not be recorded: {exception.Message}");
+            }
+
+            return new(true, false, false, null);
+        }
+        finally
+        {
+            machineSettingsGate.Release();
+        }
+    }
+
+    private async ValueTask<SettingsApplyResult> ApplyMachineSettingsCoreAsync(MachineSettings settings, CancellationToken cancellationToken)
     {
         var validation = SettingsValidator.Validate(settings);
         if (!validation.IsValid)
@@ -115,6 +175,9 @@ public sealed class AgentSettingsService : IAgentSettingsGateway
         await history.RecordAsync(new("Machine", clock(), changedProperties), cancellationToken).ConfigureAwait(false);
         return new(true, restartRequired, restartRequired, null);
     }
+
+    /// <inheritdoc />
+    public void Dispose() => machineSettingsGate.Dispose();
 
     /// <inheritdoc />
     public async ValueTask<SettingsApplyResult> ApplyUserSettingsAsync(UserSettings settings, CancellationToken cancellationToken = default)

@@ -3,17 +3,22 @@ using StorageChronicle.Domain.Contracts;
 
 namespace StorageChronicle.Agent.Tests;
 
-internal sealed class FixtureVolumeFileSystemFactory(string root) : IVolumeBoundMediaFileSystemFactory
+internal sealed class FixtureVolumeFileSystemFactory(string root, Func<string>? fixtureOnlyProductIdentity = null) : IVolumeBoundMediaFileSystemFactory
 {
     private readonly string root = Path.GetFullPath(root);
 
-    public IVolumeBoundMediaFileSystem Open(VolumeId expectedVolumeId) => new FixtureVolumeFileSystem(root, expectedVolumeId);
+    public IVolumeBoundMediaFileSystem Open(VolumeId expectedVolumeId) => new FixtureVolumeFileSystem(root, expectedVolumeId, fixtureOnlyProductIdentity);
 
-    private sealed class FixtureVolumeFileSystem(string root, VolumeId volumeId) : IVolumeBoundMediaFileSystem
+    private sealed class FixtureVolumeFileSystem(string root, VolumeId volumeId, Func<string>? fixtureOnlyProductIdentity) : IVolumeBoundMediaFileSystem
     {
         private readonly HashSet<Stream> movableStreams = new(ReferenceEqualityComparer.Instance);
         public VolumeId VolumeId { get; } = volumeId;
-        public string GetOwnedProductDirectoryIdentity() => throw new NotSupportedException("A path-based test fixture cannot provide authoritative Windows file identity evidence.");
+        public string GetOwnedProductDirectoryIdentity()
+        {
+            if (fixtureOnlyProductIdentity is null || !DirectoryExists(".StorageChronicle"))
+                throw new NotSupportedException("A path-based test fixture cannot provide authoritative Windows file identity evidence.");
+            return fixtureOnlyProductIdentity();
+        }
         public void EnsureDirectory(string relativePath) => Directory.CreateDirectory(Resolve(relativePath));
 
         public bool TryCreateDirectory(string relativePath)

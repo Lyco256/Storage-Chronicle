@@ -1,6 +1,6 @@
 # AgentSettingsService.cs
 
-The canonical `IAgentSettingsGateway` exposes asynchronous snapshot reads and apply calls. `AgentSettingsService` implements reads as cancellation-aware `ValueTask` operations; the UI uses the IPC-backed implementation so settings files remain Agent-owned. The service still validates, authorizes Machine settings, performs safe restart/rollback, and records history.
+The canonical `IAgentSettingsGateway` exposes asynchronous snapshot reads and apply calls. `AgentSettingsService` implements reads as cancellation-aware `ValueTask` operations; the UI uses the IPC-backed implementation so settings files remain Agent-owned. The service validates and authorizes ordinary Machine settings, performs safe restart/rollback, and records history. A semaphore serializes machine-setting updates with the consent-only `GrantMediaMirrorConsentAsync` operation, which replaces one PC/media binding, validates and saves it, records a settings-history fact, and restores the prior settings if history recording fails. Consent persistence does not restart monitoring and cannot apply arbitrary settings.
 
 ## ??
 
@@ -58,4 +58,4 @@ Platform-neutral behavior remains portable; Windows-only APIs are isolated in th
 
 Public names, serialized fields, persistence boundaries, and the mirrored path are compatibility-sensitive contracts.
 
-The `MachineSettings.MediaMirrorConsents` list is machine-scoped and included in change detection. Applying changed consent through the ordinary machine-settings gateway follows the existing authorized settings/lifecycle path; the dedicated consent-decision IPC must persist only a validated single grant and must not bypass its authenticated interactive-session check.
+The `MachineSettings.MediaMirrorConsents` list is PC-local and included in change detection. The dedicated IPC decision path must authenticate a current interactive Desktop UI caller; Session Agent clients cannot submit consent decisions. The settings service's narrow grant method is called only after the Agent revalidates the pending request and live media/root identities. Cancellation, invalid settings, storage errors, and history-recording failures remain visible and fail closed. `tests/StorageChronicle.Settings.Tests` and `tests/StorageChronicle.Agent.Tests` cover settings behavior and consent persistence.

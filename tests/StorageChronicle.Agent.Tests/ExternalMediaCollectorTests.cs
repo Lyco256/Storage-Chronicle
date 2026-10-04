@@ -13,7 +13,7 @@ namespace StorageChronicle.Agent.Tests;
 public sealed class ExternalMediaCollectorTests
 {
     [Fact]
-    public async Task EnabledMirrorWithMissingHistoryCreatesNewBranchAndRecordsAnUnverifiedGap()
+    public async Task LegacyMirrorSettingWithoutExplicitApprovalDoesNotImportRecoverOrAppend()
     {
         var fixtureRoot = CreateFixtureRoot(out var runId);
         var mediaRoot = Path.Combine(fixtureRoot, "media");
@@ -31,12 +31,9 @@ public sealed class ExternalMediaCollectorTests
             var events = new List<SourceEvent>();
             await foreach (var value in collector.CollectAsync(TestContext.Current.CancellationToken)) events.Add(value);
 
-            var recovery = Assert.Single(events, value => value.Properties.ContainsKey("media.recovery.branch"));
-            Assert.Equal(CanonicalOperation.UnverifiedGap, recovery.Hint);
-            Assert.Equal(EventQuality.UnverifiedGap, recovery.Quality);
-            Assert.StartsWith("recovered-", recovery.Properties["media.recovery.branch"], StringComparison.Ordinal);
-            Assert.True(File.Exists(Path.Combine(mediaRoot, ".StorageChronicle", "recovery-marker.json")));
-            Assert.Single(Directory.EnumerateFiles(ledgerRoot, "6D656469612D766F6C756D65.*.generation.json"));
+            Assert.Contains(events, value => value.Hint == CanonicalOperation.UnverifiedGap && value.Properties.TryGetValue("reconciliationReason", out var reason) && reason.Contains("explicitly approves", StringComparison.OrdinalIgnoreCase));
+            Assert.False(Directory.Exists(Path.Combine(mediaRoot, ".StorageChronicle")));
+            Assert.False(Directory.Exists(ledgerRoot));
         }
         finally
         {
@@ -62,7 +59,7 @@ public sealed class ExternalMediaCollectorTests
             var events = new List<SourceEvent>();
             await foreach (var value in collector.CollectAsync(TestContext.Current.CancellationToken)) events.Add(value);
 
-            Assert.Contains(events, value => value.Hint == CanonicalOperation.UnverifiedGap && value.Properties.TryGetValue("reconciliationReason", out var reason) && reason.Contains("classification", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(events, value => value.Hint == CanonicalOperation.UnverifiedGap);
             Assert.False(Directory.Exists(Path.Combine(mediaRoot, ".StorageChronicle")));
         }
         finally

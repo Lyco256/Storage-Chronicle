@@ -28,13 +28,22 @@ public sealed class MediaMirrorApprovalWindow : Window
             _ => "The filesystem/ACL protection could not be verified. Approval is disabled."
         };
 
+        var rootIdentity = string.Equals(request.DedicatedMediaRootIdentity, "pending-new-root", StringComparison.Ordinal)
+            ? "Not created yet; approval will create a new dedicated product root."
+            : request.DedicatedMediaRootIdentity;
+        var existingHistoryScope = request.ExistingHistoryReadAndImportRequested
+            ? "Existing history: this PC is not yet authorized to read/import the existing owned history. Approval permits that import into this PC's history."
+            : "Existing history: no owned mirror history exists at this root, so no existing events will be imported.";
+        var futureAppendScope = request.FutureHistoryAppendRequested
+            ? "Future history: approval permits appending new media-specific history only beneath the dedicated product root. Other media files will not be edited, replaced, moved, or deleted."
+            : "Future history: no append permission is requested.";
         var disclosure = new TextBlock
         {
-            Text = $"PC: {request.PcIdentity}\nMedia: {request.LogicalMediaId}\nVolume identity: {request.VolumeId}\nMirror root: {request.MediaRoot}\\.StorageChronicle\nRoot identity: {request.DedicatedMediaRootIdentity}\nFilesystem: {request.FileSystem}\n\nIf you approve, Storage Chronicle may read existing owned media history and import it into this PC's history: {request.ExistingHistoryReadAndImportRequested}. It may also append future media-specific history beneath this dedicated root: {request.FutureHistoryAppendRequested}. It will not edit, replace, or delete other media files.\n\n{aclDisclosure}",
+            Text = $"PC: {request.PcIdentity}\nMedia: {request.LogicalMediaId}\nVolume identity: {request.VolumeId}\nMirror root: {request.MediaRoot}\\.StorageChronicle\nRoot identity: {rootIdentity}\nFilesystem: {request.FileSystem}\n\n{existingHistoryScope}\n\n{futureAppendScope}\n\n{aclDisclosure}",
             TextWrapping = Avalonia.Media.TextWrapping.Wrap
         };
         approve = new Button { Content = "Approve this PC and media", [AutomationProperties.NameProperty] = "Approve this PC and media" };
-        approve.IsEnabled = request.AclDisclosure != MediaMirrorAclDisclosure.Unknown && request.ExistingHistoryReadAndImportRequested && request.FutureHistoryAppendRequested;
+        approve.IsEnabled = request.AclDisclosure != MediaMirrorAclDisclosure.Unknown && request.FutureHistoryAppendRequested;
         approve.Click += (_, _) => Close(true);
         var cancel = new Button { Content = "Cancel", [AutomationProperties.NameProperty] = "Cancel media-mirror approval" };
         cancel.Click += (_, _) => Close(false);

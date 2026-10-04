@@ -27,7 +27,7 @@ Machine Settings ? User Settings ? versioned JSON payload ??????????????????????
 
 This mirror documents the source boundary for this file and explains how it participates in Storage Chronicle.
 
-`MachineSettings.MediaMirrorConsents` is the canonical PC-local persistence contract for explicit media consent. Each `MediaMirrorConsentSettings` entry binds PC identity, logical media ID, live volume identity, dedicated root identity, filesystem and ACL-protection classifications, and approval time. A legacy `MediaMirrors` path does not imply consent.
+`MachineSettings.MediaMirrorConsents` is the canonical PC-local persistence contract for explicit media consent. Each `MediaMirrorConsentSettings` entry binds PC identity, logical media ID, live volume identity, dedicated root identity, filesystem and ACL-protection classifications, approval time, and the separate `ExistingHistoryReadAndImportAllowed` capability. Future media-only append is represented by the presence of the consent binding; permission to read/import pre-existing history must be true independently. A legacy `MediaMirrors` path does not imply consent. This record is a settings serialization contract, not a duplicate of the pure `MediaMirrorConsentBinding` policy type.
 
 ## Public types and responsibilities
 

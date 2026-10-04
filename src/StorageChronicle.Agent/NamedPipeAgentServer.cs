@@ -26,12 +26,13 @@ public sealed class NamedPipeAgentServer : BackgroundService
     private readonly AgentHealthState health;
     private readonly IEventNormalizer normalizer;
     private readonly IConfirmedReconciliationRunner? reconciliationRunner;
+    private readonly MediaMirrorConsentService? mediaConsent;
     private readonly ConcurrentDictionary<string, byte> clipboardDedup = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<string> clipboardDedupOrder = new();
     private const int ClipboardDedupCapacity = 4096;
 
     /// <summary>Initializes the named pipe server.</summary>
-    public NamedPipeAgentServer(IProjectionService projection, AppendOnlyStorageEngine store, AgentHealthState health, IEventNormalizer normalizer, AgentSettingsService? settings = null, IMonitoringLifecycle? monitoringLifecycle = null, IConfirmedReconciliationRunner? reconciliationRunner = null)
+    public NamedPipeAgentServer(IProjectionService projection, AppendOnlyStorageEngine store, AgentHealthState health, IEventNormalizer normalizer, AgentSettingsService? settings = null, IMonitoringLifecycle? monitoringLifecycle = null, IConfirmedReconciliationRunner? reconciliationRunner = null, MediaMirrorConsentService? mediaConsent = null)
     {
         this.projection = projection ?? throw new ArgumentNullException(nameof(projection));
         this.store = store ?? throw new ArgumentNullException(nameof(store));
@@ -39,6 +40,7 @@ public sealed class NamedPipeAgentServer : BackgroundService
         this.normalizer = normalizer ?? throw new ArgumentNullException(nameof(normalizer));
         this.settings = settings;
         this.reconciliationRunner = reconciliationRunner;
+        this.mediaConsent = mediaConsent;
     }
 
     /// <inheritdoc />
@@ -128,7 +130,8 @@ public sealed class NamedPipeAgentServer : BackgroundService
             }
 
             if ((hello.Role == IpcClientRole.SessionAgent && !string.Equals(request.MessageType, "ClipboardCandidate", StringComparison.Ordinal)) ||
-                (hello.Role == IpcClientRole.DesktopUi && string.Equals(request.MessageType, "ClipboardCandidate", StringComparison.Ordinal)))
+                (hello.Role == IpcClientRole.DesktopUi && string.Equals(request.MessageType, "ClipboardCandidate", StringComparison.Ordinal)) ||
+                (hello.Role != IpcClientRole.DesktopUi && string.Equals(request.MessageType, "MediaMirrorApprovalDecision", StringComparison.Ordinal)))
             {
                 await WriteEnvelopeAsync(pipe, Rejected("The requested IPC message is not permitted for the authenticated client role."), cancellationToken).ConfigureAwait(false);
                 return;
@@ -175,6 +178,15 @@ public sealed class NamedPipeAgentServer : BackgroundService
         if (request.MessageType == "AgentHealthRequest")
         {
             return IpcProtocol.Create("AgentHealth", health.Snapshot(store.Status, markPendingPresented: true));
+        }
+
+        if (request.MessageType == "MediaMirrorApprovalDecision")
+        {
+            if (!identity.IsCurrentUserSession || !identity.IsTrustedDesktopUiProcess || mediaConsent is null)
+                return Rejected("Media-mirror consent decisions must come from the installed Storage Chronicle desktop UI in the interactive session.");
+            var decision = IpcProtocol.Read<MediaMirrorApprovalDecision>(request);
+            _ = await mediaConsent.DecideAsync(decision, cancellationToken).ConfigureAwait(false);
+            return IpcProtocol.Create("AgentHealth", health.Snapshot(store.Status));
         }
 
         if (request.MessageType == "ReconciliationDecision")
@@ -369,6 +381,32 @@ public sealed record NamedPipeClientIdentity(string Sid, int SessionId, bool IsC
     /// <summary>Indicates that the authenticated client process is the published Session Agent executable.</summary>
     public bool IsSessionAgentProcess { get; init; }
 
+    /// <summary>Indicates that the client image is the installed desktop executable beside the Agent under Program Files.</summary>
+    public bool IsTrustedDesktopUiProcess { get; init; }
+
+    /// <summary>Checks that a client image resolves to the expected protected installation path.</summary>
+    /// <param name="clientExecutablePath">The executable path reported for the connected client process.</param>
+    /// <param name="agentDirectory">The installed directory containing the local Agent.</param>
+    /// <param name="programFilesDirectory">The operating system's Program Files directory.</param>
+    /// <returns>True only when the client is the expected desktop executable beneath Program Files.</returns>
+    public static bool IsTrustedDesktopUiExecutable(string? clientExecutablePath, string? agentDirectory, string? programFilesDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(clientExecutablePath) || string.IsNullOrWhiteSpace(agentDirectory) || string.IsNullOrWhiteSpace(programFilesDirectory)) return false;
+        try
+        {
+            var installDirectory = Path.GetFullPath(agentDirectory);
+            var protectedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(programFilesDirectory));
+            var protectedPrefix = protectedRoot + Path.DirectorySeparatorChar;
+            if (!installDirectory.StartsWith(protectedPrefix, StringComparison.OrdinalIgnoreCase)) return false;
+            var expected = Path.GetFullPath(Path.Combine(installDirectory, "StorageChronicle.UI.Desktop.exe"));
+            return string.Equals(Path.GetFullPath(clientExecutablePath), expected, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>Reads client identity while impersonating the connected pipe client.</summary>
     public static NamedPipeClientIdentity Read(NamedPipeServerStream pipe)
     {
@@ -404,13 +442,16 @@ public sealed record NamedPipeClientIdentity(string Sid, int SessionId, bool IsC
         _ = NativePipeMethods.GetNamedPipeClientProcessId(pipe.SafePipeHandle.DangerousGetHandle(), out processId);
         var sessionId = -1;
         var isSessionAgentProcess = false;
+        var isTrustedDesktopUiProcess = false;
         try
         {
             if (processId != 0)
             {
                 using var process = System.Diagnostics.Process.GetProcessById((int)processId);
                 sessionId = process.SessionId;
-                isSessionAgentProcess = string.Equals(Path.GetFileName(process.MainModule?.FileName), "StorageChronicle.SessionAgent.exe", StringComparison.OrdinalIgnoreCase);
+                var executablePath = process.MainModule?.FileName;
+                isSessionAgentProcess = string.Equals(Path.GetFileName(executablePath), "StorageChronicle.SessionAgent.exe", StringComparison.OrdinalIgnoreCase);
+                isTrustedDesktopUiProcess = IsTrustedDesktopUiExecutable(executablePath, AppContext.BaseDirectory, Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles));
             }
         }
         catch (ArgumentException) { }
@@ -420,7 +461,8 @@ public sealed record NamedPipeClientIdentity(string Sid, int SessionId, bool IsC
         if (activeSession == uint.MaxValue) activeSession = (uint)System.Diagnostics.Process.GetCurrentProcess().SessionId;
         return new NamedPipeClientIdentity(sid, sessionId, sessionId >= 0 && sessionId == (int)activeSession, isAdministrator)
         {
-            IsSessionAgentProcess = isSessionAgentProcess
+            IsSessionAgentProcess = isSessionAgentProcess,
+            IsTrustedDesktopUiProcess = isTrustedDesktopUiProcess
         };
     }
 }

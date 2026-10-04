@@ -129,8 +129,8 @@ public sealed class HeadlessSmokeTests
         var actionButtons = Assert.Single(content.Children.OfType<StackPanel>()).Children.OfType<Button>().ToArray();
         Assert.True(actionButtons.Single(value => value.Content as string == "Approve this PC and media").IsEnabled);
         var text = FindText(dialog.Content);
-        Assert.Contains("read existing owned media history and import", text, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("append future media-specific history", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("permits that import into this PC's history", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("permits appending new media-specific history", text, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("does not provide NTFS ACL protection", text, StringComparison.Ordinal);
         Assert.DoesNotContain("described as ACL-protected", text, StringComparison.Ordinal);
 

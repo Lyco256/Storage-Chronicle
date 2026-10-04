@@ -47,6 +47,7 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
     private readonly MountSessionTracker sessions;
     private readonly IMediaMirrorSessionCoordinator? mirrorCoordinator;
     private readonly IVolumeBoundMediaFileSystemFactory? fileSystemFactory;
+    private readonly MediaMirrorConsentService? consent;
     private readonly Dictionary<VolumeId, (MountSession Session, MediaVolumeDescriptor Volume)> active = new();
     private readonly Dictionary<VolumeId, long> sequences = new();
 
@@ -58,8 +59,9 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
         string pcId,
         IMediaClock? clock = null,
         IMediaMirrorSessionCoordinator? mirrorCoordinator = null,
-        IVolumeBoundMediaFileSystemFactory? fileSystemFactory = null)
-        : this(changes, volumes, settings, pcId, static path => new MediaImportLedgerStore(path), clock, mirrorCoordinator, fileSystemFactory)
+        IVolumeBoundMediaFileSystemFactory? fileSystemFactory = null,
+        MediaMirrorConsentService? consent = null)
+        : this(changes, volumes, settings, pcId, static path => new MediaImportLedgerStore(path), clock, mirrorCoordinator, fileSystemFactory, consent)
     {
     }
 
@@ -71,7 +73,8 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
         Func<string, MediaImportLedgerStore> ledgerStoreFactory,
         IMediaClock? clock = null,
         IMediaMirrorSessionCoordinator? mirrorCoordinator = null,
-        IVolumeBoundMediaFileSystemFactory? fileSystemFactory = null)
+        IVolumeBoundMediaFileSystemFactory? fileSystemFactory = null,
+        MediaMirrorConsentService? consent = null)
     {
         this.changes = changes ?? throw new ArgumentNullException(nameof(changes));
         this.volumes = volumes ?? throw new ArgumentNullException(nameof(volumes));
@@ -81,6 +84,7 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
         sessions = new MountSessionTracker(clock);
         this.mirrorCoordinator = mirrorCoordinator;
         this.fileSystemFactory = fileSystemFactory;
+        this.consent = consent;
     }
 
     /// <inheritdoc />
@@ -120,6 +124,33 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
                     var session = sessions.Start(descriptor.Id, pcId, ToContinuity(assessment.Quality));
                     active[descriptor.Id] = (session, media);
                     yield return CreateMountEvent(media, session, assessment, change.OccurredUtc, removed: false);
+
+                    var configuredMirror = settings.Load().Settings.MediaMirrors.TryGetValue(media.LogicalMediaId, out var configuredRoot) ? configuredRoot : null;
+                    if (!string.IsNullOrWhiteSpace(configuredMirror))
+                    {
+                        var authorized = false;
+                        Exception? consentFailure = null;
+                        try
+                        {
+                            authorized = consent is not null && await consent.AuthorizeAsync(media, configuredMirror, cancellationToken).ConfigureAwait(false);
+                        }
+                        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException or ArgumentException or NotSupportedException)
+                        {
+                            consentFailure = exception;
+                        }
+
+                        if (consentFailure is not null)
+                        {
+                            yield return CreateMediaGap(media, change.OccurredUtc, "External media consent preflight failed closed: " + consentFailure.Message);
+                            continue;
+                        }
+
+                        if (!authorized)
+                        {
+                            yield return CreateMediaGap(media, change.OccurredUtc, "External media history import and mirror append are blocked until this PC explicitly approves the currently connected medium.");
+                            continue;
+                        }
+                    }
 
                     if (mirrorCoordinator is not null)
                     {
@@ -193,17 +224,31 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
     {
         var configured = settings.Load().Settings.MediaMirrors.TryGetValue(media.LogicalMediaId, out var mirrorRoot) ? mirrorRoot : null;
         if (string.IsNullOrWhiteSpace(configured)) yield break;
+        if (consent is null || !consent.CanReadExistingHistory(media, configured)) yield break;
         var configuration = ExternalMediaStore.ValidateMirrorConfiguration(new MediaMirrorConfiguration(true, configured!, media.ProtectedRoles, media.IsProtectedRoleClassificationComplete));
         if (!configuration.IsAllowed || media.IsReadOnly) yield break;
         if (fileSystemFactory is null) yield break;
 
         ExternalMediaStore store;
+        IVolumeBoundMediaFileSystem? pendingFileSystem = null;
         try
         {
             var mediaRoot = ExternalMediaStore.ValidateMediaRoot(configuration.MediaRoot, media.MountPoints);
-            store = new ExternalMediaStore(mediaRoot, pcId, media.VolumeId, fileSystemFactory.Open(media.VolumeId), createIfMissing: false);
+            pendingFileSystem = fileSystemFactory.Open(media.VolumeId);
+            if (consent is null || !pendingFileSystem.DirectoryExists(".StorageChronicle") || !consent.HasGrant(media, mediaRoot, pendingFileSystem.GetOwnedProductDirectoryIdentity()))
+            {
+                pendingFileSystem.Dispose();
+                pendingFileSystem = null;
+                yield break;
+            }
+            store = new ExternalMediaStore(mediaRoot, pcId, media.VolumeId, pendingFileSystem, createIfMissing: false);
+            pendingFileSystem = null;
         }
-        catch (Exception) { yield break; }
+        catch (Exception)
+        {
+            pendingFileSystem?.Dispose();
+            yield break;
+        }
 
         using (store)
         {
@@ -232,12 +277,23 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
     {
         var configured = settings.Load().Settings.MediaMirrors.TryGetValue(media.LogicalMediaId, out var mirrorRoot) ? mirrorRoot : null;
         if (string.IsNullOrWhiteSpace(configured) || media.IsReadOnly) return null;
+        if (consent is null || !consent.CanReadExistingHistory(media, configured)) return null;
         var configuration = ExternalMediaStore.ValidateMirrorConfiguration(new MediaMirrorConfiguration(true, configured!, media.ProtectedRoles, media.IsProtectedRoleClassificationComplete));
         if (!configuration.IsAllowed) return null;
         if (fileSystemFactory is null) return null;
         var mediaRoot = ExternalMediaStore.ValidateMediaRoot(configuration.MediaRoot, media.MountPoints);
-        var fileSystem = fileSystemFactory.Open(media.VolumeId);
-        return await MediaRecovery.RecoverDeletedLogAsync(mediaRoot, media.VolumeId, fileSystem, media.LogicalMediaId, pcId, cancellationToken).ConfigureAwait(false);
+        IVolumeBoundMediaFileSystem? pendingFileSystem = fileSystemFactory.Open(media.VolumeId);
+        try
+        {
+            if (!pendingFileSystem.DirectoryExists(".StorageChronicle") || !consent.HasGrant(media, mediaRoot, pendingFileSystem.GetOwnedProductDirectoryIdentity())) return null;
+            var recovery = MediaRecovery.RecoverDeletedLogAsync(mediaRoot, media.VolumeId, pendingFileSystem, media.LogicalMediaId, pcId, cancellationToken);
+            pendingFileSystem = null;
+            return await recovery.ConfigureAwait(false);
+        }
+        finally
+        {
+            pendingFileSystem?.Dispose();
+        }
     }
 
     private SourceEvent CreateMountEvent(MediaVolumeDescriptor media, MountSession session, MediaQualityAssessment assessment, DateTimeOffset occurredUtc, bool removed)

@@ -20,7 +20,7 @@ Dependencies are limited to the referenced project contracts and platform servic
 
 ## Invariants
 
-The service host composes platform collectors with the platform-neutral pipeline, stores data below ProgramData by default, and constrains the effective startup flush interval to 1 through 60 seconds. The retired TestLab argument fails closed before settings or collectors are initialized. It registers one bounded, in-memory process-lifecycle registry shared between the Windows ETW collector and projection service; process-exit observations are transient and are not canonical file-history events. The source keeps canonical facts distinguishable from reconstructed state and does not synthesize descendant events.
+The service host composes platform collectors with the platform-neutral pipeline, stores data below ProgramData by default, and constrains the effective startup flush interval to 1 through 60 seconds. The retired TestLab argument fails closed before settings or collectors are initialized. It registers one bounded, in-memory process-lifecycle registry shared between the Windows ETW collector and projection service; process-exit observations are transient and are not canonical file-history events. The consent service is one Agent-owned instance shared by the collector, mirror coordinator, and IPC decision handler. It uses the read-only, GUID-canonicalized Windows MachineGuid as PC-local consent identity; media writer labels remain separate from this binding. The source keeps canonical facts distinguishable from reconstructed state and does not synthesize descendant events.
 
 ## Threading and lifetime
 

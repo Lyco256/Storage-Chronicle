@@ -21,7 +21,7 @@ Uses Avalonia controls and the shared runtime IPC contract. It performs no files
 - NTFS ACL verified and NTFS ACL unavailable are shown separately.
 - FAT/exFAT/other filesystems are explicitly not described as ACL-protected.
 - Unknown protection classification disables approval.
-- Approval is scoped to the exact request and both requested effects are visibly disclosed.
+- Approval is scoped to the exact request and describes existing-history import separately from future append in explicit prose, not raw booleans. When the root does not exist, the UI says no old events will be imported and explains that the new dedicated root is created only after approval rather than presenting the internal pending-root sentinel as an identity.
 - The window never authorizes or performs the underlying operation itself.
 
 ## Failure behavior

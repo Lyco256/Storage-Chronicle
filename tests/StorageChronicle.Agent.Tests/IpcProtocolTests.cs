@@ -120,6 +120,29 @@ public sealed class IpcProtocolTests
     }
 
     [Fact]
+    public void ConsentDecisionTrustRequiresExpectedUiImageInsideProtectedAgentInstallation()
+    {
+        const string install = @"C:\Program Files\Storage Chronicle";
+        var expected = Path.Combine(install, "StorageChronicle.UI.Desktop.exe");
+
+        Assert.True(NamedPipeClientIdentity.IsTrustedDesktopUiExecutable(expected, install, @"C:\Program Files"));
+        Assert.False(NamedPipeClientIdentity.IsTrustedDesktopUiExecutable(Path.Combine(install, "untrusted.exe"), install, @"C:\Program Files"));
+        Assert.False(NamedPipeClientIdentity.IsTrustedDesktopUiExecutable(Path.Combine(@"C:\Users\Public", "StorageChronicle.UI.Desktop.exe"), install, @"C:\Program Files"));
+        Assert.False(NamedPipeClientIdentity.IsTrustedDesktopUiExecutable(expected, install, @"C:\Program Files (x86)"));
+        Assert.False(NamedPipeClientIdentity.IsTrustedDesktopUiExecutable(expected, install, null));
+    }
+
+    [Fact]
+    public void WindowsPcIdentityRequiresAndCanonicalizesAValidMachineGuid()
+    {
+        Assert.Equal("windows-machine-guid:0123456789abcdef0123456789abcdef",
+            WindowsPcIdentity.FromMachineGuid("{01234567-89AB-CDEF-0123-456789ABCDEF}"));
+        Assert.Throws<InvalidOperationException>(() => WindowsPcIdentity.FromMachineGuid(null));
+        Assert.Throws<InvalidOperationException>(() => WindowsPcIdentity.FromMachineGuid("not-a-guid"));
+        Assert.Throws<InvalidOperationException>(() => WindowsPcIdentity.FromMachineGuid(Guid.Empty.ToString()));
+    }
+
+    [Fact]
     public void MediaMirrorApprovalDisclosureAndDecisionRoundTrip()
     {
         var request = new PendingMediaMirrorApproval(

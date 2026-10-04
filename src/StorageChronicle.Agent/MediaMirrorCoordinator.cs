@@ -37,16 +37,18 @@ public sealed class ExternalMediaMirrorCoordinator : IMediaMirrorSessionCoordina
     private readonly string pcId;
     private readonly IMediaMonitoringExclusionRegistrar exclusionRegistrar;
     private readonly IVolumeBoundMediaFileSystemFactory fileSystemFactory;
+    private readonly MediaMirrorConsentService? consent;
     private readonly Dictionary<VolumeId, MirrorSession> sessions = new();
     private readonly SemaphoreSlim gate = new(1, 1);
 
     /// <summary>Initializes a coordinator with machine settings and the shared exclusion policy.</summary>
-    public ExternalMediaMirrorCoordinator(ISettingsStore<MachineSettings> settings, string pcId, IMediaMonitoringExclusionRegistrar exclusionRegistrar, IVolumeBoundMediaFileSystemFactory fileSystemFactory)
+    public ExternalMediaMirrorCoordinator(ISettingsStore<MachineSettings> settings, string pcId, IMediaMonitoringExclusionRegistrar exclusionRegistrar, IVolumeBoundMediaFileSystemFactory fileSystemFactory, MediaMirrorConsentService? consent = null)
     {
         this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
         this.pcId = ValidateIdentity(pcId);
         this.exclusionRegistrar = exclusionRegistrar ?? throw new ArgumentNullException(nameof(exclusionRegistrar));
         this.fileSystemFactory = fileSystemFactory ?? throw new ArgumentNullException(nameof(fileSystemFactory));
+        this.consent = consent;
     }
 
     /// <inheritdoc />
@@ -65,7 +67,23 @@ public sealed class ExternalMediaMirrorCoordinator : IMediaMirrorSessionCoordina
 
             var mediaRoot = ExternalMediaStore.ValidateMediaRoot(configuration.MediaRoot, media.MountPoints);
             var fileSystem = fileSystemFactory.Open(media.VolumeId);
-            var store = new ExternalMediaStore(mediaRoot, pcId, media.VolumeId, fileSystem);
+            if (consent is null || !fileSystem.DirectoryExists(".StorageChronicle"))
+            {
+                fileSystem.Dispose();
+                throw new UnauthorizedAccessException("External-media mirror startup requires an explicit PC/media consent and an existing validated product root.");
+            }
+            try
+            {
+                var rootIdentity = fileSystem.GetOwnedProductDirectoryIdentity();
+                if (!consent.HasGrant(media, mediaRoot, rootIdentity))
+                    throw new UnauthorizedAccessException("External-media mirror consent is missing or no longer matches the live volume and product-root identities.");
+            }
+            catch
+            {
+                fileSystem.Dispose();
+                throw;
+            }
+            var store = new ExternalMediaStore(mediaRoot, pcId, media.VolumeId, fileSystem, createIfMissing: false);
             try
             {
                 store.RegisterMonitoringExclusion(exclusionRegistrar);

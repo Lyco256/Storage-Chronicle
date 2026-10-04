@@ -1,8 +1,16 @@
 # MediaMirrorCoordinator.cs
 
-This file owns the Agent-side optional external-media mirror writer. It registers `.StorageChronicle` with the same Windows exclusion policy used by live and snapshot collection, batches canonical metadata into immutable CRC32C/SHA-256 segments, and seals A/B manifests linked to the prior manifest and mount session.
+This file owns the Agent-side optional external-media mirror writer. It registers `.StorageChronicle` with the same Windows exclusion policy used by live and snapshot collection, batches canonical metadata into immutable CRC32C/SHA-256 segments, and seals A/B manifests linked to the prior manifest and mount session. Before opening the store it requires a persisted exact PC/media/volume/root consent binding from `MediaMirrorConsentService`; startup uses `createIfMissing: false` and rechecks the root identity from the volume-bound handle.
 
-The coordinator is driven by canonical events after primary durability. It never receives file contents or hashes, refuses read-only/system/boot/recovery/EFI media, incomplete role classification, and any target without a write-time volume identity binding. A matching mount-point string alone does not authorize writes; the current Windows pipeline leaves identity binding false, so the feature stays disabled pending a handle-bound resolver. If enabled later, it must also require owned root/writer markers, recover only GUID-named temporary writes, and isolate mirror I/O from primary recording. Unknown pre-existing `.StorageChronicle` data is not adopted or modified. Tests cover policy rejection, missing identity binding, ownership, segment/manifest recovery, batching, and removal sealing.
+The coordinator is driven by canonical events after primary durability. It never receives file contents or hashes, refuses read-only/system/boot/recovery/EFI media and incomplete role classification, and does not treat a matching mount-point string as identity evidence. Missing, changed, or unavailable consent causes startup to fail closed. Existing roots must pass the volume-bound ownership validation; unknown pre-existing `.StorageChronicle` data is not adopted or modified. Mirror I/O remains isolated from primary recording. Tests cover policy rejection, identity binding, ownership, segment/manifest recovery, batching, removal sealing, and consent denial.
+
+## Dependencies and lifetime
+
+The coordinator uses machine settings, the consent service, the handle-bound media filesystem, the external-media store, and the shared exclusion registrar. It owns one filesystem/store session per mounted volume and flushes/seals it on removal or shutdown.
+
+## Failure behavior and tests
+
+Consent mismatch, volume I/O failure, manifest corruption, cancellation, and append failure are surfaced to the caller and must not silently create or adopt a root. Tests are in `tests/StorageChronicle.Agent.Tests` and `tests/StorageChronicle.ExternalMedia.Tests`.
 
 ## Role
 

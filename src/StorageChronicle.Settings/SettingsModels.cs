@@ -80,7 +80,8 @@ public sealed record MediaMirrorConsentSettings(
     string DedicatedMediaRootIdentity,
     string FileSystem,
     string AclProtection,
-    DateTimeOffset ApprovedAtUtc);
+    DateTimeOffset ApprovedAtUtc,
+    bool ExistingHistoryReadAndImportAllowed = false);
 
 /// <summary>Contains settings owned by the current user.</summary>
 public sealed record UserSettings

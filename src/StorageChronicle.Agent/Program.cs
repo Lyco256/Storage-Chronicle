@@ -57,6 +57,10 @@ public static class Program
         builder.Services.AddSingleton<IAgentSettingsGateway>(services => services.GetRequiredService<AgentSettingsService>());
         builder.Services.AddSingleton<IVolumeEnumerator, WindowsVolumeEnumerator>();
         builder.Services.AddSingleton<IVolumeBoundMediaFileSystemFactory, WindowsVolumeDirectorySessionFactory>();
+        builder.Services.AddSingleton<MediaMirrorConsentService>(services => new MediaMirrorConsentService(
+            services.GetRequiredService<AgentHealthState>(), services.GetRequiredService<ISettingsStore<MachineSettings>>(),
+            services.GetRequiredService<AgentSettingsService>(), services.GetRequiredService<IVolumeEnumerator>(),
+            services.GetRequiredService<IVolumeBoundMediaFileSystemFactory>(), WindowsPcIdentity.ReadStableIdentity()));
         builder.Services.AddSingleton<INtfsApi, WindowsNtfsApi>();
         builder.Services.AddSingleton(new WindowsExclusionPolicy(new WindowsFileSystemOptions
         {
@@ -68,7 +72,8 @@ public static class Program
         builder.Services.AddSingleton<ExternalMediaMirrorCoordinator>(services => new ExternalMediaMirrorCoordinator(
             services.GetRequiredService<ISettingsStore<MachineSettings>>(), Environment.MachineName,
             services.GetRequiredService<IMediaMonitoringExclusionRegistrar>(),
-            services.GetRequiredService<IVolumeBoundMediaFileSystemFactory>()));
+            services.GetRequiredService<IVolumeBoundMediaFileSystemFactory>(),
+            services.GetRequiredService<MediaMirrorConsentService>()));
         builder.Services.AddSingleton<IMediaMirrorSessionCoordinator>(services => services.GetRequiredService<ExternalMediaMirrorCoordinator>());
         builder.Services.AddSingleton<ICanonicalEventSink>(services => services.GetRequiredService<ExternalMediaMirrorCoordinator>());
         builder.Services.AddSingleton<IExternalMediaChangeSource, WindowsExternalMediaChangeSource>();
@@ -105,7 +110,8 @@ public static class Program
             services.GetRequiredService<ISettingsStore<MachineSettings>>(),
             Environment.MachineName,
             mirrorCoordinator: services.GetRequiredService<IMediaMirrorSessionCoordinator>(),
-            fileSystemFactory: services.GetRequiredService<IVolumeBoundMediaFileSystemFactory>()));
+            fileSystemFactory: services.GetRequiredService<IVolumeBoundMediaFileSystemFactory>(),
+            consent: services.GetRequiredService<MediaMirrorConsentService>()));
         builder.Services.AddSingleton<IProjectionService, AgentProjectionService>();
         builder.Services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService>(services => services.GetRequiredService<AgentWorker>());
         builder.Services.AddHostedService<NamedPipeAgentServer>();
