@@ -43,6 +43,7 @@ public class WindowsMftBenchmarks
         if (string.IsNullOrWhiteSpace(devicePath)) throw new InvalidOperationException("Set STORAGE_CHRONICLE_MFT_VOLUME to the verified dedicated NTFS seed device path.");
         markerPath = Environment.GetEnvironmentVariable("STORAGE_CHRONICLE_MFT_MARKER_PATH") ?? string.Empty;
         if (string.IsNullOrWhiteSpace(markerPath) || !File.Exists(markerPath)) throw new InvalidOperationException("STORAGE_CHRONICLE_MFT_MARKER_PATH must point to the persistent, preflight-verified seed marker.");
+        ValidateEvidenceOutputTarget();
         ValidatePhysicalSeedPreflight();
         mountRoot = Path.GetPathRoot(markerPath) ?? throw new InvalidOperationException("The MFT marker path has no mount root.");
         enumerator = new WindowsMftEnumerator(new WindowsNtfsApi(), devicePath);
@@ -135,12 +136,21 @@ public class WindowsMftBenchmarks
             VolumeUniqueId = RequiredEnvironment("STORAGE_CHRONICLE_MFT_VOLUME_UNIQUE_ID"),
             VolumeGuidPath = RequiredEnvironment("STORAGE_CHRONICLE_MFT_VOLUME_GUID_PATH"),
             SeedRunId = RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_RUN_ID"),
+            RunId = RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_RUN_ID"),
             DatasetEntryCount = long.Parse(RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_ENTRY_COUNT"), System.Globalization.CultureInfo.InvariantCulture),
             DevicePath = devicePath,
             MarkerPath = markerPath,
             VolumeLabel = "SC_TEST_MFT_VOLUME",
             PreflightSchema = RequiredEnvironment("STORAGE_CHRONICLE_MFT_PREFLIGHT_SCHEMA"),
-            PreflightPath = RequiredEnvironment("STORAGE_CHRONICLE_MFT_PREFLIGHT_PATH")
+            PreflightPath = RequiredEnvironment("STORAGE_CHRONICLE_MFT_PREFLIGHT_PATH"),
+            SeedVhdxFileIdentity = RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_VHDX_FILE_IDENTITY"),
+            SeedWorkloadRoot = Path.GetFullPath(RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_WORKLOAD_ROOT")),
+            SeedWorkloadOraclePath = Path.GetFullPath(RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_WORKLOAD_ORACLE_PATH")),
+            SeedCreationEvidencePath = Path.GetFullPath(RequiredEnvironment("STORAGE_CHRONICLE_MFT_CREATION_EVIDENCE_PATH")),
+            SeedCreationEvidenceSha256 = RequiredEnvironment("STORAGE_CHRONICLE_MFT_CREATION_EVIDENCE_SHA256"),
+            SeedWriteMonitorEvidencePath = Path.GetFullPath(RequiredEnvironment("STORAGE_CHRONICLE_MFT_WRITE_MONITOR_EVIDENCE_PATH")),
+            SeedWriteMonitorEvidenceSha256 = RequiredEnvironment("STORAGE_CHRONICLE_MFT_WRITE_MONITOR_EVIDENCE_SHA256"),
+            SeedProcessIdentities = JsonSerializer.Deserialize<JsonElement>(RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_PROCESS_IDENTITIES"))
         };
         var runs = requiredMethods.Where(measurements.ContainsKey).Select(method => measurements[method]).ToArray();
         var oneMillion = measurements.TryGetValue("MftEnumerationImport1M", out var million) && million.DatasetEntryCount >= RequiredEntryCount && million.EnumeratedEntryCount >= RequiredEntryCount;
@@ -163,9 +173,25 @@ public class WindowsMftBenchmarks
             }.Where(value => value.Length > 0).ToArray(),
             GeneratedUtc = DateTimeOffset.UtcNow
         };
-        var fullPath = Path.GetFullPath(outputPath);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullPath) ?? throw new InvalidOperationException("The MFT evidence path has no parent directory."));
-        File.WriteAllText(fullPath, JsonSerializer.Serialize(evidence, EvidenceJsonOptions));
+        var fullPath = ValidateEvidenceOutputTarget();
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(evidence, EvidenceJsonOptions);
+        using var stream = new FileStream(fullPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        stream.Write(bytes);
+        stream.Flush(flushToDisk: true);
+    }
+
+    private static string ValidateEvidenceOutputTarget()
+    {
+        var output = Path.GetFullPath(RequiredEnvironment("STORAGE_CHRONICLE_MFT_EVIDENCE_PATH"));
+        var artifactRoot = Path.GetFullPath(RequiredEnvironment("STORAGE_CHRONICLE_MFT_ARTIFACT_ROOT"));
+        if (!Directory.Exists(artifactRoot)) throw new InvalidOperationException("The externally approved MFT artifact root must already exist.");
+        var parent = Path.GetDirectoryName(output) ?? throw new InvalidOperationException("The MFT evidence path has no parent directory.");
+        if (!Directory.Exists(parent)) throw new InvalidOperationException("The MFT evidence parent must already exist; arbitrary parent creation is forbidden.");
+        var relative = Path.GetRelativePath(artifactRoot, output);
+        if (Path.IsPathRooted(relative) || relative.Equals("..", StringComparison.Ordinal) || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            throw new InvalidOperationException("The MFT evidence output must remain under the externally approved ArtifactRoot.");
+        if (File.Exists(output) || Directory.Exists(output)) throw new IOException("The MFT correctness evidence target already exists; refusing replacement.");
+        return output;
     }
 
     private void ValidatePhysicalSeedPreflight()
@@ -193,7 +219,68 @@ public class WindowsMftBenchmarks
             environment.GetProperty("VolumeGuidPath").GetString() != RequiredEnvironment("STORAGE_CHRONICLE_MFT_VOLUME_GUID_PATH") ||
             environment.GetProperty("RunId").GetString() != RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_RUN_ID"))
             throw new InvalidOperationException("The physical MFT preflight identity does not match the benchmark process configuration.");
+        RequireEqual(environment, "VhdxFileIdentity", RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_VHDX_FILE_IDENTITY"));
+        RequireEqual(environment, "WorkloadRoot", Path.GetFullPath(RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_WORKLOAD_ROOT")));
+        var creationPath = Path.GetFullPath(RequiredEnvironment("STORAGE_CHRONICLE_MFT_CREATION_EVIDENCE_PATH"));
+        var monitorPath = Path.GetFullPath(RequiredEnvironment("STORAGE_CHRONICLE_MFT_WRITE_MONITOR_EVIDENCE_PATH"));
+        if (Sha256File(creationPath) != RequiredEnvironment("STORAGE_CHRONICLE_MFT_CREATION_EVIDENCE_SHA256") ||
+            Sha256File(monitorPath) != RequiredEnvironment("STORAGE_CHRONICLE_MFT_WRITE_MONITOR_EVIDENCE_SHA256"))
+            throw new InvalidOperationException("Seed creation or independent monitor evidence hash changed after matrix preflight.");
+        using var creationDocument = JsonDocument.Parse(File.ReadAllText(creationPath));
+        var creation = creationDocument.RootElement;
+        if (creation.GetProperty("Schema").GetString() != "StorageChronicle.MftSeedCreationEvidence.v1" ||
+            creation.GetProperty("Status").GetString() != "SEEDED" ||
+            creation.GetProperty("RunId").GetString() != RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_RUN_ID") ||
+            creation.GetProperty("VhdxFileIdentity").GetString() != RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_VHDX_FILE_IDENTITY") ||
+            creation.GetProperty("VhdxPath").GetString() != RequiredEnvironment("STORAGE_CHRONICLE_MFT_VHDX_PATH") ||
+            creation.GetProperty("WorkloadRoot").GetString() != Path.GetFullPath(RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_WORKLOAD_ROOT")) ||
+            creation.GetProperty("WorkloadOraclePath").GetString() != Path.GetFullPath(RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_WORKLOAD_ORACLE_PATH")) ||
+            creation.GetProperty("DiskUniqueId").GetString() != RequiredEnvironment("STORAGE_CHRONICLE_MFT_DISK_UNIQUE_ID") ||
+            creation.GetProperty("VolumeUniqueId").GetString() != RequiredEnvironment("STORAGE_CHRONICLE_MFT_VOLUME_UNIQUE_ID"))
+            throw new InvalidOperationException("Seed creation evidence does not match the benchmark's verified target identities.");
+        using var suppliedProcesses = JsonDocument.Parse(RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_PROCESS_IDENTITIES"));
+        var recordedProcesses = creation.GetProperty("Processes");
+        var suppliedProcessArray = suppliedProcesses.RootElement;
+        if (suppliedProcessArray.ValueKind != JsonValueKind.Array || suppliedProcessArray.GetArrayLength() != recordedProcesses.GetArrayLength())
+            throw new InvalidOperationException("Creator/publisher/workload process identities are incomplete.");
+        foreach (var recordedProcess in recordedProcesses.EnumerateArray())
+        {
+            var role = recordedProcess.GetProperty("Role").GetString();
+            var matching = suppliedProcessArray.EnumerateArray().Where(process => process.GetProperty("Role").GetString() == role).ToArray();
+            if (matching.Length != 1 || matching[0].GetProperty("ProcessId").GetInt32() != recordedProcess.GetProperty("ProcessId").GetInt32() ||
+                matching[0].GetProperty("StartTimeUtc").GetString() != recordedProcess.GetProperty("StartTimeUtc").GetString() ||
+                matching[0].GetProperty("Sha256").GetString() != recordedProcess.GetProperty("Sha256").GetString())
+                throw new InvalidOperationException($"Supplied process identity does not match creator evidence for {role}.");
+        }
+        using var monitorDocument = JsonDocument.Parse(File.ReadAllText(monitorPath));
+        var monitor = monitorDocument.RootElement;
+        if (monitor.GetProperty("Schema").GetString() != "StorageChronicle.MftSeedWriteMonitorEvidence.v1" ||
+            monitor.GetProperty("Status").GetString() != "PASS" ||
+            monitor.GetProperty("RunId").GetString() != RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_RUN_ID") ||
+            !monitor.GetProperty("Collection").GetProperty("TraceFinalized").GetBoolean() ||
+            !monitor.GetProperty("Collection").GetProperty("CaptureComplete").GetBoolean() ||
+            monitor.GetProperty("Collection").GetProperty("LostEventCount").GetInt64() != 0 ||
+            monitor.GetProperty("Collection").GetProperty("DroppedEventCount").GetInt64() != 0)
+            throw new InvalidOperationException("Independent write-monitor evidence is incomplete or does not match the seed run.");
+        var monitorTarget = monitor.GetProperty("Target");
+        if (monitorTarget.GetProperty("VhdxPath").GetString() != RequiredEnvironment("STORAGE_CHRONICLE_MFT_VHDX_PATH") ||
+            monitorTarget.GetProperty("DiskUniqueId").GetString() != RequiredEnvironment("STORAGE_CHRONICLE_MFT_DISK_UNIQUE_ID") ||
+            monitorTarget.GetProperty("VolumeUniqueId").GetString() != RequiredEnvironment("STORAGE_CHRONICLE_MFT_VOLUME_UNIQUE_ID") ||
+            Path.GetFullPath(monitorTarget.GetProperty("WorkloadRoot").GetString() ?? string.Empty) != Path.GetFullPath(RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_WORKLOAD_ROOT")))
+            throw new InvalidOperationException("Independent monitor target identities do not match the benchmark seed.");
         physicalSeedPreflightValidated = true;
+    }
+
+    private static void RequireEqual(JsonElement value, string propertyName, string expected)
+    {
+        if (value.GetProperty(propertyName).GetString() != expected)
+            throw new InvalidOperationException($"The physical MFT preflight does not match {propertyName}.");
+    }
+
+    private static string Sha256File(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream)).ToLowerInvariant();
     }
 
     private async Task<int> MeasureAsync(string method, long datasetEntryCount, Func<Task<MeasurementResult>> operation)
