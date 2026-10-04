@@ -1,6 +1,6 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "9d78c50",
+  "targetCommit": "8314865",
   "priorAuditTargetCommit": "b8d4fb9e6ec3afadb3fde6e2d197237f4391d722",
   "currentDeltaFromPriorAudit": [
     "src/StorageChronicle.Storage/SegmentLog.cs",
@@ -10,9 +10,14 @@
     "docs/src/StorageChronicle.Storage/SegmentLog.cs.md",
     "docs/src/StorageChronicle.Storage/AppendOnlyStorageEngine.cs.md",
     "docs/src/StorageChronicle.Storage/SqliteIndex.cs.md",
-    "docs/handoffs/storage-tail-recovery.md"
+    "docs/handoffs/storage-tail-recovery.md",
+    "benchmarks/StorageChronicle.Benchmarks/Program.cs",
+    "benchmarks/StorageChronicle.Benchmarks/StorageChronicle.Benchmarks.csproj",
+    "tests/StorageChronicle.Architecture.Tests/ArchitectureContractTests.cs",
+    "docs/benchmarks/StorageChronicle.Benchmarks/Program.cs.md",
+    "docs/benchmarks/StorageChronicle.Benchmarks/StorageChronicle.Benchmarks.csproj.md"
   ],
-  "currentAuditScope": "Partial audited-source-snapshot review at devenv integration 9d78c50: carries forward earlier source-to-sink findings where source is unchanged from b8d4fb9; re-reviewed the storage-tail-recovery and SQLite derived-index recovery delta and focused on the exact owned-history mutation boundary. This is not exhaustive across every source, test, script, external command, configured root, host preflight, or runtime write monitor.",
+  "currentAuditScope": "Partial audited-source-snapshot review at devenv integration 8314865: carries forward earlier source-to-sink findings where source is unchanged from b8d4fb9; re-reviewed storage tail recovery, SQLite derived-index recovery, and benchmark temporary fixture ownership/cleanup. This is not exhaustive across every source, test, script, external command, configured root, host preflight, or runtime write monitor.",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -114,8 +119,8 @@
   "workingTreeChanges": [],
   "latestValidation": {
     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1",
-    "codeCommit": "9d78c50",
-    "currentAuditCommit": "9d78c50",
+    "codeCommit": "8314865",
+    "currentAuditCommit": "8314865",
     "exitCode": 0,
     "fastProjects": 24,
     "qualityGate": "passed",
@@ -138,7 +143,7 @@
     "mftSeedOfflineContracts": "31 passed; current scripts parsed; no VHDX, disk, partition, format, product, installer, media, or workload was executed",
     "legacyVmRetirementContracts": "17 passed; eight newly retired VM/Stage A scripts parsed without execution; AST contract rejects every command except Write-Error/exit and fixed error-preference assignment",
     "retiredEntryPointParser": "eight retired VM/Stage A entry points parsed successfully; none was invoked",
-    "integrationMerge": "feat/storage-tail-recovery tail recovery merged at dde919b and SQLite startup recovery merged at 9d78c50 with --no-ff and no conflicts; main unchanged",
+    "integrationMerge": "feat/storage-tail-recovery tail recovery merged at dde919b, SQLite startup recovery at 9d78c50, 1M small-record Storage fixture at 247f0f1, and exclusive benchmark fixture ownership/cleanup at 8314865; all with --no-ff and no conflicts; main unchanged",
     "physicalAcceptance": "NOT_EXECUTED"
   },
   "overallStatus": "FAIL",
@@ -150,10 +155,10 @@
   "hostPreflight": "NOT_EXECUTED",
   "processWriteMonitoring": "NOT_EXECUTED",
   "currentCommitSourceAudit": {
-    "scope": "Partial source-to-sink review of Agent/Application/Windows NTFS/Session calls plus selected build/tools/installer flows and their service/OS-command reachability; prior findings are carried forward where source is unchanged from b8d4fb9. The storage-tail-recovery and SQLite derived-index recovery source deltas were inspected against targetCommit. Does not exhaustively audit every source/test/script/external command, perform host preflight, or run an independent runtime write monitor.",
+    "scope": "Partial source-to-sink review of Agent/Application/Windows NTFS/Session calls plus selected build/tools/installer flows and their service/OS-command reachability; prior findings are carried forward where source is unchanged from b8d4fb9. The storage tail/index recovery and benchmark fixture cleanup source deltas were inspected against targetCommit. Does not exhaustively audit every source/test/script/external command, perform host preflight, or run an independent runtime write monitor.",
     "status": "PARTIAL",
     "reviewedAt": "2026-10-04",
-    "currentDeltaReview": "The .open tail-recovery delta was inspected: only a manifest-free segment matching its header GUID and direct storage-root child path is opened exclusively; header and every complete record CRC are revalidated before truncating only bytes beyond the last complete frame. Verified prefix bytes are preserved. CRC-invalid, malformed, manifest-backed, compressed, or reparse-point segments are not repaired/truncated; new append proceeds in a fresh segment. SQLite initialization runs quick_check before schema migration; startup rebuilds a missing index beside authoritative segments or one classified as structurally corrupt, deleting only the derived SQLite database and sidecars. Unsupported schema is not classified as corruption, and tests assert the DB bytes remain unchanged; busy, permission, and unrelated I/O failures are not in the corruption filter. Tests cover incomplete-tail recovery, CRC-corrupt full-frame preservation, automatic missing/corrupt-index rebuild, and unsupported-schema preservation. Test-All passed at 9d78c50 with zero build warnings/errors, all 24 Fast projects, Quality/coverage, DocMirror, and UI. No product or physical runner was started. The broader callgraph, configured-root and hostile-race proof, host preflight, independent runtime write monitor, and physical evidence remain unverified.",
+    "currentDeltaReview": "The .open tail-recovery delta was inspected: only a manifest-free segment matching its header GUID and direct storage-root child path is opened exclusively; header and every complete record CRC are revalidated before truncating only bytes beyond the last complete frame. Verified prefix bytes are preserved. CRC-invalid, malformed, manifest-backed, compressed, or reparse-point segments are not repaired/truncated; new append proceeds in a fresh segment. SQLite initialization runs quick_check before schema migration; startup rebuilds a missing index beside authoritative segments or one classified as structurally corrupt, deleting only the derived SQLite database and sidecars. Unsupported schema is not classified as corruption, and tests assert the DB bytes remain unchanged; busy, permission, and unrelated I/O failures are not in the corruption filter. Tests cover incomplete-tail recovery, CRC-corrupt full-frame preservation, automatic missing/corrupt-index rebuild, and unsupported-schema preservation. The 1M small-record Storage benchmark fixture is bounded-batch and discoverable, but its measurement was not run and no performance target is claimed. Benchmark containers are exclusively created under the OS temp root, bound by a run GUID marker and data child, and recursively cleaned only after boundary/marker/reparse checks; source-contract tests cover these guards. This narrows accidental cleanup risk but does not prove race-free recursive deletion. Test-All passed at 8314865 with zero build warnings/errors, all 24 Fast projects, Quality/coverage, DocMirror, offline contracts, and UI. No product or physical runner was started. The broader callgraph, configured-root and hostile-race proof, host preflight, independent runtime write monitor, and physical evidence remain unverified.",
     "findings": [
       {
         "id": "settings-path-write-boundary",
@@ -174,6 +179,12 @@
         "status": "PARTIAL",
         "path": "src/StorageChronicle.Storage/SegmentLog.cs",
         "summary": "A supplemental source search reviewed selected durable-write/native-I/O call sites in SegmentLog, AppendOnlyStorageEngine, SqliteIndex, SettingsPersistence, AgentSettingsInfrastructure, ExternalMediaStore, WindowsVolumeDirectorySession, WindowsNtfsApi, WindowsNativeApi, and WindowsReconciliationInfrastructure. Observed mutations are product-owned append/compression/index/settings/recovery or session-bound external-media operations; reviewed monitored-volume USN and directory APIs request read-only access, while reconciliation sets only an I/O priority hint. This is not an exhaustive caller/callgraph audit, does not prove all configured roots/handles are race-safe, and does not replace host preflight or independent runtime monitoring. No runtime operation was performed."
+      },
+      {
+        "id": "benchmark-fixture-cleanup-boundary",
+        "status": "PARTIAL",
+        "path": "benchmarks/StorageChronicle.Benchmarks/Program.cs",
+        "summary": "Benchmark fixture roots are created with exclusive Windows CreateDirectoryW beneath the OS temp root, carry a fresh GUID ownership marker, place product data in a child directory, and refuse cleanup when expected containment, marker, or reparse checks fail. Architecture source-contract tests assert these controls. Recursive cleanup remains path-based with check/use interleavings not exhaustively proven against hostile races; the benchmark measurement was not executed."
       },
       {
         "id": "usn-cursor-path-write-boundary",

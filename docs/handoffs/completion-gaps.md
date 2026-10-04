@@ -2,13 +2,14 @@
 
 Updated 2026-10-04. This is the top-agent continuation ledger for requirements that still need implementation, stronger audit evidence, or environment acceptance. An unexecuted acceptance lane remains pending; it is never converted into a pass by a default script.
 
-## Latest continuation (2026-10-04, audited source `9d78c50`; integration `9d78c50`)
+## Latest continuation (2026-10-04, audited source and integration `8314865`)
 
 - User chose the Req.12 recovery behavior: truncate only the incomplete `.open` suffix; keep every complete CRC-validated prefix record unchanged. Tail recovery and tests merged into `devenv` via no-conflict `--no-ff` as `dde919b`.
 - Follow-up review found startup did not automatically restore a missing/corrupt SQLite projection. The top agent added integrity checking and startup reconstruction from authoritative segments, narrowed corruption classification so unsupported schema and unrelated busy/permission/I/O failures are preserved, and added recovery tests. This merged without conflict as `9d78c50`.
-- `pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1` passed at `9d78c50` with exit 0: Build (0 warnings/errors), all 24 Fast projects, Quality/coverage, DocMirror, MFT safety contracts 31/31, retired-VM contracts 17/17, and UI. Storage tests passed 22/22. The privileged lane was not invoked.
-- A focused current-delta review covers the `.open` recovery and SQLite derived-index replacement boundaries only. The exhaustive R37 source-to-sink audit, approved dedicated-PC/roots, general host preflight, independent runtime write monitor, marker/path-race closure, and live/privileged acceptance remain outstanding. `physical-readonly-audit.json` remains **FAIL / DO NOT RUN**; `main` remains untouched.
-- `devenv` is one tested integration commit ahead of `origin/devenv`; no `main` merge is allowed while any acceptance row remains open.
+- The top agent added a deterministic 1M small-record Storage benchmark fixture in bounded batches and made it discoverable in the full matrix; the resource-intensive measured run was deliberately not executed, so performance remains unproven. Benchmark fixture creation now uses exclusive Windows directory creation and cleanup is gated by a run GUID marker, temp-root/data-child checks, and reparse refusal. This is not a complete race-proof certification.
+- `pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1` passed at `8314865`: Build (0 warnings/errors), all 24 Fast projects, Quality/coverage, DocMirror, MFT safety contracts 31/31, retired-VM contracts 17/17, and UI. Storage tests passed 22/22; Architecture passed 14/14. The privileged lane was not invoked.
+- A focused current-delta review covers `.open` recovery, SQLite derived-index rebuild, and benchmark temp-fixture cleanup only. The exhaustive R37 source-to-sink audit, approved dedicated-PC/roots, general host preflight, independent runtime write monitor, marker/path-race closure, and live/privileged acceptance remain outstanding. `physical-readonly-audit.json` remains **FAIL / DO NOT RUN**; `main` remains untouched.
+- `devenv` awaits a documentation/audit refresh and authorized push; no `main` merge is allowed while any acceptance row remains open.
 
 ## Prior continuation (2026-10-04, audited source `b8d4fb9`; integration `8a72c54`)
 

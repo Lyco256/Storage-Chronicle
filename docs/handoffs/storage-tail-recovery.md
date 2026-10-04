@@ -27,7 +27,7 @@ Implemented the Req.12 recovery choice confirmed by the user: truncate only an i
 - `dotnet test tests/StorageChronicle.Architecture.Tests/StorageChronicle.Architecture.Tests.csproj --no-restore --verbosity minimal` — passed (14/14), including the benchmark fixture ownership/cleanup contract.
 - `pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-Fast.ps1 -NoRestore` — passed all 24 Fast projects, including Architecture (14/14) and Storage (22/22).
 - `git diff --check` — passed.
-- Integrated with `--no-ff` into `devenv` without conflicts: tail recovery at `dde919b`, then automatic SQLite recovery at `9d78c50`. Post-merge `pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1` passed at `9d78c50` (exit 0), including all 24 Fast projects, Quality/coverage, DocMirror, MFT/retired-VM offline contracts, and UI. Storage passed 22/22; build warnings/errors: 0. Privileged Windows acceptance was not run.
+- Integrated with `--no-ff` into `devenv` without conflicts: tail recovery `dde919b`, automatic SQLite recovery `9d78c50`, 1M small-record fixture `247f0f1`, and benchmark fixture cleanup hardening `8314865`. Post-merge `pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1` passed at `8314865` (all configured phases completed; build 0 warnings / 0 errors), including all 24 Fast projects, Quality/coverage, DocMirror, MFT/retired-VM offline contracts, and UI. Storage passed 22/22 and Architecture 14/14. Privileged Windows acceptance and the resource-intensive 1M benchmark measurement were not run.
 - Tests use temporary owned fixture directories only; no physical media or user history was accessed.
 
 ## Limitations
