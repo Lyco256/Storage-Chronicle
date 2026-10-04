@@ -122,8 +122,8 @@
   ],
   "workingTreeChanges": [],
   "latestValidation": {
-    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-Fast.ps1 and build/quality/Test-Quality.ps1",
-    "codeCommit": "b8d4fb9",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1",
+    "codeCommit": "8a72c54",
     "currentAuditCommit": "b8d4fb9e6ec3afadb3fde6e2d197237f4391d722",
     "exitCode": 0,
     "fastProjects": 24,
@@ -147,6 +147,7 @@
     "mftSeedOfflineContracts": "31 passed; current scripts parsed; no VHDX, disk, partition, format, product, installer, media, or workload was executed",
     "legacyVmRetirementContracts": "17 passed; eight newly retired VM/Stage A scripts parsed without execution; AST contract rejects every command except Write-Error/exit and fixed error-preference assignment",
     "retiredEntryPointParser": "eight retired VM/Stage A entry points parsed successfully; none was invoked",
+    "integrationMerge": "feat/retire-legacy-vm-paths merged with --no-ff into devenv as 8a72c54 without conflicts; main unchanged",
     "physicalAcceptance": "NOT_EXECUTED"
   },
   "overallStatus": "FAIL",
