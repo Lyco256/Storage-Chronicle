@@ -9,6 +9,7 @@ using Xunit;
 
 namespace StorageChronicle.Agent.Tests;
 
+[Collection(AgentPipeServerCollection.Name)]
 public sealed class AgentProjectionServiceTests
 {
     [Fact]

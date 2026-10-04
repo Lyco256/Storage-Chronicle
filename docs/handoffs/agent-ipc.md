@@ -18,6 +18,7 @@
 - Full Agent tests: invoke the built `StorageChronicle.Agent.Tests.exe` with `--progress off --minimum-expected-tests 1 --filter-not-trait 'Category=WindowsPrivileged'` — passed, 66/66.
 - `./build/Test-Fast.ps1 -NoRestore` — passed all 24 fast-lane test projects (402 tests total; 0 failures). The script prints expected rejection diagnostics from negative validator tests; these tests passed.
 - The first fast-lane attempt on a fresh worktree failed before testing because restore assets and the fixed `StorageChronicle.State.dll` architecture-test input were absent. After solution restore and building the State project, the same fast-lane command passed. No source changes were needed.
+- Top-agent verification after merge: the Agent suite passed 66/66 (3 environment-gated elevated cases skipped); the two classes that host the fixed production pipe name are in one non-parallel xUnit collection after a full-suite run exposed a startup timeout while pipe fixtures could run concurrently. Both classes then passed three consecutive focused cycles. `Test-Fast.ps1 -NoRestore` passed all 24 projects after the consent-test merge; `Test-All.ps1` is being rerun after that full-suite timeout and its test-only serialization fix.
 
 ## Limits / remaining coverage
 
