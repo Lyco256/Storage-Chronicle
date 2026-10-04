@@ -4,7 +4,7 @@
 
 `Requirements/98_REQUIREMENTS_COVERAGE.md` remains authoritative. The table below assigns one verification ID to every row in that coverage document; it records executable evidence and does not weaken any product requirement.
 
-## Current requirement-level readiness (Test-All integration commit `8a72c54`, audited source snapshot `b8d4fb9`, documentation current through `7c9470a`, 2026-10-04)
+## Current requirement-level readiness (Test-All integration commit `8a72c54`, audited source snapshot `b8d4fb9`, documentation synchronized 2026-10-04)
 
 This compact index closes the gap between the coverage-row verification IDs and each numbered requirement. `PASS` means the requirement's implementation/document/test evidence is present at the stated scope; it does not override environment-dependent acceptance gates. `PARTIAL`, `FAIL`, and `NOT_EXECUTED` remain open. Requirements 22 and 32–36 describe superseded whole-OS/VirtualBox execution paths; Requirement 37 is the active safety and acceptance authority.
 
@@ -47,7 +47,7 @@ This compact index closes the gap between the coverage-row verification IDs and 
 | [34 VirtualBox host prerequisites](../../Requirements/34_VIRTUALBOX_HOST_PREREQUISITES_AND_HUMAN_HANDOFF.md) | SUPERSEDED | Current human-action boundary is Requirement 37 §6. |
 | [35 low-memory VirtualBox profile](../../Requirements/35_LOW_MEMORY_AND_STORAGE_TESTLAB_PROFILE.md) | SUPERSEDED | Whole-OS VM profile is retired; required dataset sizes and performance conditions remain governed by Requirements 27/28/37. |
 | [36 VirtualBox migration acceptance](../../Requirements/36_VIRTUALBOX_MIGRATION_ACCEPTANCE_AND_REAUDIT.md) | SUPERSEDED | Current audit and acceptance authority is Requirement 37. |
-| [37 Physical read-only acceptance](../../Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md) | FAIL | A partial audit is bound to source snapshot `1e8d287` (subsequent changes here are documentation-only); the exhaustive source-to-sink review, approved fixture root, read-only host preflight, independent process write monitor, and physical evidence remain absent. The machine gate remains fail-closed at `DO_NOT_RUN`. |
+| [37 Physical read-only acceptance](../../Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md) | FAIL | Partial audit targets source snapshot `b8d4fb9`; selected I/O sink families were reviewed, but exhaustive callgraph coverage remains incomplete. Windows 10-specific host preflight exists but is unexecuted and is not a general gate; approved roots, general independent process write monitoring, and all physical evidence remain absent. The machine gate remains fail-closed at `DO_NOT_RUN`. |
 
 The latest recorded source audit and validation binding is [`physical-readonly-audit.json`](physical-readonly-audit.json), explained in [`physical-readonly-audit.md`](physical-readonly-audit.md). It audits source snapshot `1e8d287` and is explicitly partial, so it cannot authorize product/physical execution. `DO_NOT_RUN` remains until the exhaustive source review, independent runtime monitor, and environment-bound acceptance gates pass. `Test-All` passing does not change any pending gate above.
 

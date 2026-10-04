@@ -1,6 +1,6 @@
 # Main readiness
 
-## Current status (2026-10-04, tested integration commit `8a72c54`; audited source snapshot `b8d4fb9`; audit docs through `7c9470a`)
+## Current status (2026-10-04, tested integration commit `8a72c54`; audited source snapshot `b8d4fb9`; documentation synchronized)
 
 - The `feat/retire-legacy-vm-paths` changes were reviewed and merged with `--no-ff` into `devenv` as `8a72c54`; no conflicts occurred. The remaining whole-OS VM installer, preflight, transfer, and Windows 10 guest Stage A entry points now fail closed without I/O. `main` remains untouched.
 - Post-merge `pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1` passed at `8a72c54` with exit code 0: full solution build had 0 warnings/0 errors; all 24 configured non-privileged Fast projects, Quality/coverage, 31/31 MFT provenance contracts, 17/17 retired-VM contracts, and UI tests passed. Privileged Windows acceptance is deliberately isolated and was not run.
