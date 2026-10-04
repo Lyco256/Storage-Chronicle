@@ -181,7 +181,7 @@ $suites = @(
     },
     [ordered]@{
         Name = 'AppendAndCompression'
-        Filter = '*StorageAppendBenchmarks*'
+        Filter = @('*SegmentAppendAndSqliteIndex100K*', '*FlushAndCloseCompressedSegment100K*')
         ExpectedMethods = @('SegmentAppendAndSqliteIndex100K', 'FlushAndCloseCompressedSegment100K')
     },
     [ordered]@{
@@ -280,9 +280,10 @@ try {
         if (-not (Test-Path -LiteralPath $suiteRoot -PathType Container)) { New-MftDirectoryCreateNew -Path $suiteRoot | Out-Null }
         else { Assert-MftWorkflowNoReparsePath -Path $suiteRoot }
         $logPath = Join-Path $suiteRoot 'runner.log'
+        $filterPatterns = @($suite.Filter)
         $suiteResult = [ordered]@{
             Name = $suite.Name
-            Filter = $suite.Filter
+            Filter = @($filterPatterns)
             Toolchain = 'DotNetCli'
             ExpectedMethods = @($suite.ExpectedMethods)
             Status = 'not-executed'
@@ -295,7 +296,7 @@ try {
         try {
             $arguments = @('run', '--project', $benchmarkProject, '-c', $Configuration)
             if ($NoRestore) { $arguments += '--no-restore' }
-            $arguments += @('--', '--filter', $suite.Filter, '--artifacts', $suiteRoot, '--exporters', 'json', 'markdown')
+            $arguments += @('--', '--filter') + $filterPatterns + @('--artifacts', $suiteRoot, '--exporters', 'json', 'markdown')
             Write-Host "Running BenchmarkDotNet suite: $($suite.Name)"
             & dotnet @arguments 2>&1 | Tee-Object -FilePath $logPath
             $exitCode = $LASTEXITCODE

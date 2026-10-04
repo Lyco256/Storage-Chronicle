@@ -323,7 +323,7 @@ public class MediaManifestBenchmarks : IDisposable
         root = BenchmarkFixtures.CreateTemporaryDirectory("media-manifest");
         events = BenchmarkFixtures.CreateCanonicalEvents(BenchmarkFixtures.EventCount100K, mediaTagged: true);
         var (volumeId, fileSystem) = BenchmarkMediaFileSystem.Open(root);
-        store = new ExternalMediaStore(root, "benchmark-writer", volumeId, fileSystem, new FixedMediaClock());
+        store = new ExternalMediaStore(root, "benchmark-writer", volumeId, fileSystem, new FixedMediaClock(), writeAuthorization: _ => true);
         segment = await store.AppendSegmentAsync(events).ConfigureAwait(false);
         await store.PublishManifestAsync("media-benchmark", null, "mount-benchmark", new[] { segment }).ConfigureAwait(false);
         var manifest = await store.ReadManifestSlotAsync().ConfigureAwait(false);
@@ -390,7 +390,7 @@ public class MediaSegmentAppendBenchmarks : IDisposable
     {
         root = BenchmarkFixtures.CreateTemporaryDirectory("media-segment");
         var (volumeId, fileSystem) = BenchmarkMediaFileSystem.Open(root);
-        store = new ExternalMediaStore(root, "benchmark-writer", volumeId, fileSystem, new FixedMediaClock());
+        store = new ExternalMediaStore(root, "benchmark-writer", volumeId, fileSystem, new FixedMediaClock(), writeAuthorization: _ => true);
     }
 
     /// <summary>Appends and hashes one hundred thousand canonical events in a real media segment.</summary>

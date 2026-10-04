@@ -115,6 +115,7 @@ public sealed class ArchitectureContractTests
         Assert.Contains("DontEnforcePowerPlan()", benchmarkProgram, StringComparison.Ordinal);
         Assert.Contains("WithUnrollFactor(1)", benchmarkProgram, StringComparison.Ordinal);
         Assert.Contains("Environment.SetEnvironmentVariable(\"UseArtifactsOutput\", \"false\")", benchmarkProgram, StringComparison.Ordinal);
+        Assert.Equal(2, benchmarkProgram.Split("writeAuthorization: _ => true", StringSplitOptions.None).Length - 1);
         Assert.DoesNotContain("InProcessEmitToolchain", benchmarkProgram, StringComparison.Ordinal);
         Assert.DoesNotContain("--inProcess", benchmarkProgram, StringComparison.Ordinal);
         Assert.DoesNotContain("WithPowerPlan(", benchmarkProgram, StringComparison.Ordinal);
@@ -126,6 +127,23 @@ public sealed class ArchitectureContractTests
             Assert.DoesNotContain("[WarmupCount(", source, StringComparison.Ordinal);
         }
         Assert.Contains("<UseArtifactsOutput>false</UseArtifactsOutput>", directoryBuildProps, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FullBenchmarkMatrixSeparatesTheMillionRecordLane()
+    {
+        var root = FindRoot();
+        var matrix = File.ReadAllText(Path.Combine(root, "build", "quality", "Test-FullBenchmarkMatrix.ps1"));
+        var appendSuite = matrix.IndexOf("Name = 'AppendAndCompression'", StringComparison.Ordinal);
+        var storageSuite = matrix.IndexOf("Name = 'StorageAppend1M'", StringComparison.Ordinal);
+
+        Assert.True(appendSuite >= 0 && storageSuite > appendSuite, "The 1M Storage suite must remain an explicit matrix lane.");
+        var appendBlock = matrix[appendSuite..storageSuite];
+        Assert.Contains("'*SegmentAppendAndSqliteIndex100K*'", appendBlock, StringComparison.Ordinal);
+        Assert.Contains("'*FlushAndCloseCompressedSegment100K*'", appendBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain("'*StorageAppendBenchmarks*'", appendBlock, StringComparison.Ordinal);
+        Assert.Contains("$filterPatterns = @($suite.Filter)", matrix, StringComparison.Ordinal);
+        Assert.Contains("'--filter') + $filterPatterns", matrix, StringComparison.Ordinal);
     }
 
     [Fact]
