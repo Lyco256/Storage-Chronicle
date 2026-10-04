@@ -29,6 +29,7 @@ public class WindowsMftBenchmarks
     private string devicePath = string.Empty;
     private string markerPath = string.Empty;
     private string mountRoot = string.Empty;
+    private bool physicalSeedPreflightValidated;
     private WindowsFileMetadataReader? metadataReader;
     private EventNormalizer? normalizer;
     private readonly Dictionary<string, Measurement> measurements = new(StringComparer.Ordinal);
@@ -39,11 +40,10 @@ public class WindowsMftBenchmarks
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("The MFT benchmark requires Windows 10 22H2 or later.");
         devicePath = Environment.GetEnvironmentVariable("STORAGE_CHRONICLE_MFT_VOLUME") ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(devicePath)) throw new InvalidOperationException("Set STORAGE_CHRONICLE_MFT_VOLUME to a dedicated NTFS device path such as \\\\.\\C: before running the MFT benchmark.");
-        if (!string.Equals(Environment.GetEnvironmentVariable("STORAGE_CHRONICLE_MFT_VOLUME_LABEL"), "SC_TEST_MFT_VOLUME", StringComparison.Ordinal)) throw new InvalidOperationException("STORAGE_CHRONICLE_MFT_VOLUME_LABEL must be SC_TEST_MFT_VOLUME; host/system volumes are not accepted.");
+        if (string.IsNullOrWhiteSpace(devicePath)) throw new InvalidOperationException("Set STORAGE_CHRONICLE_MFT_VOLUME to the verified dedicated NTFS seed device path.");
         markerPath = Environment.GetEnvironmentVariable("STORAGE_CHRONICLE_MFT_MARKER_PATH") ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(markerPath) || !File.Exists(markerPath)) throw new InvalidOperationException("STORAGE_CHRONICLE_MFT_MARKER_PATH must point to the user-approved TestLab marker on the dedicated MFT data volume.");
-        if (devicePath.Contains("C:", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The MFT benchmark refuses C: and host/system volumes.");
+        if (string.IsNullOrWhiteSpace(markerPath) || !File.Exists(markerPath)) throw new InvalidOperationException("STORAGE_CHRONICLE_MFT_MARKER_PATH must point to the persistent, preflight-verified seed marker.");
+        ValidatePhysicalSeedPreflight();
         mountRoot = Path.GetPathRoot(markerPath) ?? throw new InvalidOperationException("The MFT marker path has no mount root.");
         enumerator = new WindowsMftEnumerator(new WindowsNtfsApi(), devicePath);
         metadataReader = new WindowsFileMetadataReader();
@@ -121,20 +121,31 @@ public class WindowsMftBenchmarks
         var complete = requiredMethods.All(measurements.ContainsKey);
         var environment = new
         {
-            OperatingSystem = RuntimeInformation.OSDescription,
-            OsBuild = Environment.OSVersion.Version.ToString(),
-            VmCpuCount = RequiredEnvironment("STORAGE_CHRONICLE_MFT_VM_CPU_COUNT"),
-            VmMemoryMiB = RequiredEnvironment("STORAGE_CHRONICLE_MFT_VM_MEMORY_MIB"),
+            OperatingSystem = RequiredEnvironment("STORAGE_CHRONICLE_MFT_PHYSICAL_HOST_OS"),
+            OsBuild = RequiredEnvironment("STORAGE_CHRONICLE_MFT_PHYSICAL_HOST_OS_BUILD"),
+            IsPhysicalMachine = physicalSeedPreflightValidated,
+            CpuName = RequiredEnvironment("STORAGE_CHRONICLE_MFT_PHYSICAL_HOST_CPU_NAME"),
+            CpuLogicalCount = int.Parse(RequiredEnvironment("STORAGE_CHRONICLE_MFT_PHYSICAL_HOST_CPU_COUNT"), System.Globalization.CultureInfo.InvariantCulture),
+            MemoryMiB = long.Parse(RequiredEnvironment("STORAGE_CHRONICLE_MFT_PHYSICAL_HOST_MEMORY_MIB"), System.Globalization.CultureInfo.InvariantCulture),
+            VhdxPath = RequiredEnvironment("STORAGE_CHRONICLE_MFT_VHDX_PATH"),
             VhdxType = RequiredEnvironment("STORAGE_CHRONICLE_MFT_VHDX_TYPE"),
             VhdxSizeGiB = RequiredEnvironment("STORAGE_CHRONICLE_MFT_VHDX_SIZE_GIB"),
+            DiskNumber = int.Parse(RequiredEnvironment("STORAGE_CHRONICLE_MFT_DISK_NUMBER"), System.Globalization.CultureInfo.InvariantCulture),
+            DiskUniqueId = RequiredEnvironment("STORAGE_CHRONICLE_MFT_DISK_UNIQUE_ID"),
+            VolumeUniqueId = RequiredEnvironment("STORAGE_CHRONICLE_MFT_VOLUME_UNIQUE_ID"),
+            VolumeGuidPath = RequiredEnvironment("STORAGE_CHRONICLE_MFT_VOLUME_GUID_PATH"),
+            SeedRunId = RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_RUN_ID"),
+            DatasetEntryCount = long.Parse(RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_ENTRY_COUNT"), System.Globalization.CultureInfo.InvariantCulture),
             DevicePath = devicePath,
             MarkerPath = markerPath,
-            VolumeLabel = Environment.GetEnvironmentVariable("STORAGE_CHRONICLE_MFT_VOLUME_LABEL") ?? string.Empty
+            VolumeLabel = "SC_TEST_MFT_VOLUME",
+            PreflightSchema = RequiredEnvironment("STORAGE_CHRONICLE_MFT_PREFLIGHT_SCHEMA"),
+            PreflightPath = RequiredEnvironment("STORAGE_CHRONICLE_MFT_PREFLIGHT_PATH")
         };
         var runs = requiredMethods.Where(measurements.ContainsKey).Select(method => measurements[method]).ToArray();
         var oneMillion = measurements.TryGetValue("MftEnumerationImport1M", out var million) && million.DatasetEntryCount >= RequiredEntryCount && million.EnumeratedEntryCount >= RequiredEntryCount;
         var noDrops = runs.All(value => value.DroppedEventCount == 0);
-        var eligible = complete && oneMillion && noDrops && runs.All(value => value.EnumeratedEntryCount >= value.DatasetEntryCount);
+        var eligible = physicalSeedPreflightValidated && complete && oneMillion && noDrops && runs.All(value => value.EnumeratedEntryCount >= value.DatasetEntryCount);
         var evidence = new
         {
             Schema = "StorageChronicle.MftBenchmarkEvidence.v1",
@@ -145,6 +156,7 @@ public class WindowsMftBenchmarks
             Environment = environment,
             FailureReasons = new[]
             {
+                physicalSeedPreflightValidated ? string.Empty : "The physical MFT seed preflight was not validated.",
                 complete ? string.Empty : "One or more required MFT benchmark methods did not emit counters.",
                 oneMillion ? string.Empty : "The 1M dataset/enumeration contract was not met.",
                 noDrops ? string.Empty : "At least one MFT run reported dropped events."
@@ -154,6 +166,34 @@ public class WindowsMftBenchmarks
         var fullPath = Path.GetFullPath(outputPath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath) ?? throw new InvalidOperationException("The MFT evidence path has no parent directory."));
         File.WriteAllText(fullPath, JsonSerializer.Serialize(evidence, EvidenceJsonOptions));
+    }
+
+    private void ValidatePhysicalSeedPreflight()
+    {
+        var path = RequiredEnvironment("STORAGE_CHRONICLE_MFT_PREFLIGHT_PATH");
+        if (!string.Equals(RequiredEnvironment("STORAGE_CHRONICLE_MFT_PREFLIGHT_SCHEMA"), "StorageChronicle.MftPhysicalSeedPreflight.v1", StringComparison.Ordinal))
+            throw new InvalidOperationException("The MFT preflight schema is not supported.");
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        var root = document.RootElement;
+        if (root.GetProperty("Schema").GetString() != "StorageChronicle.MftPhysicalSeedPreflight.v1" ||
+            root.GetProperty("Status").GetString() != "PASS" ||
+            !root.GetProperty("AcceptanceEligible").GetBoolean())
+            throw new InvalidOperationException("The physical MFT seed preflight is not acceptance-eligible.");
+        var environment = root.GetProperty("Environment");
+        if (!environment.GetProperty("IsPhysicalMachine").GetBoolean() ||
+            environment.GetProperty("DevicePath").GetString() != devicePath ||
+            environment.GetProperty("MarkerPath").GetString() != Path.GetFullPath(markerPath) ||
+            environment.GetProperty("VolumeLabel").GetString() != "SC_TEST_MFT_VOLUME" ||
+            environment.GetProperty("VhdxType").GetString() != "Dynamic" ||
+            environment.GetProperty("DatasetEntryCount").GetInt64() < RequiredEntryCount ||
+            environment.GetProperty("VhdxPath").GetString() != RequiredEnvironment("STORAGE_CHRONICLE_MFT_VHDX_PATH") ||
+            environment.GetProperty("DiskNumber").GetInt32() != int.Parse(RequiredEnvironment("STORAGE_CHRONICLE_MFT_DISK_NUMBER"), System.Globalization.CultureInfo.InvariantCulture) ||
+            environment.GetProperty("DiskUniqueId").GetString() != RequiredEnvironment("STORAGE_CHRONICLE_MFT_DISK_UNIQUE_ID") ||
+            environment.GetProperty("VolumeUniqueId").GetString() != RequiredEnvironment("STORAGE_CHRONICLE_MFT_VOLUME_UNIQUE_ID") ||
+            environment.GetProperty("VolumeGuidPath").GetString() != RequiredEnvironment("STORAGE_CHRONICLE_MFT_VOLUME_GUID_PATH") ||
+            environment.GetProperty("RunId").GetString() != RequiredEnvironment("STORAGE_CHRONICLE_MFT_SEED_RUN_ID"))
+            throw new InvalidOperationException("The physical MFT preflight identity does not match the benchmark process configuration.");
+        physicalSeedPreflightValidated = true;
     }
 
     private async Task<int> MeasureAsync(string method, long datasetEntryCount, Func<Task<MeasurementResult>> operation)

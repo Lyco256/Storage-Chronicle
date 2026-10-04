@@ -185,12 +185,44 @@ function Assert-GroupEvidence {
             if ($schema -ne 'StorageChronicle.FullBenchmarkMatrixEvidence.v1') { throw 'MFT performance evidence has an unexpected schema.' }
             if (-not [bool]$Value.IncludeMft -or [string]$Value.Configuration -ne 'Release' -or $null -eq $Value.MftEvidence) { throw 'MFT performance evidence is missing the connected Release MFT correctness artifact.' }
             if ([string]$Value.ExecutionStatus -ne 'completed' -or [string]$Value.MftEvidence.Schema -ne 'StorageChronicle.MftBenchmarkEvidence.v1' -or [string]$Value.MftEvidence.Status -ne 'PASSED' -or -not [bool]$Value.MftEvidence.AcceptanceEligible -or $null -eq $Value.MftEvidence.PSObject.Properties['FailureReasons'] -or @($Value.MftEvidence.FailureReasons).Count -ne 0) { throw 'MFT performance evidence is not a completed eligible real matrix.' }
+            $mftEnvironment = $Value.MftEvidence.Environment
             if ([string]$Value.Host.MftVolumeLabel -ne 'SC_TEST_MFT_VOLUME' -or
                 [string]::IsNullOrWhiteSpace([string]$Value.Host.MftMarkerPath) -or
                 -not (Test-Path -LiteralPath ([string]$Value.Host.MftMarkerPath) -PathType Leaf) -or
-                [string]$Value.Host.WindowsProductName -notmatch 'Windows 11' -or
+                [string]::IsNullOrWhiteSpace([string]$Value.Host.MftPhysicalPreflightPath) -or
+                -not (Test-Path -LiteralPath ([string]$Value.Host.MftPhysicalPreflightPath) -PathType Leaf) -or
+                -not [bool]$mftEnvironment.IsPhysicalMachine -or
+                [string]$mftEnvironment.OperatingSystem -notmatch 'Windows' -or
+                [string]$mftEnvironment.VhdxType -ne 'Dynamic' -or
+                [int64]$mftEnvironment.DatasetEntryCount -lt 1000000 -or
+                [string]$mftEnvironment.VolumeLabel -ne 'SC_TEST_MFT_VOLUME' -or
+                [string]::IsNullOrWhiteSpace([string]$mftEnvironment.VhdxPath) -or
+                [int]$mftEnvironment.DiskNumber -lt 0 -or
+                [string]::IsNullOrWhiteSpace([string]$mftEnvironment.DiskUniqueId) -or
+                [string]::IsNullOrWhiteSpace([string]$mftEnvironment.VolumeUniqueId) -or
+                [string]::IsNullOrWhiteSpace([string]$mftEnvironment.VolumeGuidPath) -or
+                [string]::IsNullOrWhiteSpace([string]$mftEnvironment.DevicePath) -or
+                [string]::IsNullOrWhiteSpace([string]$mftEnvironment.MarkerPath) -or
+                [string]::IsNullOrWhiteSpace([string]$mftEnvironment.SeedRunId) -or
+                [int]$mftEnvironment.CpuLogicalCount -lt 1 -or
+                [int64]$mftEnvironment.MemoryMiB -lt 1 -or
+                [double]$mftEnvironment.VhdxSizeGiB -le 0 -or
                 [string]::IsNullOrWhiteSpace([string]$Value.MftEvidencePath) -or
-                -not (Test-Path -LiteralPath ([string]$Value.MftEvidencePath) -PathType Leaf)) { throw 'MFT performance evidence does not prove the dedicated Windows 11 physical test volume and connected evidence path.' }
+                -not (Test-Path -LiteralPath ([string]$Value.MftEvidencePath) -PathType Leaf)) { throw 'MFT performance evidence does not prove a physical Windows host, connected dynamic VHDX seed identities, and evidence paths.' }
+            $mftPreflight = Read-ReferencedJson -Path ([string]$Value.Host.MftPhysicalPreflightPath) -Label 'Physical MFT seed preflight'
+            if ([string]$mftPreflight.Schema -ne 'StorageChronicle.MftPhysicalSeedPreflight.v1' -or
+                [string]$mftPreflight.Status -ne 'PASS' -or
+                -not [bool]$mftPreflight.AcceptanceEligible -or
+                -not [bool]$mftPreflight.Environment.IsPhysicalMachine -or
+                [int]$mftPreflight.Environment.DiskNumber -ne [int]$mftEnvironment.DiskNumber -or
+                [string]$mftPreflight.Environment.DiskUniqueId -ne [string]$mftEnvironment.DiskUniqueId -or
+                [string]$mftPreflight.Environment.VolumeUniqueId -ne [string]$mftEnvironment.VolumeUniqueId -or
+                [string]$mftPreflight.Environment.VolumeGuidPath -ne [string]$mftEnvironment.VolumeGuidPath -or
+                [string]$mftPreflight.Environment.RunId -ne [string]$mftEnvironment.SeedRunId -or
+                [string]$mftPreflight.Environment.VhdxPath -ne [string]$mftEnvironment.VhdxPath -or
+                [string]$mftPreflight.Environment.DevicePath -ne [string]$mftEnvironment.DevicePath -or
+                [string]$mftPreflight.Environment.MarkerPath -ne [string]$mftEnvironment.MarkerPath -or
+                [string]$mftPreflight.Environment.VolumeLabel -ne [string]$mftEnvironment.VolumeLabel) { throw 'MFT performance evidence does not match the live physical-seed preflight identity.' }
             $requiredSuites = [ordered]@{
                 CoreProjectionState = @('ReconstructSinglePointPath1M', 'GroupedGeneration100K', 'EventStackPage100K', 'PeriodDiff100K')
                 LargeFolderMove = @('RecordLargeFolderMove')
