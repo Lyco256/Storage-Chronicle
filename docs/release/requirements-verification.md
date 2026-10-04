@@ -4,7 +4,7 @@
 
 `Requirements/98_REQUIREMENTS_COVERAGE.md` remains authoritative. The table below assigns one verification ID to every row in that coverage document; it records executable evidence and does not weaken any product requirement.
 
-## Current requirement-level readiness (tested code commit `517b6c5`, audited source snapshot `1e8d287`, 2026-10-04)
+## Current requirement-level readiness (Test-All integration commit `8a72c54`, audited source snapshot `b8d4fb9`, documentation current through `3cfd884`, 2026-10-04)
 
 This compact index closes the gap between the coverage-row verification IDs and each numbered requirement. `PASS` means the requirement's implementation/document/test evidence is present at the stated scope; it does not override environment-dependent acceptance gates. `PARTIAL`, `FAIL`, and `NOT_EXECUTED` remain open. Requirements 22 and 32–36 describe superseded whole-OS/VirtualBox execution paths; Requirement 37 is the active safety and acceptance authority.
 
@@ -13,7 +13,7 @@ This compact index closes the gap between the coverage-row verification IDs and 
 | [00 Product requirements](../../Requirements/00_PRODUCT_REQUIREMENTS.md) | PARTIAL | Core product code and deterministic tests are integrated; live Windows 10/11, service, media, Explorer, formal performance/resource evidence, and independent write monitoring remain open. |
 | [01 Architecture](../../Requirements/01_ARCHITECTURE_AND_PROJECT_LAYOUT.md) | PASS | Project boundaries, solution layout, and architecture tests are present. |
 | [02 Branch/worktree rules](../../Requirements/02_GIT_BRANCH_WORKTREE_RULES.md) | PARTIAL | `devenv` integrations and handoffs are recorded; complete evidence of every prescribed feature worktree, ownership review, and clean handoff is not established in one audit record. |
-| [03 Tests and quality](../../Requirements/03_TEST_AND_QUALITY_REQUIREMENTS.md) | PARTIAL | Post-merge `build/Test-All.ps1` passed on `devenv` code commit `517b6c5`, including build with 0 warnings/errors, Fast, Quality/coverage, DocMirror, and UI. Physical/privileged lanes and formal performance/fault-durability acceptance remain open. |
+| [03 Tests and quality](../../Requirements/03_TEST_AND_QUALITY_REQUIREMENTS.md) | PARTIAL | `build/Test-All.ps1` passed on integration commit `8a72c54`, including build with 0 warnings/errors, all 24 Fast projects, Quality/coverage, DocMirror, MFT safety contracts, retired-VM contracts, and UI. Physical/privileged lanes and formal performance/fault-durability acceptance remain open. |
 | [04 Documentation](../../Requirements/04_DOCUMENTATION_REQUIREMENTS.md) | PASS | Source mirrors and release/handoff records exist; DocMirror passed. |
 | [05 Foundation](../../Requirements/05_FOUNDATION_PHASE.md) | PASS | Solution, shared contracts, build/validation scripts, and test/UI foundations are present. |
 | [06 Ownership matrix](../../Requirements/06_AGENT_OWNERSHIP_MATRIX.md) | PASS | Ownership paths are defined and feature handoffs are recorded. |
