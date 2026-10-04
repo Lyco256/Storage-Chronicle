@@ -2,13 +2,15 @@
 
 `IVolumeBoundMediaFileSystem.GetOwnedProductDirectoryIdentity()` returns the opaque identity of an already-existing, validated `.StorageChronicle` directory using the pinned volume-bound session. The operation is read-only and must not create the directory; absence, invalid ownership evidence, reparse points, or inability to obtain the underlying file identity fails closed. Test-only path adapters deliberately throw because a normalized path is not authoritative file identity evidence.
 
+`InspectProductAcl(approvedUserSid)` provides a read-only inspection result for the verified volume-root parent and existing product-owned media tree. It must account for parent `DELETE_CHILD`, prohibit broad-principal write access and destructive/current-user rights, and return `Unknown` if any handle, ACL, or subtree cannot be inspected. The result carries a descriptor fingerprint and inspected-entry counts; the API does not return file content. Implementations that have not implemented this inspection inherit a fail-closed `Unknown` result.
+
 ## Role
 
 Defines the platform-neutral volume-bound filesystem capability used by external-media persistence, so stores do not accept mount-point paths as write authority.
 
 ## Public types and responsibilities
 
-`MediaFileSystemEntry` carries one entry name and its attributes. `IVolumeBoundMediaFileSystem` exposes directory creation/enumeration, read-only opens, create-only file creation, and non-replacing publication of a file stream issued by that same session. `IVolumeBoundMediaFileSystemFactory` creates a platform implementation for an expected volume identity.
+`MediaFileSystemEntry` carries one entry name and its attributes. `MediaMirrorAclInspectionStatus` distinguishes verified, unsafe, and unknown ACL outcomes; `MediaMirrorAclInspection` carries the read-only fingerprint, scope counts, and findings. `IVolumeBoundMediaFileSystem` exposes the handle-bound ACL inspection plus directory creation/enumeration, read-only opens, create-only file creation, and non-replacing publication of a file stream issued by that same session. `IVolumeBoundMediaFileSystemFactory` creates a platform implementation for an expected volume identity.
 
 ## Inputs and outputs
 
@@ -20,7 +22,7 @@ Depends only on `VolumeId` from the domain contract and standard stream/file-att
 
 ## Invariants
 
-The session binds one verified `VolumeId` for its lifetime. Callers cannot substitute a mount-point string for the expected identity. Existing `.StorageChronicle` roots require a valid ownership marker and are never adopted when unmarked. The only bootstrap exception is create-only creation of a new product root and ownership marker. Methods do not read file contents unless `OpenRead` is explicitly invoked.
+The session binds one verified `VolumeId` for its lifetime. Callers cannot substitute a mount-point string for the expected identity. Existing `.StorageChronicle` roots require a valid ownership marker and are never adopted when unmarked. The only bootstrap exception is create-only creation of a new product root and ownership marker. ACL inspection is anchored to the same verified session and must include every existing subtree entry without opening file content; if incomplete, its outcome is `Unknown`. Methods do not read file contents unless `OpenRead` is explicitly invoked.
 
 ## Threading and lifetime
 
