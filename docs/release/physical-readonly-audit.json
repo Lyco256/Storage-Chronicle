@@ -101,13 +101,26 @@
   ],
   "workingTreeChanges": [],
   "latestValidation": {
-    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-Fast.ps1 -NoRestore",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1",
     "exitCode": 0,
-    "projects": 24,
+    "fastProjects": 24,
+    "qualityGate": "passed",
+    "uiGate": "passed",
     "buildWarnings": 0,
     "buildErrors": 0,
-    "agentTests": "75 total; 72 passed; 3 privileged cases skipped because no approved acceptance root is configured",
-    "docMirror": "passed after per-user implementation documentation was completed",
+    "agentTests": "72 passed in the configured Fast lane; privileged physical cases are isolated and were not selected",
+    "criticalCoveragePercent": {
+      "Domain": 82.41,
+      "State": 94.25,
+      "Projection": 89.28,
+      "Storage": 87.96
+    },
+    "gatedViewModelCoveragePercent": {
+      "DiffView": 92.23,
+      "EventStack": 78.51,
+      "Settings": 91.01
+    },
+    "docMirror": "passed in Fast and direct DocMirror validation",
     "physicalAcceptance": "NOT_EXECUTED"
   },
   "overallStatus": "FAIL",
