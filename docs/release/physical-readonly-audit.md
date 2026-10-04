@@ -1,6 +1,14 @@
 # Physical read-only audit
 
-## Current commit binding (2026-10-04, partial; `877ce6def71dc3d3bafabc141033c00da1eb8284`)
+## Current audited source snapshot (2026-10-04, partial; `1e8d287a44a3323c735fc26b1a38cea2427e2844`)
+
+The companion JSON binds to audited source snapshot `1e8d287`; subsequent edits in this audit packet are documentation-only. Since prior target `877ce6d`, the only code/test paths changed are the six MFT workflow/acceptance scripts and `WindowsMediaAclPolicyTests.cs`; the 60 GiB MFT seed gates and new provenance workflow were statically reviewed, and `Test-MftPhysicalSeedContracts.ps1` passed 31/31. The six changed PowerShell files parsed successfully, and DocMirror passed. The prior source findings are carried forward only for unchanged paths; this remains a partial—not exhaustive—source-to-sink audit.
+
+The dedicated MFT workflow checks the 60 GiB floor before seed creation and again before the one-million-file workload. Offline contracts cover these guards, create-new/collision behavior, disk/volume identity binding, failure retention, and independent monitor provenance. The older generic `build/Test-Privileged.ps1` path still has only a 40 GiB VHDX gate and is not approved for MFT seeding. No VHDX, disk, partition, format, workload, product, service, installer, UAC, physical media, or privileged runner was executed. Approved roots, read-only host preflight, independent runtime write monitoring, full call-graph audit, and physical evidence remain absent. Overall **FAIL / DO NOT RUN**; `main` is not eligible.
+
+## Historical prior snapshot (2026-10-04, source commit `877ce6def71dc3d3bafabc141033c00da1eb8284`)
+
+The snapshot below records the prior audit target. Its MFT seed-gate finding is superseded by the current dedicated workflow entry above and in the companion JSON; all other historical findings remain in force unless explicitly superseded by a later current-commit audit.
 
 The machine-readable artifact targets source commit `877ce6d` and remains `FAIL / DO_NOT_RUN`; its inventory is explicitly partial, not a complete Requirement 37 source-to-sink audit. The settings path finding is partially resolved: authenticated named-pipe SID now selects a freshly resolved Windows user profile, IPC payload SID/path values are ignored, and a fail-closed sentinel prevents LocalSystem `%LOCALAPPDATA%` fallback. A synthetic two-SID dispatch test proves separation; Windows profile registry and live multi-user service acceptance remain unverified. `build/Test-All.ps1` passed Build, all 24 Fast projects, Quality/coverage, and UI with exit code 0 and zero build warnings/errors. Critical coverage gates passed (Domain 82.41%, State 94.25%, Projection 89.28%, Storage 87.96%; gated ViewModels DiffView 92.23%, EventStack 78.51%, Settings 91.01%). DocMirror passed. Privileged/physical acceptance was not selected.
 

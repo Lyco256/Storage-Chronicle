@@ -4,7 +4,7 @@
 
 `Requirements/98_REQUIREMENTS_COVERAGE.md` remains authoritative. The table below assigns one verification ID to every row in that coverage document; it records executable evidence and does not weaken any product requirement.
 
-## Current requirement-level readiness (tested code commit `517b6c5`, 2026-10-04; pushed on `origin/devenv` through `ac3b880`)
+## Current requirement-level readiness (tested code commit `517b6c5`, audited source snapshot `1e8d287`, 2026-10-04)
 
 This compact index closes the gap between the coverage-row verification IDs and each numbered requirement. `PASS` means the requirement's implementation/document/test evidence is present at the stated scope; it does not override environment-dependent acceptance gates. `PARTIAL`, `FAIL`, and `NOT_EXECUTED` remain open. Requirements 22 and 32–36 describe superseded whole-OS/VirtualBox execution paths; Requirement 37 is the active safety and acceptance authority.
 
@@ -41,15 +41,15 @@ This compact index closes the gap between the coverage-row verification IDs and 
 | [28 MFT performance matrix](../../Requirements/28_PERFORMANCE_MATRIX_WITH_MFT.md) | PARTIAL | The create-new physical seed workflow, 60 GiB gates, independent process-attributed monitor contract, and final-gate provenance binding are implemented and pass offline contracts (31/31). No approved roots, actual seed/monitor artifacts, or MFT 10K/100K/1M physical matrix have been executed; acceptance remains ineligible. |
 | [29 Real-machine installer](../../Requirements/29_REAL_MACHINE_INSTALLER_ACCEPTANCE.md) | NOT_EXECUTED | No dedicated-PC install/repair/update/rollback/uninstall acceptance artifact exists. |
 | [30 Agent/Explorer correlation](../../Requirements/30_AGENT_EXPLORER_REAL_CORRELATION.md) | NOT_EXECUTED | No eligible physical Agent/Explorer workload artifact with zero false Exact attribution exists. |
-| [31 devenv/main integration](../../Requirements/31_DEVENV_MAIN_INTEGRATION.md) | PARTIAL | `devenv` was integrated with `--no-ff`, passed post-merge `Test-All`, and was pushed to `origin/devenv` through `ac3b880`; `main` is untouched. Final acceptance gates are unmet, so no merge to `main` is allowed. |
+| [31 devenv/main integration](../../Requirements/31_DEVENV_MAIN_INTEGRATION.md) | PARTIAL | `devenv` was integrated with `--no-ff`, passed post-merge `Test-All`, and is pushed to `origin/devenv`; subsequent work is documentation-only. `main` is untouched. Final acceptance gates are unmet, so no merge to `main` is allowed. |
 | [32 VirtualBox migration](../../Requirements/32_VIRTUALBOX_MIGRATION_AND_SUPERSESSION.md) | SUPERSEDED | Current OS-guest execution path is retired by Requirement 37. |
 | [33 VirtualBox TestLab](../../Requirements/33_SAFE_VIRTUALBOX_TESTLAB.md) | SUPERSEDED | Current OS-guest execution path is retired by Requirement 37. |
 | [34 VirtualBox host prerequisites](../../Requirements/34_VIRTUALBOX_HOST_PREREQUISITES_AND_HUMAN_HANDOFF.md) | SUPERSEDED | Current human-action boundary is Requirement 37 §6. |
 | [35 low-memory VirtualBox profile](../../Requirements/35_LOW_MEMORY_AND_STORAGE_TESTLAB_PROFILE.md) | SUPERSEDED | Whole-OS VM profile is retired; required dataset sizes and performance conditions remain governed by Requirements 27/28/37. |
 | [36 VirtualBox migration acceptance](../../Requirements/36_VIRTUALBOX_MIGRATION_ACCEPTANCE_AND_REAUDIT.md) | SUPERSEDED | Current audit and acceptance authority is Requirement 37. |
-| [37 Physical read-only acceptance](../../Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md) | FAIL | Current-commit source-to-sink audit, approved fixture root, host preflight, independent process write monitor, and physical evidence are absent. The latest audit JSON is bound to older commit `877ce6d` and is stale; its fail-closed `DO_NOT_RUN` is not authorization for current code. |
+| [37 Physical read-only acceptance](../../Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md) | FAIL | A partial audit is bound to source snapshot `1e8d287` (subsequent changes here are documentation-only); the exhaustive source-to-sink review, approved fixture root, read-only host preflight, independent process write monitor, and physical evidence remain absent. The machine gate remains fail-closed at `DO_NOT_RUN`. |
 
-The latest recorded source audit and validation binding is [`physical-readonly-audit.json`](physical-readonly-audit.json), explained in [`physical-readonly-audit.md`](physical-readonly-audit.md). It targets `877ce6d`, not the current `devenv` code, so it cannot authorize any current product/physical execution; its `DO_NOT_RUN` status remains the safe decision until a fresh current-commit audit and independent runtime monitor pass. `Test-All` passing does not change any pending environment gate above.
+The latest recorded source audit and validation binding is [`physical-readonly-audit.json`](physical-readonly-audit.json), explained in [`physical-readonly-audit.md`](physical-readonly-audit.md). It audits source snapshot `1e8d287` and is explicitly partial, so it cannot authorize product/physical execution. `DO_NOT_RUN` remains until the exhaustive source review, independent runtime monitor, and environment-bound acceptance gates pass. `Test-All` passing does not change any pending gate above.
 
 ## Family summary
 

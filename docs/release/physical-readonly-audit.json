@@ -1,6 +1,17 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "877ce6def71dc3d3bafabc141033c00da1eb8284",
+  "targetCommit": "1e8d287a44a3323c735fc26b1a38cea2427e2844",
+  "priorAuditTargetCommit": "877ce6def71dc3d3bafabc141033c00da1eb8284",
+  "currentDeltaFromPriorAudit": [
+    "build/quality/MftPhysicalSeed.Contracts.ps1",
+    "build/quality/MftSeedWorkflow.Contracts.ps1",
+    "build/quality/New-MftPhysicalSeed.ps1",
+    "build/quality/Test-FinalAcceptance.ps1",
+    "build/quality/Test-FullBenchmarkMatrix.ps1",
+    "build/quality/Test-MftPhysicalSeedContracts.ps1",
+    "tests/StorageChronicle.Platform.Windows.FileSystem.Tests/WindowsMediaAclPolicyTests.cs"
+  ],
+  "currentAuditScope": "Partial audited-source-snapshot review: carries forward historical source-to-sink findings where production source is unchanged from prior audit target 877ce6d; re-reviewed the seven changed code/test paths listed in currentDeltaFromPriorAudit at targetCommit. Later changes in this audit packet are documentation-only. This is not exhaustive across every source, test, script, external command, host preflight, or runtime write monitor.",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -102,6 +113,8 @@
   "workingTreeChanges": [],
   "latestValidation": {
     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1",
+    "codeCommit": "517b6c5",
+    "currentAuditCommit": "1e8d287a44a3323c735fc26b1a38cea2427e2844",
     "exitCode": 0,
     "fastProjects": 24,
     "qualityGate": "passed",
@@ -121,6 +134,7 @@
       "Settings": 91.01
     },
     "docMirror": "passed in Fast and direct DocMirror validation",
+    "mftSeedOfflineContracts": "31 passed; current scripts parsed; no VHDX, disk, partition, format, product, installer, media, or workload was executed",
     "physicalAcceptance": "NOT_EXECUTED"
   },
   "overallStatus": "FAIL",
@@ -132,9 +146,10 @@
   "hostPreflight": "NOT_EXECUTED",
   "processWriteMonitoring": "NOT_EXECUTED",
   "currentCommitSourceAudit": {
-    "scope": "Partial source-to-sink review of Agent/Application/Windows NTFS/Session calls plus selected build/tools/installer flows and their service/OS-command reachability. Does not exhaustively audit every source/test/script/external command, perform host preflight, or run an independent runtime write monitor.",
+    "scope": "Partial source-to-sink review of Agent/Application/Windows NTFS/Session calls plus selected build/tools/installer flows and their service/OS-command reachability; prior findings are carried forward where source is unchanged from 877ce6d, and seven changed code/test paths are reviewed at current targetCommit. Does not exhaustively audit every source/test/script/external command, perform host preflight, or run an independent runtime write monitor.",
     "status": "PARTIAL",
     "reviewedAt": "2026-10-04",
+    "currentDeltaReview": "New MFT seed workflow paths were statically reviewed for explicit dry-run, Apply/typed confirmation/elevation/ShouldProcess gates, isolated create-new roots, 60 GiB checks before seed and workload, disk/partition/volume re-identification before initialize/partition/format, evidence-only retention on failure, and mandatory independent monitor provenance before benchmark suites. Root/file path TOCTOU, external monitor authenticity, supported-host behavior, and physical evidence remain unverified.",
     "findings": [
       {
         "id": "settings-path-write-boundary",
@@ -263,7 +278,21 @@
         "status": "FAIL",
         "path": "build/Test-Privileged.ps1",
         "lines": [519, 524],
-        "summary": "The visible preflight requires 40 GiB before VHDX creation, but Requirement 37 requires at least 60 GiB before 1M MFT seeding. The inspected runner does not establish a count-specific 60 GiB gate. No VHDX or MFT run was performed."
+        "summary": "This older generic Test-Privileged path still has only its 40 GiB VHDX gate and is not an approved 1M MFT seed path. The separate build/quality/New-MftPhysicalSeed.ps1 workflow now checks at least 60 GiB before seed creation and immediately before the 1M workload; see mft-seed-60gib-gates. No VHDX or MFT run was performed."
+      },
+      {
+        "id": "mft-seed-60gib-gates",
+        "status": "PASS",
+        "path": "build/quality/New-MftPhysicalSeed.ps1",
+        "lines": [62, 145],
+        "summary": "The dedicated MFT seed workflow checks 60 GiB free before creating the seed directory/VHDX and again immediately before the one-million-file workload. Offline MftPhysicalSeedContracts passed 31/31, including rejection below 60 GiB. This is a narrow code/contract result only; no host capacity, VHDX, workload, or physical acceptance was executed."
+      },
+      {
+        "id": "mft-seed-write-boundary-and-provenance",
+        "status": "PARTIAL",
+        "path": "build/quality/New-MftPhysicalSeed.ps1",
+        "lines": [19, 37, 60, 69, 85, 95, 107, 147, 177],
+        "summary": "The workflow defaults to a mutation-free plan; Apply additionally requires the exact run token, explicit elevated shell, and ShouldProcess approval. It uses run-scoped create-new evidence/fixture roots, re-identifies the new VHDX, disk, partition, and volume before mutating storage, retains all data on failure, and marks creator evidence ineligible until independent process-attributed monitor evidence is supplied. Remaining: path-based check/use races and forged/independence assumptions in external evidence are not closed by offline contracts; no user-approved roots, host preflight, monitor, or physical run exists. DO_NOT_RUN remains."
       },
       {
         "id": "pc-bound-media-consent-end-to-end-gate",
@@ -318,7 +347,7 @@
     ]
   },
   "acceptanceScriptAudit": {
-    "scope": "Static review of selected build/**, tools/**, installer/** sinks and call paths; not exhaustive.",
+    "scope": "Static review of selected build/**, tools/**, installer/** sinks and call paths; re-reviewed current MFT seed/benchmark delta, not exhaustive.",
     "status": "PARTIAL_WITH_BLOCKING_FINDINGS",
     "findings": [
       "The file-mutation workload overwrite finding is narrowed by commit ddc293d: run GUID, marker-only root, no-reparse checks, create-new paths, run-bound in-root oracle, and exact deletion-tree checks are implemented and fast tests pass. Path-based TOCTOU and marker authenticity remain open, so workload execution remains gated.",
@@ -328,7 +357,8 @@
       "The physical installer case driver now verifies a live broker grant and external hash-manifest fingerprint before case evidence or the mutation switch. Parent-side pre-presentation and per-case UAC gating are implemented. The driver script is verified after load and msiexec reopens checked MSI paths, leaving script/MSI hash-to-use races; complete installer effect auditing and dedicated-PC/UAC execution remain blockers.",
       "The old VirtualBox VDI cleanup sink was retired by commit e0529db; the old VDI creation/attachment helper is now also a no-I/O stub with a source-contract test. The old guest runner was reduced to a no-I/O stub by commit ddc293d. This does not authorize the separately gated file-backed VHDX physical workflow or close other runner risks.",
       "The Explorer scenario producer no longer uses overwrite-capable output paths, but several other evidence and build/package producers may still overwrite existing paths; full sink inventory and approved-root/new-only policy remain open.",
-      "Commit 444565d separates raw ResourceMonitor evidence from queue-augmented output and uses create-only publication for both. A diagnostic shell-process sample verified preservation only; it does not satisfy the independent runtime write-monitor or formal resource gate."
+      "Commit 444565d separates raw ResourceMonitor evidence from queue-augmented output and uses create-only publication for both. A diagnostic shell-process sample verified preservation only; it does not satisfy the independent runtime write-monitor or formal resource gate.",
+      "At audited source snapshot 1e8d287, New-MftPhysicalSeed.ps1 has dry-run, typed/elevated Apply and ShouldProcess gates, repeated 60 GiB checks, create-new GUID-scoped evidence, VHDX/disk/volume identity rechecks, and no automatic rollback/deletion. Contract suite 31/31 and AST parse passed. This does not close path races, validate an independently supplied monitor, or authorize execution."
     ],
     "runtimeExecution": "NOT_EXECUTED"
   },
@@ -480,7 +510,14 @@
       "status": "FAIL",
       "path": "build/Test-Privileged.ps1",
       "lines": [519, 524],
-      "summary": "Only a 40 GiB VHDX creation gate is visible; the required 60 GiB precondition for 1M MFT seeding is absent from the reviewed path."
+      "summary": "This legacy generic runner still has only a 40 GiB gate and is not an approved MFT seed path. The dedicated MFT workflow's 60 GiB gates are separately verified by mft-seed-60gib-gates; no physical run was performed."
+      },
+      {
+        "id": "mft-seed-60gib-gates",
+        "status": "PASS",
+        "path": "build/quality/New-MftPhysicalSeed.ps1",
+        "lines": [62, 145],
+        "summary": "Checks 60 GiB free before seed creation and immediately before the one-million-file workload. Offline contract tests reject below-threshold cases. No physical seed or workload was run."
     }
   ]
 }
