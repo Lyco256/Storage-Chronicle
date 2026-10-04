@@ -13,6 +13,7 @@ Set-StrictMode -Version Latest
 
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $project = Join-Path $root 'benchmarks/StorageChronicle.Benchmarks/StorageChronicle.Benchmarks.csproj'
+. (Join-Path $PSScriptRoot 'MftPhysicalSeed.Contracts.ps1')
 
 if ([string]::IsNullOrWhiteSpace($ArtifactRoot)) {
     $ArtifactRoot = Join-Path $root 'artifacts/benchmarks'
@@ -75,10 +76,11 @@ function Assert-MftEvidence {
     $oneMillion = @($runs | Where-Object { [string]$_.Method -eq 'MftEnumerationImport1M' })[0]
     if ([int64]$oneMillion.DatasetEntryCount -lt 1000000 -or [int64]$oneMillion.EnumeratedEntryCount -lt 1000000) { throw 'The MFT 1M dataset did not meet the one-million-entry contract.' }
 
-    foreach ($field in @('OperatingSystem', 'OsBuild', 'VmCpuCount', 'VmMemoryMiB', 'VhdxType', 'VhdxSizeGiB')) {
+    foreach ($field in @('OperatingSystem', 'OsBuild', 'IsPhysicalMachine', 'CpuName', 'CpuLogicalCount', 'MemoryMiB', 'VhdxPath', 'VhdxType', 'VhdxSizeGiB', 'DiskNumber', 'DiskUniqueId', 'VolumeUniqueId', 'VolumeGuidPath', 'DevicePath', 'MarkerPath', 'RunId', 'DatasetEntryCount')) {
         $property = $evidence.Environment.PSObject.Properties[$field]
         if ($null -eq $property -or [string]::IsNullOrWhiteSpace([string]$property.Value)) { throw "MFT evidence environment is missing $field." }
     }
+    if (-not [bool]$evidence.Environment.IsPhysicalMachine -or [int64]$evidence.Environment.DatasetEntryCount -lt 1000000) { throw 'MFT environment does not prove a physical host and one-million-entry seed.' }
     return $evidence
 }
 
@@ -125,34 +127,22 @@ if ($IncludeMft) {
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
         Write-NotExecuted 'The full matrix includes WindowsMftBenchmarks and therefore requires Windows.'
     }
-    if ($windowsProductName -notmatch 'Windows 11') {
-        Write-NotExecuted "The MFT acceptance matrix requires a Windows 11 TestLab guest; detected product '$windowsProductName'."
-    }
-
     $mftVolume = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_VOLUME')
     if ([string]::IsNullOrWhiteSpace($mftVolume)) {
-        Write-NotExecuted 'The full matrix requires STORAGE_CHRONICLE_MFT_VOLUME to identify a dedicated NTFS capability volume.'
-    }
-    if (-not [string]::Equals([Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_VOLUME_LABEL'), 'SC_TEST_MFT_VOLUME', [StringComparison]::Ordinal)) {
-        Write-NotExecuted 'The full matrix requires STORAGE_CHRONICLE_MFT_VOLUME_LABEL=SC_TEST_MFT_VOLUME; host/system volumes are not accepted.'
+        Write-NotExecuted 'The full matrix requires STORAGE_CHRONICLE_MFT_VOLUME to identify the dedicated NTFS seed device path.'
     }
     $mftMarker = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_MARKER_PATH')
-    if ([string]::IsNullOrWhiteSpace($mftMarker) -or -not (Test-Path -LiteralPath $mftMarker -PathType Leaf)) {
-        Write-NotExecuted 'The full matrix requires an existing STORAGE_CHRONICLE_MFT_MARKER_PATH from the dedicated TestLab data volume.'
+    if ([string]::IsNullOrWhiteSpace($mftMarker)) {
+        Write-NotExecuted 'The full matrix requires STORAGE_CHRONICLE_MFT_MARKER_PATH for the persistent MFT seed marker.'
     }
-    $markerValue = Get-Content -Raw -Encoding UTF8 -LiteralPath $mftMarker | ConvertFrom-Json
-    if ([string]$markerValue.Schema -ne 'StorageChronicle.TestLabDataMarker.v1' -or [string]$markerValue.Role -ne 'Mft' -or [string]$markerValue.VolumeLabel -ne 'SC_TEST_MFT_VOLUME' -or [string]$markerValue.FileSystem -ine 'NTFS') {
-        Write-NotExecuted 'The MFT marker must prove the Mft role, SC_TEST_MFT_VOLUME label, and NTFS filesystem.'
+    try {
+        $inventory = Get-MftPhysicalSeedInventory -MarkerPath $mftMarker -DevicePath $mftVolume
+        $mftPreflight = Assert-MftPhysicalSeedInventory -Inventory $inventory
     }
-    if ($mftVolume -match '(?i)(^|[\\:])C:') {
-        Write-NotExecuted 'The full matrix refuses C: and host/system MFT device paths.'
+    catch {
+        Write-NotExecuted "Read-only physical MFT seed preflight failed closed: $($_.Exception.Message)"
     }
-    foreach ($name in @('STORAGE_CHRONICLE_MFT_VM_CPU_COUNT', 'STORAGE_CHRONICLE_MFT_VM_MEMORY_MIB', 'STORAGE_CHRONICLE_MFT_VHDX_TYPE', 'STORAGE_CHRONICLE_MFT_VHDX_SIZE_GIB')) {
-        if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { Write-NotExecuted "The full matrix requires $name from the measured TestLab environment." }
-    }
-
-    $oldMftEvidencePath = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_EVIDENCE_PATH', 'Process')
-    [Environment]::SetEnvironmentVariable('STORAGE_CHRONICLE_MFT_EVIDENCE_PATH', [IO.Path]::GetFullPath($MftEvidencePath), 'Process')
+    Write-NotExecuted 'MFT seed identity checks are implemented, but this ownership scope has no audited create-new VHDX/seed workflow or independently verifiable seed-creation provenance. MFT acceptance stays NOT_EXECUTED until the top agent supplies that authorized provenance contract.'
 }
 
 $suites = @(
@@ -292,6 +282,7 @@ finally {
             MftVolumeConfigured = -not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_VOLUME'))
             MftVolumeLabel = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_VOLUME_LABEL')
             MftMarkerPath = [Environment]::GetEnvironmentVariable('STORAGE_CHRONICLE_MFT_MARKER_PATH')
+            MftPhysicalPreflightPath = $null
         }
         MftEvidencePath = $MftEvidencePath
         MftEvidence = if ($null -ne $mftEvidence) { $mftEvidence } else { $null }
@@ -303,13 +294,6 @@ finally {
     $manifest | ConvertTo-Json -Depth 12 | Set-Content -Encoding UTF8 -LiteralPath $manifestPath
     Write-Host "Benchmark matrix evidence: $manifestPath"
 
-    if ($IncludeMft) {
-        if ($null -ne $oldMftEvidencePath) {
-            [Environment]::SetEnvironmentVariable('STORAGE_CHRONICLE_MFT_EVIDENCE_PATH', $oldMftEvidencePath, 'Process')
-        } else {
-            [Environment]::SetEnvironmentVariable('STORAGE_CHRONICLE_MFT_EVIDENCE_PATH', $null, 'Process')
-        }
-    }
 }
 
 if ($null -ne $failure) {

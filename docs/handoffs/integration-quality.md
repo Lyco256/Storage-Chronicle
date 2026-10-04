@@ -70,3 +70,27 @@ The static audit reported that `tools/StorageChronicle.RealIoOracleValidator/Pro
 - This handoff does not resolve the Oracle Validator overwrite finding; the top-agent request above remains open.
 - This change does not establish or authorize an evidence root. It only makes TestDataGenerator output new-only and rejects unsafe path forms observed before the create operation.
 - Changes are committed on this feature branch. No merge, rebase, or push has been performed.
+
+## Req19 physical MFT acceptance migration (2026-10-04)
+
+### Changes
+
+- Replaced the full matrix's Windows 11 TestLab guest and VM CPU/memory requirements with physical Windows host fields and a read-only seed identity contract in `build/quality/MftPhysicalSeed.Contracts.ps1`.
+- The live inventory queries the attached VHDX through `Get-VHD`, maps its disk and partitions to the requested drive-letter device path, reads disk/volume identities and NTFS label, verifies the persistent marker/run GUID, checks system/boot/recovery/pagefile/crash-dump exclusions, and records host OS/build/CPU/memory plus VHDX type/size/path and identity facts. It performs no disk/volume/VHDX writes.
+- Updated `WindowsMftBenchmarks` to require the physical preflight schema and matching identity values and to emit physical environment fields instead of guest CPU/memory fields. Updated the final acceptance gate to require and cross-check the live preflight identity evidence and actual one-million-entry counters.
+- Added `Test-MftPhysicalSeedContracts.ps1` with 22 non-privileged in-memory/static cases and integrated it into `Test-Quality.ps1`.
+- Updated mirrors for the benchmark, full matrix, final acceptance, quality runner, and added mirrors for the inventory and contract test.
+
+### Safety limit — acceptance deliberately remains blocked
+
+This ownership scope has no audited create-new VHDX/seed workflow that can prove the VHDX pathname was absent before creation within a user-approved isolation root. A persistent marker alone cannot prove that provenance. Therefore `Test-FullBenchmarkMatrix.ps1 -IncludeMft` performs no BenchmarkDotNet invocation and writes `NOT_EXECUTED`, even when read-only identity checks would pass. No MFT volume was queried; no VHDX was created, attached, formatted, or changed; no benchmark/product/service/installer was started. The top agent must provide and review the authorized seed-creation/provenance contract before the MFT lane can become executable. This is not a completed R-03 acceptance run.
+
+### Verification
+
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/quality/Test-MftPhysicalSeedContracts.ps1`: passed 22/22; uses only in-memory inventories and reads source text.
+- PowerShell parser validation of the inventory, contract test, full matrix, final gate, and quality runner: passed.
+- `dotnet build benchmarks/StorageChronicle.Benchmarks/StorageChronicle.Benchmarks.csproj -c Debug --no-restore --nologo`: passed, 0 warnings/errors.
+- `dotnet run --project tools/StorageChronicle.DocMirrorValidator --no-restore -- .`: passed.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/quality/Test-Quality.ps1`: passed DocMirror, Architecture, Integration, UI Headless, MFT seed contracts (13/13 at the time of the full gate run), Coverage, and VirtualBox legacy contract validation. The focused contract suite was expanded to 22/22 and rerun afterward.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/Test-Fast.ps1 -NoRestore`: passed all configured non-privileged tests; per-project build warnings/errors were zero. Some fixture tools intentionally print their rejected-input diagnostics to stderr while their contract tests pass.
+- No merge or push was performed.

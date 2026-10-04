@@ -5,6 +5,8 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & "$PSScriptRoot\Test-Integration.ps1"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& "$PSScriptRoot\Test-MftPhysicalSeedContracts.ps1"
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & "$PSScriptRoot\Test-Coverage.ps1"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & "$PSScriptRoot\Test-VirtualBoxTestLab.ps1"
