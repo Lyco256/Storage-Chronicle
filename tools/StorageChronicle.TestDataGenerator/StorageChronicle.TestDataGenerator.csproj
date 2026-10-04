@@ -1,3 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><RootNamespace>StorageChronicle.TestDataGenerator</RootNamespace><AssemblyName>StorageChronicle.TestDataGenerator</AssemblyName><GenerateDocumentationFile>true</GenerateDocumentationFile></PropertyGroup>
+  <ItemGroup><InternalsVisibleTo Include="StorageChronicle.Architecture.Tests" /></ItemGroup>
 </Project>

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.ComponentModel;
 using System.Text.Json;
 
 namespace StorageChronicle.TestDataGenerator;
@@ -20,19 +21,20 @@ public static class Program
         try
         {
             var safeOutputPath = outputPath is null ? null : ValidateNewOutputPath(outputPath);
+            using var outputDirectoryPin = safeOutputPath is null ? null : WindowsPinnedOutputDirectory.OpenForFile(safeOutputPath);
             var records = Enumerable.Range(1, count).Select(sequence => new GeneratedRecord(sequence, sequence % 7 == 0 ? "MetadataChanged" : "DataWrite", $"file-{(sequence + seed) % Math.Max(1, count):D8}", sequence % 13 == 0 ? "ExistenceOnly" : "Exact"));
             if (string.Equals(format, "golden", StringComparison.OrdinalIgnoreCase))
             {
                 var golden = new GoldenDocument("generated-v1", records.ToArray(), new GoldenExpected(count, count));
-                Write(JsonSerializer.Serialize(golden, JsonOptions), safeOutputPath);
+                Write(JsonSerializer.Serialize(golden, JsonOptions), safeOutputPath, outputDirectoryPin);
             }
             else
             {
-                Write(string.Join(Environment.NewLine, records.Select(record => JsonSerializer.Serialize(record, JsonOptions))), safeOutputPath);
+                Write(string.Join(Environment.NewLine, records.Select(record => JsonSerializer.Serialize(record, JsonOptions))), safeOutputPath, outputDirectoryPin);
             }
             return 0;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or Win32Exception)
         {
             Console.Error.WriteLine($"output rejected: {exception.Message}");
             return 1;
@@ -78,19 +80,12 @@ public static class Program
         if (string.IsNullOrEmpty(parentPath) || string.IsNullOrEmpty(fileName))
             throw new ArgumentException("The output must name a file inside an existing parent directory.", nameof(outputPath));
 
-        var current = new DirectoryInfo(parentPath);
-        if (!current.Exists) throw new DirectoryNotFoundException("The output parent directory must already exist.");
-        while (current is not null)
-        {
-            if ((current.Attributes & FileAttributes.ReparsePoint) != 0)
-                throw new IOException("Output paths through symbolic links, junctions, or other reparse points are not accepted.");
-            current = current.Parent;
-        }
+        if (!Directory.Exists(parentPath)) throw new DirectoryNotFoundException("The output parent directory must already exist.");
 
         return fullPath;
     }
 
-    private static void Write(string value, string? outputPath)
+    private static void Write(string value, string? outputPath, WindowsPinnedOutputDirectory? outputDirectoryPin)
     {
         if (outputPath is null)
         {
@@ -98,7 +93,8 @@ public static class Program
             return;
         }
 
-        using var stream = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        if (outputDirectoryPin is null) throw new InvalidOperationException("File output requires a pinned Windows NTFS parent directory.");
+        using var stream = outputDirectoryPin.CreateNewFile(Path.GetFileName(outputPath));
         using var writer = new StreamWriter(stream);
         writer.WriteLine(value);
     }
