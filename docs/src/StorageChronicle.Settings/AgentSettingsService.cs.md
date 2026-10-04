@@ -2,6 +2,8 @@
 
 The canonical `IAgentSettingsGateway` exposes asynchronous snapshot reads and apply calls. `AgentSettingsService` implements reads as cancellation-aware `ValueTask` operations; the UI uses the IPC-backed implementation so settings files remain Agent-owned. The service validates and authorizes ordinary Machine settings, performs safe restart/rollback, and records history. A semaphore serializes machine-setting updates with the consent-only `GrantMediaMirrorConsentAsync` operation, which replaces one PC/media binding, validates and saves it, records a settings-history fact, and restores the prior settings if history recording fails. Consent persistence does not restart monitoring and cannot apply arbitrary settings.
 
+Ordinary Machine settings updates preserve the current `MediaMirrorConsents` list exactly; clients cannot add, replace, or revoke grants through the general settings API. The narrow grant method refuses unverified NTFS consent: it requires `NtfsAclVerified`, a bound approving-user SID, and a 64-hex ACL-descriptor fingerprint. This strict new-grant check is separate from legacy settings loading so old entries can be migrated but are not thereby authorized.
+
 ## ??
 
 UI ???????? Agent ? IPC ??????????????????????????????????????????????
@@ -47,6 +49,8 @@ Callers own cancellation and lifetime; asynchronous work must not outlive the ow
 Failure, corruption, cancellation, and recovery remain observable and are not converted into a false successful observation.
 
 ## Tests
+
+`tests/StorageChronicle.Settings.Tests/SettingsTests.cs` proves that ordinary updates cannot forge/revoke consents and that an unverified NTFS grant is rejected.
 
 Validated by tests/StorageChronicle.Integration.Tests and the affected integration tests.
 

@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace StorageChronicle.Settings;
 
 /// <summary>Represents the IPC-facing agent boundary used by the settings dialog.</summary>
@@ -97,6 +99,8 @@ public sealed class AgentSettingsService : IAgentSettingsGateway, IDisposable
     {
         ArgumentNullException.ThrowIfNull(consent);
         cancellationToken.ThrowIfCancellationRequested();
+        if (!IsEligibleConsentGrant(consent))
+            return SettingsApplyResult.Failed("A media-mirror consent grant requires verified current evidence; NTFS grants require the approving user's SID and ACL fingerprint.");
         await machineSettingsGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -144,13 +148,16 @@ public sealed class AgentSettingsService : IAgentSettingsGateway, IDisposable
             return SettingsApplyResult.Failed(string.Join("; ", validation.Errors.Select(error => $"{error.Property}: {error.Message}")));
         }
 
+        var previous = machineStore.Load().Settings;
+        if (!previous.MediaMirrorConsents.SequenceEqual(settings.MediaMirrorConsents))
+            return SettingsApplyResult.Failed("Media-mirror consent can only be changed through the Agent's authenticated explicit-approval flow.");
+
         if (!authorizer.CanApplyMachineSettings(settings))
         {
             return SettingsApplyResult.Failed("The agent rejected this machine settings change.");
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        var previous = machineStore.Load().Settings;
         machineStore.Save(settings);
         var changedProperties = ChangedMachineProperties(previous, settings);
         var restartRequired = changedProperties.Count > 0;
@@ -174,6 +181,22 @@ public sealed class AgentSettingsService : IAgentSettingsGateway, IDisposable
 
         await history.RecordAsync(new("Machine", clock(), changedProperties), cancellationToken).ConfigureAwait(false);
         return new(true, restartRequired, restartRequired, null);
+    }
+
+    private static bool IsEligibleConsentGrant(MediaMirrorConsentSettings consent)
+    {
+        if (string.IsNullOrWhiteSpace(consent.PcIdentity) || string.IsNullOrWhiteSpace(consent.LogicalMediaId) ||
+            string.IsNullOrWhiteSpace(consent.LiveVolumeIdentity) || string.IsNullOrWhiteSpace(consent.DedicatedMediaRootIdentity) ||
+            consent.ApprovedAtUtc == default) return false;
+
+        if (string.Equals(consent.FileSystem, "NTFS", StringComparison.OrdinalIgnoreCase))
+            return consent.AclProtection == "NtfsAclVerified" &&
+                consent.ApprovedUserSid is { Length: <= 184 } sid && Regex.IsMatch(sid, @"^S-1-(?:[0-9]+-)+[0-9]+$", RegexOptions.CultureInvariant) &&
+                consent.AclDescriptorFingerprint is { Length: 64 } fingerprint && fingerprint.All(Uri.IsHexDigit);
+
+        var nonNtfs = new[] { "FAT", "FAT32", "exFAT", "Other" };
+        return nonNtfs.Contains(consent.FileSystem, StringComparer.OrdinalIgnoreCase) &&
+            consent.AclProtection == "NotProvidedByFileSystem" && string.IsNullOrWhiteSpace(consent.AclDescriptorFingerprint);
     }
 
     /// <inheritdoc />

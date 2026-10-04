@@ -272,7 +272,7 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
         {
             var mediaRoot = ExternalMediaStore.ValidateMediaRoot(configuration.MediaRoot, media.MountPoints);
             pendingFileSystem = fileSystemFactory.Open(media.VolumeId);
-            if (consent is null || !pendingFileSystem.DirectoryExists(".StorageChronicle") || !consent.HasGrant(media, mediaRoot, pendingFileSystem.GetOwnedProductDirectoryIdentity()))
+            if (consent is null || !pendingFileSystem.DirectoryExists(".StorageChronicle") || !consent.HasGrant(media, mediaRoot, pendingFileSystem))
             {
                 pendingFileSystem.Dispose();
                 pendingFileSystem = null;
@@ -322,7 +322,7 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
         IVolumeBoundMediaFileSystem? pendingFileSystem = fileSystemFactory.Open(media.VolumeId);
         try
         {
-            if (!pendingFileSystem.DirectoryExists(".StorageChronicle") || !consent.HasGrant(media, mediaRoot, pendingFileSystem.GetOwnedProductDirectoryIdentity())) return null;
+            if (!pendingFileSystem.DirectoryExists(".StorageChronicle") || !consent.HasGrant(media, mediaRoot, pendingFileSystem)) return null;
             var recovery = MediaRecovery.RecoverDeletedLogAsync(mediaRoot, media.VolumeId, pendingFileSystem, media.LogicalMediaId, pcId, cancellationToken);
             pendingFileSystem = null;
             return await recovery.ConfigureAwait(false);

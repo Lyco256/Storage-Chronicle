@@ -18,7 +18,7 @@ Uses Avalonia controls and the shared runtime IPC contract. It performs no files
 
 ## Invariants
 
-- NTFS ACL verified and NTFS ACL unavailable are shown separately.
+- The initial disclosure distinguishes verified, unavailable, and unknown ACL evidence. NTFS approval is accepted only after the Agent rechecks the ACL against the authenticated approving user's SID; the UI itself does not claim the pre-click scan is verified.
 - FAT/exFAT/other filesystems are explicitly not described as ACL-protected.
 - Unknown protection classification disables approval.
 - Approval is scoped to the exact request and describes existing-history import separately from future append in explicit prose, not raw booleans. When the root does not exist, the UI says no old events will be imported and explains that the new dedicated root is created only after approval rather than presenting the internal pending-root sentinel as an identity.
@@ -26,7 +26,7 @@ Uses Avalonia controls and the shared runtime IPC contract. It performs no files
 
 ## Failure behavior
 
-Missing required effect flags or unknown ACL evidence disables the approval button. Cancel or window close never returns approval.
+Missing required effect flags or unknown protection classification disables the approval button. NTFS approval is rejected by the Agent if the authenticated SID cannot be established or the handle-bound ACL scan fails. Cancel or window close never returns approval.
 
 ## Threading and lifetime
 

@@ -41,8 +41,9 @@ public sealed class MediaMirrorConsentService
     public async ValueTask<bool> AuthorizeAsync(MediaVolumeDescriptor media, string configuredRoot, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(media);
-        var evidence = Capture(media, configuredRoot);
-        var saved = FindSavedBinding(media.LogicalMediaId);
+        var savedConsent = FindSavedConsent(media.LogicalMediaId);
+        var evidence = Capture(media, configuredRoot, savedConsent?.ApprovedUserSid);
+        var saved = ToBinding(savedConsent);
         var evaluation = MediaMirrorConsentPolicy.Evaluate(evidence.Binding, saved);
         if (evaluation.Status == MediaMirrorConsentStatus.AuthorizedByExistingBinding) return true;
         if (evaluation.Status != MediaMirrorConsentStatus.ApprovalRequired) return false;
@@ -71,15 +72,21 @@ public sealed class MediaMirrorConsentService
     }
 
     /// <summary>Checks the saved binding against an identity read from the current pinned product-root handle.</summary>
-    public bool HasGrant(MediaVolumeDescriptor media, string configuredRoot, string dedicatedRootIdentity)
+    public bool HasGrant(MediaVolumeDescriptor media, string configuredRoot, IVolumeBoundMediaFileSystem fileSystem)
     {
         ArgumentNullException.ThrowIfNull(media);
-        ArgumentException.ThrowIfNullOrWhiteSpace(dedicatedRootIdentity);
-        if (media.IsReadOnly || !media.IsProtectedRoleClassificationComplete || media.ProtectedRoles != ProtectedVolumeRoles.None) return false;
-        _ = ExternalMediaStore.ValidateMediaRoot(configuredRoot, media.MountPoints);
-        var current = new MediaMirrorConsentBinding(pcIdentity, media.LogicalMediaId, media.VolumeId.Value,
-            dedicatedRootIdentity, ToPolicyFileSystem(media.FileSystem), ToPolicyAcl(media.FileSystem));
-        return MediaMirrorConsentPolicy.Evaluate(current, FindSavedBinding(media.LogicalMediaId)).Status == MediaMirrorConsentStatus.AuthorizedByExistingBinding;
+        ArgumentNullException.ThrowIfNull(fileSystem);
+        var saved = ToBinding(FindSavedConsent(media.LogicalMediaId));
+        if (saved is null || media.IsReadOnly || !media.IsProtectedRoleClassificationComplete || media.ProtectedRoles != ProtectedVolumeRoles.None) return false;
+        try
+        {
+            var current = Capture(media, configuredRoot, saved.ApprovedUserSid, fileSystem).Binding;
+            return MediaMirrorConsentPolicy.Evaluate(current, saved).Status == MediaMirrorConsentStatus.AuthorizedByExistingBinding;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException or ArgumentException or NotSupportedException)
+        {
+            return false;
+        }
     }
 
     /// <summary>Returns whether the exact current grant also permits reading and importing pre-existing media history.</summary>
@@ -93,8 +100,7 @@ public sealed class MediaMirrorConsentService
                 string.Equals(value.LogicalMediaId, media.LogicalMediaId, StringComparison.Ordinal)).ToArray();
             if (grants.Length != 1 || !grants[0].ExistingHistoryReadAndImportAllowed) return false;
             using var fileSystem = fileSystems.Open(media.VolumeId);
-            return fileSystem.DirectoryExists(".StorageChronicle") &&
-                HasGrant(media, configuredRoot, fileSystem.GetOwnedProductDirectoryIdentity());
+            return fileSystem.DirectoryExists(".StorageChronicle") && HasGrant(media, configuredRoot, fileSystem);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException or ArgumentException or NotSupportedException)
         {
@@ -104,6 +110,10 @@ public sealed class MediaMirrorConsentService
 
     /// <summary>Handles an authenticated interactive user's explicit approve or cancel decision.</summary>
     public async ValueTask<bool> DecideAsync(MediaMirrorApprovalDecision decision, CancellationToken cancellationToken = default)
+        => await DecideAsync(decision, authenticatedUserSid: null, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>Handles an explicit decision using the SID authenticated by the interactive named-pipe session.</summary>
+    public async ValueTask<bool> DecideAsync(MediaMirrorApprovalDecision decision, string? authenticatedUserSid, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(decision);
         if (!health.TryGetPendingMediaApproval(decision.RequestId, out _)
@@ -115,6 +125,12 @@ public sealed class MediaMirrorConsentService
             return true;
         }
 
+        if (string.IsNullOrWhiteSpace(authenticatedUserSid))
+        {
+            Resolve(decision.RequestId, context, false);
+            return false;
+        }
+
         try
         {
             var live = await FindLiveVolumeAsync(context.Media.VolumeId, cancellationToken).ConfigureAwait(false);
@@ -124,7 +140,7 @@ public sealed class MediaMirrorConsentService
                 return false;
             }
 
-            var current = Capture(live, context.ConfiguredRoot);
+            var current = Capture(live, context.ConfiguredRoot, authenticatedUserSid);
             if (current.RootExists != context.Evidence.RootExists ||
                 (current.RootExists && !string.Equals(current.RootIdentity, context.Evidence.RootIdentity, StringComparison.Ordinal)))
             {
@@ -135,12 +151,18 @@ public sealed class MediaMirrorConsentService
             var binding = current.Binding;
             if (!current.RootExists)
             {
+                if (current.Binding.FileSystem == MediaConsentFileSystem.Ntfs && current.Binding.AclProtection != MediaConsentAclProtection.NtfsAclVerified)
+                {
+                    Resolve(decision.RequestId, context, false);
+                    return false;
+                }
+
                 using (var initializedStore = new ExternalMediaStore(current.MediaRoot, pcIdentity, live.VolumeId, fileSystems.Open(live.VolumeId), createIfMissing: true))
                 {
                     // The user has explicitly approved creation and future append; bind the grant to the actual new directory identity.
                 }
 
-                var created = Capture(live, context.ConfiguredRoot);
+                var created = Capture(live, context.ConfiguredRoot, authenticatedUserSid);
                 if (!created.RootExists || string.Equals(created.RootIdentity, PendingRootIdentity, StringComparison.Ordinal))
                 {
                     Resolve(decision.RequestId, context, false);
@@ -149,7 +171,7 @@ public sealed class MediaMirrorConsentService
                 binding = created.Binding;
             }
 
-            var accepted = MediaMirrorConsentPolicy.Evaluate(binding, FindSavedBinding(live.LogicalMediaId), MediaMirrorConsentUserDecision.ExplicitlyAccepted);
+            var accepted = MediaMirrorConsentPolicy.Evaluate(binding, ToBinding(FindSavedConsent(live.LogicalMediaId)), MediaMirrorConsentUserDecision.ExplicitlyAccepted);
             if (accepted.Status != MediaMirrorConsentStatus.AcceptedBindingReadyToPersist || accepted.BindingToPersist is null)
             {
                 Resolve(decision.RequestId, context, false);
@@ -178,31 +200,51 @@ public sealed class MediaMirrorConsentService
         }
     }
 
-    private MediaEvidence Capture(MediaVolumeDescriptor media, string configuredRoot)
+    private MediaEvidence Capture(MediaVolumeDescriptor media, string configuredRoot, string? approvedUserSid)
+    {
+        using var fileSystem = fileSystems.Open(media.VolumeId);
+        return Capture(media, configuredRoot, approvedUserSid, fileSystem);
+    }
+
+    private MediaEvidence Capture(MediaVolumeDescriptor media, string configuredRoot, string? approvedUserSid, IVolumeBoundMediaFileSystem fileSystem)
     {
         if (media.IsReadOnly || !media.IsProtectedRoleClassificationComplete || media.ProtectedRoles != ProtectedVolumeRoles.None)
             throw new InvalidOperationException("The media is read-only or its protected-volume role is not fully verified.");
 
         var configuration = ExternalMediaStore.ValidateMirrorConfiguration(new MediaMirrorConfiguration(true, configuredRoot, media.ProtectedRoles, media.IsProtectedRoleClassificationComplete));
         var mediaRoot = ExternalMediaStore.ValidateMediaRoot(configuration.MediaRoot, media.MountPoints);
-        using var fileSystem = fileSystems.Open(media.VolumeId);
         if (fileSystem.VolumeId != media.VolumeId) throw new IOException("The media filesystem session is not bound to the enumerated volume identity.");
         var exists = fileSystem.DirectoryExists(".StorageChronicle");
         var identity = exists ? fileSystem.GetOwnedProductDirectoryIdentity() : PendingRootIdentity;
-        var binding = new MediaMirrorConsentBinding(pcIdentity, media.LogicalMediaId, media.VolumeId.Value, identity, ToPolicyFileSystem(media.FileSystem), ToPolicyAcl(media.FileSystem));
+        var fileSystemKind = ToPolicyFileSystem(media.FileSystem);
+        var aclProtection = ToPolicyAcl(media.FileSystem);
+        string? aclFingerprint = null;
+        if (fileSystemKind == MediaConsentFileSystem.Ntfs && !string.IsNullOrWhiteSpace(approvedUserSid))
+        {
+            var inspection = fileSystem.InspectProductAcl(approvedUserSid);
+            if (inspection.Status == MediaMirrorAclInspectionStatus.Verified && inspection.DescriptorFingerprint is { Length: 64 } fingerprint && fingerprint.All(Uri.IsHexDigit))
+            {
+                aclProtection = MediaConsentAclProtection.NtfsAclVerified;
+                aclFingerprint = fingerprint;
+            }
+        }
+        var binding = new MediaMirrorConsentBinding(pcIdentity, media.LogicalMediaId, media.VolumeId.Value, identity,
+            fileSystemKind, aclProtection, fileSystemKind == MediaConsentFileSystem.Ntfs ? approvedUserSid : null, aclFingerprint);
         return new MediaEvidence(mediaRoot, exists, identity, binding);
     }
 
-    private MediaMirrorConsentBinding? FindSavedBinding(string logicalMediaId)
+    private MediaMirrorConsentSettings? FindSavedConsent(string logicalMediaId)
     {
         var matches = settings.Load().Settings.MediaMirrorConsents
             .Where(value => string.Equals(value.PcIdentity, pcIdentity, StringComparison.Ordinal) && string.Equals(value.LogicalMediaId, logicalMediaId, StringComparison.Ordinal))
             .ToArray();
         if (matches.Length != 1) return null;
-        var saved = matches[0];
-        return new MediaMirrorConsentBinding(saved.PcIdentity, saved.LogicalMediaId, saved.LiveVolumeIdentity,
-            saved.DedicatedMediaRootIdentity, ParseFileSystem(saved.FileSystem), ParseAcl(saved.AclProtection));
+        return matches[0];
     }
+
+    private static MediaMirrorConsentBinding? ToBinding(MediaMirrorConsentSettings? consent) => consent is null ? null : new(
+        consent.PcIdentity, consent.LogicalMediaId, consent.LiveVolumeIdentity, consent.DedicatedMediaRootIdentity,
+        ParseFileSystem(consent.FileSystem), ParseAcl(consent.AclProtection), consent.ApprovedUserSid, consent.AclDescriptorFingerprint);
 
     private async ValueTask<MediaVolumeDescriptor?> FindLiveVolumeAsync(VolumeId volumeId, CancellationToken cancellationToken)
     {
@@ -225,7 +267,8 @@ public sealed class MediaMirrorConsentService
 
     private static MediaMirrorConsentSettings ToSettings(MediaMirrorConsentBinding binding, bool existingHistoryReadAndImportAllowed) => new(
         binding.PcIdentity!, binding.LogicalMediaId!, binding.LiveVolumeIdentity!, binding.DedicatedMediaRootIdentity!,
-        binding.FileSystem.ToString(), binding.AclProtection.ToString(), DateTimeOffset.UtcNow, existingHistoryReadAndImportAllowed);
+        binding.FileSystem.ToString(), binding.AclProtection.ToString(), DateTimeOffset.UtcNow, existingHistoryReadAndImportAllowed,
+        binding.ApprovedUserSid, binding.AclDescriptorFingerprint);
 
     private static MediaConsentFileSystem ToPolicyFileSystem(string fileSystem) => fileSystem.ToUpperInvariant() switch
     {

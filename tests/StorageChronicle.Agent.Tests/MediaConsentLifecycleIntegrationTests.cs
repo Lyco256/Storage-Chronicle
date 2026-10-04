@@ -14,6 +14,9 @@ namespace StorageChronicle.Agent.Tests;
 
 public sealed class MediaConsentLifecycleIntegrationTests
 {
+    private const string ApproverSid = "S-1-5-21-100-200-300-1001";
+    private static readonly string AclFingerprint = new('B', 64);
+
     [Fact]
     public async Task PendingApprovalIsPersistedBeforeCollectorImportsHistoryAndCoordinatorAppends()
     {
@@ -50,7 +53,7 @@ public sealed class MediaConsentLifecycleIntegrationTests
             Assert.Empty(Directory.EnumerateFiles(fixture.LedgerRoot));
             Assert.DoesNotContain(fixture.Timeline, item => item is "settings-saved" or "settings-history" or "coordinator-exclusion");
 
-            Assert.True(await fixture.Consent.DecideAsync(new MediaMirrorApprovalDecision(request.RequestId, Approve: true), TestContext.Current.CancellationToken));
+            Assert.True(await fixture.Consent.DecideAsync(new MediaMirrorApprovalDecision(request.RequestId, Approve: true), ApproverSid, TestContext.Current.CancellationToken));
             await collectTask.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
             Assert.Contains(Directory.EnumerateFiles(fixture.LedgerRoot), path => path.EndsWith(".generation.json", StringComparison.OrdinalIgnoreCase));
@@ -94,7 +97,7 @@ public sealed class MediaConsentLifecycleIntegrationTests
 
             var approval = fixture.Consent.AuthorizeAsync(fixture.Media, fixture.MediaRoot).AsTask();
             var request = await fixture.WaitForApprovalAsync();
-            Assert.True(await fixture.Consent.DecideAsync(new MediaMirrorApprovalDecision(request.RequestId, Approve: true), TestContext.Current.CancellationToken));
+            Assert.True(await fixture.Consent.DecideAsync(new MediaMirrorApprovalDecision(request.RequestId, Approve: true), ApproverSid, TestContext.Current.CancellationToken));
             Assert.True(await approval);
 
             await coordinator.RegisterAsync(fixture.Media, MountSessionTrackerSession(fixture.VolumeId), TestContext.Current.CancellationToken);
@@ -140,7 +143,10 @@ public sealed class MediaConsentLifecycleIntegrationTests
                 LogStoragePath = Path.Combine(root, "local-history"),
                 MediaMirrors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [Media.LogicalMediaId] = MediaRoot }
             }, Timeline);
-            FileSystems = new FixtureVolumeFileSystemFactory(MediaRoot, () => "fixture-owned-root-identity");
+            FileSystems = new FixtureVolumeFileSystemFactory(MediaRoot, () => "fixture-owned-root-identity", sid =>
+                sid == ApproverSid
+                    ? new(MediaMirrorAclInspectionStatus.Verified, AclFingerprint, 1, 0, [])
+                    : new(MediaMirrorAclInspectionStatus.Unknown, null, 0, 0, ["WrongApproverSid"]));
             using (var initialized = new ExternalMediaStore(MediaRoot, "test-pc", VolumeId, FileSystems.Open(VolumeId))) { }
             volumes = new FixedVolumeEnumerator(Descriptor);
             settingsService = new AgentSettingsService(MachineStore, new FixedSettingsStore<UserSettings>(new UserSettings()), new TimelineHistory(Timeline), new AllowAllAgentSettingsAuthorizer(), new NoOpLifecycle());

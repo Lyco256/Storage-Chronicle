@@ -44,7 +44,9 @@ public sealed record MediaMirrorConsentBinding(
     string? LiveVolumeIdentity,
     string? DedicatedMediaRootIdentity,
     MediaConsentFileSystem FileSystem,
-    MediaConsentAclProtection AclProtection);
+    MediaConsentAclProtection AclProtection,
+    string? ApprovedUserSid = null,
+    string? AclDescriptorFingerprint = null);
 
 /// <summary>Indicates whether the user explicitly accepted a consent prompt during this evaluation.</summary>
 public enum MediaMirrorConsentUserDecision
@@ -132,7 +134,7 @@ public static class MediaMirrorConsentPolicy
         if (!HasCompleteCurrentEvidence(current))
             return new(MediaMirrorConsentStatus.Refused, MediaMirrorConsentReason.UnknownCurrentEvidence, null);
 
-        if (savedBinding is not null && HasCompleteCurrentEvidence(savedBinding))
+        if (savedBinding is not null && IsGrantEligible(current) && IsGrantEligible(savedBinding))
         {
             if (BindingsMatch(current, savedBinding))
                 return new(MediaMirrorConsentStatus.AuthorizedByExistingBinding, MediaMirrorConsentReason.ExactBindingMatch, null);
@@ -140,12 +142,16 @@ public static class MediaMirrorConsentPolicy
 
         var reason = savedBinding is null
             ? MediaMirrorConsentReason.MissingOrLegacyBinding
-            : HasCompleteCurrentEvidence(savedBinding)
+            : IsGrantEligible(savedBinding)
                 ? MediaMirrorConsentReason.BindingChanged
                 : MediaMirrorConsentReason.IncompleteSavedBinding;
 
         if (userDecision == MediaMirrorConsentUserDecision.ExplicitlyAccepted)
+        {
+            if (!IsGrantEligible(current))
+                return new(MediaMirrorConsentStatus.Refused, MediaMirrorConsentReason.UnknownCurrentEvidence, null);
             return new(MediaMirrorConsentStatus.AcceptedBindingReadyToPersist, reason, current);
+        }
 
         return new(MediaMirrorConsentStatus.ApprovalRequired, reason, null);
     }
@@ -167,11 +173,37 @@ public static class MediaMirrorConsentPolicy
         };
     }
 
+    private static bool IsGrantEligible(MediaMirrorConsentBinding binding)
+    {
+        if (!HasCompleteCurrentEvidence(binding)) return false;
+        return binding.FileSystem switch
+        {
+            MediaConsentFileSystem.Ntfs => binding.AclProtection == MediaConsentAclProtection.NtfsAclVerified
+                && IsSid(binding.ApprovedUserSid)
+                && IsSha256(binding.AclDescriptorFingerprint),
+            MediaConsentFileSystem.Fat or MediaConsentFileSystem.Fat32 or MediaConsentFileSystem.ExFat or MediaConsentFileSystem.Other
+                => binding.AclProtection == MediaConsentAclProtection.NotProvidedByFileSystem
+                    && string.IsNullOrWhiteSpace(binding.AclDescriptorFingerprint),
+            _ => false
+        };
+    }
+
+    private static bool IsSid(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 184 || !value.StartsWith("S-1-", StringComparison.Ordinal)) return false;
+        var parts = value.Split('-');
+        return parts.Length >= 4 && parts[0] == "S" && parts[1] == "1" && parts.Skip(2).All(part => ulong.TryParse(part, out _));
+    }
+
+    private static bool IsSha256(string? value) => value is { Length: 64 } && value.All(Uri.IsHexDigit);
+
     private static bool BindingsMatch(MediaMirrorConsentBinding current, MediaMirrorConsentBinding saved) =>
         string.Equals(current.PcIdentity, saved.PcIdentity, StringComparison.Ordinal)
         && string.Equals(current.LogicalMediaId, saved.LogicalMediaId, StringComparison.Ordinal)
         && string.Equals(current.LiveVolumeIdentity, saved.LiveVolumeIdentity, StringComparison.Ordinal)
         && string.Equals(current.DedicatedMediaRootIdentity, saved.DedicatedMediaRootIdentity, StringComparison.Ordinal)
         && current.FileSystem == saved.FileSystem
-        && current.AclProtection == saved.AclProtection;
+        && current.AclProtection == saved.AclProtection
+        && string.Equals(current.ApprovedUserSid, saved.ApprovedUserSid, StringComparison.Ordinal)
+        && string.Equals(current.AclDescriptorFingerprint, saved.AclDescriptorFingerprint, StringComparison.OrdinalIgnoreCase);
 }

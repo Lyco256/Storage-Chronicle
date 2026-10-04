@@ -77,8 +77,7 @@ public sealed class ExternalMediaMirrorCoordinator : IMediaMirrorSessionCoordina
             }
             try
             {
-                var rootIdentity = fileSystem.GetOwnedProductDirectoryIdentity();
-                if (!consent.HasGrant(media, mediaRoot, rootIdentity))
+                if (!consent.HasGrant(media, mediaRoot, fileSystem))
                     throw new UnauthorizedAccessException("External-media mirror consent is missing or no longer matches the live volume and product-root identities.");
             }
             catch

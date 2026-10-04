@@ -48,6 +48,8 @@ public sealed class MediaMirrorConsentPolicyTests
     [InlineData("Root")]
     [InlineData("FileSystem")]
     [InlineData("Protection")]
+    [InlineData("Approver")]
+    [InlineData("AclFingerprint")]
     public void AnyBindingChangeForcesReapproval(string changedField)
     {
         var saved = CompleteBinding();
@@ -59,6 +61,8 @@ public sealed class MediaMirrorConsentPolicyTests
             "Root" => saved with { DedicatedMediaRootIdentity = "root-b" },
             "FileSystem" => saved with { FileSystem = MediaConsentFileSystem.ExFat, AclProtection = MediaConsentAclProtection.NotProvidedByFileSystem },
             "Protection" => saved with { AclProtection = MediaConsentAclProtection.NtfsAclUnavailable },
+            "Approver" => saved with { ApprovedUserSid = "S-1-5-21-100-200-300-1002" },
+            "AclFingerprint" => saved with { AclDescriptorFingerprint = new string('B', 64) },
             _ => throw new ArgumentOutOfRangeException(nameof(changedField))
         };
 
@@ -128,13 +132,16 @@ public sealed class MediaMirrorConsentPolicyTests
     }
 
     [Fact]
-    public void NtfsAclUnavailableIsDistinctAndCanBeBoundWithoutClaimingVerification()
+    public void NtfsAclUnavailableRequiresReapprovalAndCannotBeAccepted()
     {
         var binding = CompleteBinding() with { AclProtection = MediaConsentAclProtection.NtfsAclUnavailable };
 
         var result = MediaMirrorConsentPolicy.Evaluate(binding, binding);
+        var accepted = MediaMirrorConsentPolicy.Evaluate(binding, null, MediaMirrorConsentUserDecision.ExplicitlyAccepted);
 
-        Assert.Equal(MediaMirrorConsentStatus.AuthorizedByExistingBinding, result.Status);
+        Assert.Equal(MediaMirrorConsentStatus.ApprovalRequired, result.Status);
+        Assert.Equal(MediaMirrorConsentStatus.Refused, accepted.Status);
+        Assert.Null(accepted.BindingToPersist);
     }
 
     [Fact]
@@ -159,6 +166,21 @@ public sealed class MediaMirrorConsentPolicyTests
             MediaMirrorConsentPolicy.Evaluate(unknownFileSystem, null, MediaMirrorConsentUserDecision.ExplicitlyAccepted).Status);
         Assert.Equal(MediaMirrorConsentStatus.Refused,
             MediaMirrorConsentPolicy.Evaluate(unknownProtection, null, MediaMirrorConsentUserDecision.ExplicitlyAccepted).Status);
+    }
+
+    [Theory]
+    [InlineData(null, "A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1")]
+    [InlineData("S-1-5-21-100-200-300-1001", null)]
+    [InlineData("not-a-sid", "A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1")]
+    [InlineData("S-1-5-21-100-200-300-1001", "not-a-fingerprint")]
+    public void NtfsCannotBeApprovedWithoutAValidApproverSidAndDescriptorFingerprint(string? approvedUserSid, string? fingerprint)
+    {
+        var invalid = CompleteBinding() with { ApprovedUserSid = approvedUserSid, AclDescriptorFingerprint = fingerprint };
+
+        var result = MediaMirrorConsentPolicy.Evaluate(invalid, null, MediaMirrorConsentUserDecision.ExplicitlyAccepted);
+
+        Assert.Equal(MediaMirrorConsentStatus.Refused, result.Status);
+        Assert.Null(result.BindingToPersist);
     }
 
     [Fact]
@@ -189,5 +211,7 @@ public sealed class MediaMirrorConsentPolicyTests
         "volume-guid-1",
         "owned-root-id-1",
         MediaConsentFileSystem.Ntfs,
-        MediaConsentAclProtection.NtfsAclVerified);
+        MediaConsentAclProtection.NtfsAclVerified,
+        "S-1-5-21-100-200-300-1001",
+        new string('A', 64));
 }

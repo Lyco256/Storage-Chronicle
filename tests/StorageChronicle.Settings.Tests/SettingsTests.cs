@@ -260,6 +260,39 @@ public sealed class SettingsTests
     }
 
     [Fact]
+    public async Task OrdinaryMachineSettingsCannotForgeOrRevokeMediaConsent()
+    {
+        using var fixture = new SettingsFixture();
+        var consent = new MediaMirrorConsentSettings("pc-a", "media-a", "volume-a", "root-a", "NTFS", "NtfsAclVerified",
+            DateTimeOffset.UtcNow, false, "S-1-5-21-100-200-300-1001", new string('A', 64));
+        var previous = fixture.ValidMachine with { MediaMirrorConsents = [consent] };
+        fixture.Machine.Save(previous);
+        var history = new RecordingHistory();
+        var service = new AgentSettingsService(fixture.Machine, fixture.User, history, new AllowAllAgentSettingsAuthorizer(), new RecordingLifecycle());
+
+        var result = await service.ApplyMachineSettingsAsync(previous with { MediaMirrorConsents = [] }, TestContext.Current.CancellationToken);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(previous.MediaMirrorConsents, fixture.Machine.Load().Settings.MediaMirrorConsents);
+        Assert.Empty(history.Events);
+    }
+
+    [Fact]
+    public async Task ConsentGrantRejectsNtfsEvidenceWithoutApproverAndAclFingerprint()
+    {
+        using var fixture = new SettingsFixture();
+        var history = new RecordingHistory();
+        var service = new AgentSettingsService(fixture.Machine, fixture.User, history, new AllowAllAgentSettingsAuthorizer(), new RecordingLifecycle());
+        var unverified = new MediaMirrorConsentSettings("pc-a", "media-a", "volume-a", "root-a", "NTFS", "NtfsAclUnavailable", DateTimeOffset.UtcNow);
+
+        var result = await service.GrantMediaMirrorConsentAsync(unverified, TestContext.Current.CancellationToken);
+
+        Assert.False(result.Succeeded);
+        Assert.Empty(fixture.Machine.Load().Settings.MediaMirrorConsents);
+        Assert.Empty(history.Events);
+    }
+
+    [Fact]
     public async Task AgentRestoresPreviousSettingsWhenRestartFails()
     {
         using var fixture = new SettingsFixture();

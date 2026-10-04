@@ -185,7 +185,8 @@ public sealed class NamedPipeAgentServer : BackgroundService
             if (!identity.IsCurrentUserSession || !identity.IsTrustedDesktopUiProcess || mediaConsent is null)
                 return Rejected("Media-mirror consent decisions must come from the installed Storage Chronicle desktop UI in the interactive session.");
             var decision = IpcProtocol.Read<MediaMirrorApprovalDecision>(request);
-            _ = await mediaConsent.DecideAsync(decision, cancellationToken).ConfigureAwait(false);
+            var granted = await mediaConsent.DecideAsync(decision, identity.Sid, cancellationToken).ConfigureAwait(false);
+            if (!granted) return Rejected("Media-mirror consent was not granted because the live identity or ACL could not be verified, the user declined, or persistence failed.");
             return IpcProtocol.Create("AgentHealth", health.Snapshot(store.Status));
         }
 

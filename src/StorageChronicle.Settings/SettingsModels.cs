@@ -81,7 +81,9 @@ public sealed record MediaMirrorConsentSettings(
     string FileSystem,
     string AclProtection,
     DateTimeOffset ApprovedAtUtc,
-    bool ExistingHistoryReadAndImportAllowed = false);
+    bool ExistingHistoryReadAndImportAllowed = false,
+    string? ApprovedUserSid = null,
+    string? AclDescriptorFingerprint = null);
 
 /// <summary>Contains settings owned by the current user.</summary>
 public sealed record UserSettings

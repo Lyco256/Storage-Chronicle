@@ -12,6 +12,9 @@ namespace StorageChronicle.Agent.Tests;
 
 public sealed class MediaMirrorConsentServiceTests
 {
+    private const string ApproverSid = "S-1-5-21-100-200-300-1001";
+    private static readonly string AclFingerprint = new('A', 64);
+
     [Fact]
     public async Task ExplicitApprovalIsRevalidatedAndPersistedBeforeAuthorizationReturns()
     {
@@ -22,11 +25,14 @@ public sealed class MediaMirrorConsentServiceTests
         Assert.True(request.ExistingHistoryReadAndImportRequested);
         Assert.True(request.FutureHistoryAppendRequested);
         Assert.Equal(MediaMirrorAclDisclosure.NtfsAclUnavailable, request.AclDisclosure);
-        Assert.True(await fixture.Service.DecideAsync(new MediaMirrorApprovalDecision(request.RequestId, Approve: true)));
+        Assert.True(await fixture.Service.DecideAsync(new MediaMirrorApprovalDecision(request.RequestId, Approve: true), ApproverSid));
 
         Assert.True(await authorization);
-        Assert.True(fixture.Service.HasGrant(fixture.Media, fixture.MediaRoot, fixture.RootIdentity));
+        using (var fileSystem = fixture.FileSystems.Open(fixture.VolumeId))
+            Assert.True(fixture.Service.HasGrant(fixture.Media, fixture.MediaRoot, fileSystem));
         Assert.True(Assert.Single(fixture.MachineStore.Load().Settings.MediaMirrorConsents).ExistingHistoryReadAndImportAllowed);
+        Assert.Equal(ApproverSid, Assert.Single(fixture.MachineStore.Load().Settings.MediaMirrorConsents).ApprovedUserSid);
+        Assert.Equal(AclFingerprint, Assert.Single(fixture.MachineStore.Load().Settings.MediaMirrorConsents).AclDescriptorFingerprint);
     }
 
     [Fact]
@@ -38,12 +44,39 @@ public sealed class MediaMirrorConsentServiceTests
 
         Assert.False(request.ExistingHistoryReadAndImportRequested);
         Assert.Equal("pending-new-root", request.DedicatedMediaRootIdentity);
-        Assert.True(await fixture.Service.DecideAsync(new MediaMirrorApprovalDecision(request.RequestId, Approve: true)));
+        Assert.True(await fixture.Service.DecideAsync(new MediaMirrorApprovalDecision(request.RequestId, Approve: true), ApproverSid));
 
         Assert.True(await authorization);
         Assert.True(Directory.Exists(Path.Combine(fixture.MediaRoot, ".StorageChronicle")));
         Assert.False(fixture.Service.CanReadExistingHistory(fixture.Media, fixture.MediaRoot));
         Assert.False(Assert.Single(fixture.MachineStore.Load().Settings.MediaMirrorConsents).ExistingHistoryReadAndImportAllowed);
+    }
+
+    [Fact]
+    public async Task ApprovalWithoutAuthenticatedUserSidCannotCreateOrGrantMirrorRoot()
+    {
+        using var fixture = new ConsentFixture(createProductRoot: false);
+        var authorization = fixture.Service.AuthorizeAsync(fixture.Media, fixture.MediaRoot).AsTask();
+        var request = await fixture.WaitForRequestAsync();
+
+        Assert.False(await fixture.Service.DecideAsync(new MediaMirrorApprovalDecision(request.RequestId, Approve: true)));
+        Assert.False(await authorization);
+        Assert.Empty(fixture.MachineStore.Load().Settings.MediaMirrorConsents);
+        Assert.False(Directory.Exists(Path.Combine(fixture.MediaRoot, ".StorageChronicle")));
+    }
+
+    [Fact]
+    public async Task ChangedAclFingerprintInvalidatesExistingConsent()
+    {
+        using var fixture = new ConsentFixture(createProductRoot: true);
+        var authorization = fixture.Service.AuthorizeAsync(fixture.Media, fixture.MediaRoot).AsTask();
+        var request = await fixture.WaitForRequestAsync();
+        Assert.True(await fixture.Service.DecideAsync(new MediaMirrorApprovalDecision(request.RequestId, Approve: true), ApproverSid));
+        Assert.True(await authorization);
+
+        fixture.CurrentAclFingerprint = new('C', 64);
+        using var fileSystem = fixture.FileSystems.Open(fixture.VolumeId);
+        Assert.False(fixture.Service.HasGrant(fixture.Media, fixture.MediaRoot, fileSystem));
     }
 
     [Fact]
@@ -68,7 +101,7 @@ public sealed class MediaMirrorConsentServiceTests
         var request = await fixture.WaitForRequestAsync();
         fixture.RootIdentity = "fixture-file-id-replaced";
 
-        Assert.False(await fixture.Service.DecideAsync(new MediaMirrorApprovalDecision(request.RequestId, Approve: true)));
+        Assert.False(await fixture.Service.DecideAsync(new MediaMirrorApprovalDecision(request.RequestId, Approve: true), ApproverSid));
         Assert.False(await authorization);
         Assert.Empty(fixture.MachineStore.Load().Settings.MediaMirrorConsents);
     }
@@ -80,7 +113,7 @@ public sealed class MediaMirrorConsentServiceTests
         var authorization = fixture.Service.AuthorizeAsync(fixture.Media, fixture.MediaRoot).AsTask();
         var request = await fixture.WaitForRequestAsync();
 
-        Assert.False(await fixture.Service.DecideAsync(new MediaMirrorApprovalDecision(request.RequestId, Approve: true)));
+        Assert.False(await fixture.Service.DecideAsync(new MediaMirrorApprovalDecision(request.RequestId, Approve: true), ApproverSid));
         Assert.False(await authorization);
         Assert.Empty(fixture.MachineStore.Load().Settings.MediaMirrorConsents);
     }
@@ -127,7 +160,10 @@ public sealed class MediaMirrorConsentServiceTests
                 LogStoragePath = Path.Combine(root, "local-history"),
                 MediaMirrors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [Media.LogicalMediaId] = MediaRoot }
             });
-            fileSystems = new FixtureVolumeFileSystemFactory(MediaRoot, () => RootIdentity);
+            fileSystems = new FixtureVolumeFileSystemFactory(MediaRoot, () => RootIdentity, sid =>
+                sid == ApproverSid
+                    ? new(MediaMirrorAclInspectionStatus.Verified, CurrentAclFingerprint, 1, 0, [])
+                    : new(MediaMirrorAclInspectionStatus.Unknown, null, 0, 0, ["WrongApproverSid"]));
             if (createProductRoot)
             {
                 using var store = new ExternalMediaStore(MediaRoot, "pc-test", VolumeId, fileSystems.Open(VolumeId));
@@ -142,9 +178,11 @@ public sealed class MediaMirrorConsentServiceTests
         public string MediaRoot { get; }
         public VolumeId VolumeId { get; }
         public string RootIdentity { get; set; } = "fixture-file-id-owned-root";
+        public string CurrentAclFingerprint { get; set; } = AclFingerprint;
         public MediaVolumeDescriptor Media { get; }
         public MutableSettingsStore<MachineSettings> MachineStore { get; }
         public MediaMirrorConsentService Service { get; }
+        public FixtureVolumeFileSystemFactory FileSystems => fileSystems;
         public AgentHealthState Health => health;
 
         public async Task<PendingMediaMirrorApproval> WaitForRequestAsync()

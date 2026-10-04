@@ -3,13 +3,16 @@ using StorageChronicle.Domain.Contracts;
 
 namespace StorageChronicle.Agent.Tests;
 
-internal sealed class FixtureVolumeFileSystemFactory(string root, Func<string>? fixtureOnlyProductIdentity = null) : IVolumeBoundMediaFileSystemFactory
+internal sealed class FixtureVolumeFileSystemFactory(
+    string root,
+    Func<string>? fixtureOnlyProductIdentity = null,
+    Func<string, MediaMirrorAclInspection>? fixtureOnlyAclInspection = null) : IVolumeBoundMediaFileSystemFactory
 {
     private readonly string root = Path.GetFullPath(root);
 
-    public IVolumeBoundMediaFileSystem Open(VolumeId expectedVolumeId) => new FixtureVolumeFileSystem(root, expectedVolumeId, fixtureOnlyProductIdentity);
+    public IVolumeBoundMediaFileSystem Open(VolumeId expectedVolumeId) => new FixtureVolumeFileSystem(root, expectedVolumeId, fixtureOnlyProductIdentity, fixtureOnlyAclInspection);
 
-    private sealed class FixtureVolumeFileSystem(string root, VolumeId volumeId, Func<string>? fixtureOnlyProductIdentity) : IVolumeBoundMediaFileSystem
+    private sealed class FixtureVolumeFileSystem(string root, VolumeId volumeId, Func<string>? fixtureOnlyProductIdentity, Func<string, MediaMirrorAclInspection>? fixtureOnlyAclInspection) : IVolumeBoundMediaFileSystem
     {
         private readonly HashSet<Stream> movableStreams = new(ReferenceEqualityComparer.Instance);
         public VolumeId VolumeId { get; } = volumeId;
@@ -19,6 +22,8 @@ internal sealed class FixtureVolumeFileSystemFactory(string root, Func<string>? 
                 throw new NotSupportedException("A path-based test fixture cannot provide authoritative Windows file identity evidence.");
             return fixtureOnlyProductIdentity();
         }
+        public MediaMirrorAclInspection InspectProductAcl(string approvedUserSid) => fixtureOnlyAclInspection?.Invoke(approvedUserSid)
+            ?? new(MediaMirrorAclInspectionStatus.Unknown, null, 0, 0, ["FixtureAclNotConfigured"]);
         public void EnsureDirectory(string relativePath) => Directory.CreateDirectory(Resolve(relativePath));
 
         public bool TryCreateDirectory(string relativePath)
