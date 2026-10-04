@@ -4,6 +4,39 @@
 
 Requirement: `Requirements/20_AGENT_INSTALLER_PACKAGING.md`. The WiX project packages one x64 product containing the desktop UI, Service Agent, and Session Agent.
 
+## Requirement 20 installer safety follow-up (branch `feat/installer-hash-hardening`)
+
+### Source-to-sink findings and changes
+
+- `build/package/Test-Installer.ps1` previously hashed the manifest and payloads by path, then `Get-DriverInvocation` passed the same path to elevated PowerShell and the driver passed MSI paths to `msiexec`. A writable/replacable path existed between hash and use. The parent now calls `VerifiedPayloadLock.OpenAndVerify` for the externally fingerprinted manifest and every manifest payload. Each object hashes a single open read handle configured with `FileShare.Read` and stays alive through child termination, denying new file write/delete/rename opens while the elevated child consumes the path. The owner receipt and disclosure use these recorded hashes rather than reopening MSI paths.
+- `installer/StorageChronicle.wxs` authors HKLM Run value `StorageChronicleSessionAgent`. The physical harness now enumerates both 32-bit and 64-bit HKLM Run views read-only, compares the exact target value name with registry case-insensitive semantics, and refuses execution on collision or inspection error. It checks during preflight and again immediately before the first `runas` request; after a cancelled UAC launch it checks again. It performs no registry mutation.
+- The parent harness now records a create-only `StorageChronicle.InstallerCaseTimeout.v1` artifact and case status `INDETERMINATE` when a bounded wait expires. It closes the broker pipe as needed, never kills the elevated child, retains all payload handles, and waits without a second timeout on that exact process handle. The case remains indeterminate, dependent cases remain `NOT_EXECUTED` even after terminal recovery, and the final harness status/exit code cannot pass.
+- Current source-to-sink audit found an additional incompatible timeout sink outside Requirement 20 ownership: `tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1`, `Invoke-Captured` calls `$process.Kill()` after its bounded wait at its current lines 206-209. This kills the `msiexec` child on timeout. Requirement 20 cannot correct that Requirement 19-owned path. The parent therefore parses the approved driver AST and refuses before UAC unless its unique `Invoke-Captured` has a bounded wait and unbounded exact-process `WaitForExit()` with no direct `$process.Kill()` call. The current driver is expected to fail this gate; no privileged operation was run.
+
+### Handoff blocker / required owner action
+
+- `Blocked`: physical installer acceptance cannot be enabled while the out-of-scope driver kills an MSI child on timeout.
+- `Reason`: the driver owns the `msiexec` Process instance and currently terminates it at timeout, so the Requirement 20 parent cannot preserve the actual MSI process indeterminate without that termination. Waiting for the wrapper process is not sufficient while the driver has destructive timeout behavior.
+- `WhyUserActionIsRequired`: no user action is required; this is a Requirement 19 ownership handoff to the top agent / owner of `tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1`.
+- `DoThis`: in the Requirement 19-owned driver, replace timeout `Kill()` with a durable indeterminate record and wait on the exact MSI process handle for terminal state; keep dependent actions gated until validated terminal result evidence exists. Preserve create-only evidence and avoid inspecting it before process termination. Then update its mirrored documentation and tests and provide its reviewed source/contract test result.
+- `ExpectedResult`: the driver AST contract accepts exactly one timeout boundary with bounded and terminal waits and no timeout kill; Requirement 20's parent can then remain fail-closed but proceed to the separately approved physical gate.
+- `DoNotDo`: do not run MSI, UAC, service, registry-mutation, physical acceptance, or VHDX operations as part of this code handoff; do not edit Requirement 20 ownership paths from the Requirement 19 worktree.
+- `ResumeCommand`: resume `feat/installer-hash-hardening` and rerun the Requirement 20 installer source-contract tests after the audited driver fix is available in its bundle.
+- `SendBack`: driver diff/commit, updated docs/tests, and exact non-mutating commands/results; do not send credentials or secrets.
+
+### Validation for this follow-up
+
+- `dotnet test tests/StorageChronicle.Installer.Tests/StorageChronicle.Installer.Tests.csproj --no-restore --verbosity minimal`: not usable with this repository's `global.json` MTP runner configuration; it rejects the project as a VSTest runner. No installer behavior ran.
+- `dotnet restore tests/StorageChronicle.Installer.Tests/StorageChronicle.Installer.Tests.csproj --verbosity minimal`: passed.
+- `dotnet build tests/StorageChronicle.Installer.Tests/StorageChronicle.Installer.Tests.csproj --no-restore --verbosity minimal`: passed, zero warnings/errors.
+- `tests/StorageChronicle.Installer.Tests/bin/Debug/net10.0/StorageChronicle.Installer.Tests.exe --progress off --minimum-expected-tests 1`: passed, 28/28.
+- Windows PowerShell 5.1.26100.9444 parser checks for `build/package/Test-Installer.ps1` and `tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1`: passed.
+- Windows PowerShell 5.1 `Add-Type` plus read-only `VerifiedPayloadLock.OpenAndVerify` of its own source file and parent directory chain: passed.
+- Windows PowerShell 5.1 execution of only the extracted `Assert-BundledDriverTimeoutContract` function: refused the current driver on its timeout `Kill()` call before UAC, as intended. The invoked function only parsed/read source; it did not start the driver.
+- `git diff --check`: passed. Changed paths are limited to Requirement 20 owned `build/package/**`, `tests/StorageChronicle.Installer.Tests/**`, their mirrored `docs/build/package/**`, and this handoff.
+
+No MSI, installer, service, UAC, registry mutation, physical test, or VHDX operation was run. A same-user forced termination of the non-elevated parent releases its held handles; held-handle protection assumes the harness remains alive through the exact child-process wait and is not equivalent to an ACL-protected staging directory surviving parent termination.
+
 ## Implemented contract
 
 - The installer does not install a filesystem minifilter or kernel driver.
