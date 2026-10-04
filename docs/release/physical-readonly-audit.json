@@ -1,6 +1,6 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "be0adba8017e8fd689ec492f3ec0a447ae72131a",
+  "targetCommit": "816af59f58e145618fc1412a2265f138812cfb26",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -185,7 +185,7 @@
         "status": "PARTIAL",
         "path": "tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1",
         "lines": [55, 60, 71, 412],
-        "summary": "Commit 1731f55 adds a one-case current-user-SID named-pipe grant bound to kernel-reported broker/child PIDs, PC, run, case, nonce, and external hash-manifest fingerprint. Parent requires an ordinary filtered admin token, enabled UAC prompt policy, exact action disclosure and typed phrase before RunAs; the child validates the live grant before creating case evidence. Installer tests pass 23/23, PowerShell AST and DocMirror pass, and Fast passes after required restore/build. The loaded driver is hash-checked only after PowerShell has loaded it, while msiexec reopens MSI paths after hash checks; both hash-to-use races remain. The MSI's complete effects are not proven, and no UAC or physical test was run."
+        "summary": "Commit 1731f55 adds a one-case current-user-SID named-pipe grant bound to kernel-reported broker/child PIDs, PC, run, case, nonce, and external hash-manifest fingerprint. Parent requires an ordinary filtered admin token, enabled UAC prompt policy, exact action disclosure and typed phrase before RunAs; the child validates the live grant before creating case evidence. Follow-up commits pin payload/ancestor handles and make all captured-process timeout call sites fail closed without killing the child or continuing dependent probes; exact HKLM Run collisions are checked read-only in both views before UAC. Installer tests pass 28/28, PowerShell AST and DocMirror pass, and Fast passes. The loaded driver is hash-checked only after PowerShell has loaded it, while msiexec reopens MSI paths after hash checks; both hash-to-use races remain. MSI complete effects and service-side completion/rollback are unproven; no UAC or physical test was run."
       },
       {
         "id": "evidence-output-overwrite-isolation",
@@ -223,10 +223,10 @@
       },
       {
         "id": "installer-registry-run-collision",
-        "status": "PARTIAL",
+        "status": "PASS",
         "path": "installer/StorageChronicle.wxs",
         "lines": [27, 30],
-        "summary": "MSI authoring writes HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\StorageChronicleSessionAgent, but the physical installer preflight does not check for a pre-existing value at that exact name. Whether MSI install/uninstall overwrites or removes an unrelated pre-existing value depends on the built MSI transaction and remains unverified; preflight should fail closed on collision."
+        "summary": "The non-elevated installer harness checks the exact StorageChronicleSessionAgent value name read-only in both HKLM registry views before any UAC case; static contract coverage asserts that check precedes launch. This closes the missing preflight-collision guard only. Actual MSI install/uninstall effect behavior, runtime proof, and physical acceptance remain unverified."
       },
       {
         "id": "mft-million-entry-free-space-gate",
@@ -249,9 +249,9 @@
       },
       {
         "id": "media-root-ntfs-acl-inspection",
-        "status": "FAIL",
-        "path": "src/StorageChronicle.Agent/MediaMirrorConsentService.cs",
-        "summary": "NTFS is currently mapped unconditionally to NtfsAclUnavailable. The application does not inspect the dedicated media-root DACL, inherited ACEs, or ancestor DELETE_CHILD/write rights through pinned handles. UI disclosure is truthful, but Requirement 37's actual ACL inspection is unimplemented. No media was accessed."
+        "status": "PARTIAL",
+        "path": "src/StorageChronicle.Platform.Windows.FileSystem/Interop/WindowsMediaAclInspection.cs",
+        "summary": "A read-only handle-bound NTFS descriptor/tree scanner now checks the volume root and pinned .StorageChronicle tree, exact approving SID, broad/unapproved write/delete rights, ancestor DELETE_CHILD, owner, null DACL, and reparse entries; focused policy/fixture tests pass. It deliberately does not claim AccessCheck-equivalent effective access, a stable atomic tree snapshot, resistance to all hostile races, or live removable-NTFS evidence. Consent uses the fingerprint and fails closed on unsafe/unknown results; native physical acceptance remains NOT_EXECUTED."
       },
       {
         "id": "media-owner-marker-authenticity",
@@ -301,7 +301,7 @@
       "id": "installer-mutation-scope",
       "status": "PARTIAL",
       "path": "tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1",
-      "summary": "The non-elevated parent requires a filtered local-Administrators token, EnableLUA=1, and ConsentPromptBehaviorAdmin=1..4; it discloses one case, exact MSI hashes, install/history/evidence paths, and known service/registry effects, requires the exact PC/run/case phrase, then starts exactly one hidden RunAs child. Explicit current-user-SID pipe ACL, kernel client/server PID checks, schema/context-bound one-use grant, external manifest fingerprint and payload hashes, create-new result/log files, post-exit result validation, UAC-cancel handling, and no automatic termination of live children are covered by static/protocol tests. The script is loaded before its hash check; msiexec reopens paths after MSI hash checks; MSI effects are not sandboxed by the receipt. Cross-profile existing-install discovery, trusted release signing, complete source-to-sink review, independent runtime monitoring, and physical/UAC proof remain. Runtime is NOT_EXECUTED; DO_NOT_RUN."
+    "summary": "The non-elevated parent requires a filtered local-Administrators token, enabled UAC prompt policy, exact action/hash/path disclosure, typed per-case phrase, and a one-case RunAs child through a SID-restricted, process-bound one-use pipe grant. The driver never kills timed-out children, retains the exact handle until exit, and fails immediately at every call site before dependent product/service queries or operations. Static InstallerManifestTests assert bounded wait, terminal wait, no Kill in Invoke-Captured, and five timeout guards; PowerShell parser, 28 installer tests, and Fast pass. The parent checks the exact HKLM Run value in both views before UAC. Remaining: PowerShell driver load and MSI path hash-to-use races, unproven Windows Installer service-side terminal/rollback semantics, non-sandboxed MSI effects, cross-profile existing-install coverage, signing, full source-to-sink review, independent runtime monitoring, and physical/UAC proof. Runtime is NOT_EXECUTED; DO_NOT_RUN."
     },
     {
       "id": "cleanup-ownership-proof",

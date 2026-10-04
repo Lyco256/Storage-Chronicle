@@ -1,5 +1,11 @@
 # Physical read-only audit
 
+## Current commit binding (2026-10-04, partial; `816af59f58e145618fc1412a2265f138812cfb26`)
+
+The machine-readable artifact targets this integrated source commit and remains `FAIL / DO_NOT_RUN`; its inventory is explicitly partial, not a complete Requirement 37 source-to-sink audit. Since the prior checkpoint, the NTFS media ACL scanner and consent gate are integrated, the fresh approved-media-root path performs a post-creation ACL scan before consent/import/append, installer preflight checks the exact HKLM Run value in both views, and the physical installer driver no longer kills a timed-out child or continues with dependent probes. It waits on that exact process handle and fails the case at every captured-process call site after timeout. Parser check, 28 Installer tests, all 24 Fast projects, DocMirror, and zero-warning builds pass. No product, MSI, UAC, service, VHDX, physical media, workload, or privileged acceptance operation ran.
+
+Unresolved blockers include the full `src/`, `tools/`, `build/`, tests, installer and spawned-command sink inventory; forgeable product/fixture owner markers and remaining path/parent/ACL check-use races; ACL scanner limitations (not a complete effective-access calculation or atomic hostile-race-proof snapshot); installer script/MSI hash-to-use and complete Windows Installer side-effect/terminal-state proof; MFT seed creation provenance and the explicit 60 GiB 1M-seed precondition; approved local NTFS root and dedicated test PC; read-only host preflight; independent process-attributed runtime write monitoring; live Windows 10/11, Explorer, media, service, installer, resource and performance/MFT evidence. Overall status is `FAIL`, physical status is `NOT_EXECUTED`, and the decision is `DO_NOT_RUN`; `main` is not eligible.
+
 ## Commit-bound source sink review (2026-10-03, partial)
 
 Reviewed source snapshot for the historical section below: `aeabe0f` (`devenv`, post-merge). Its source-to-sink inventory was partial, not a complete Requirement 37 audit. No product, service, installer, privileged runner, workload, VHDX, or monitored-volume collector was started. The active physical decision remains **FAIL / DO NOT RUN**; host preflight and independent process monitoring remain **NOT_EXECUTED**.
