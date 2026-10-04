@@ -214,6 +214,12 @@ function Invoke-Captured {
     } finally { $process.Dispose() }
 }
 
+function Assert-CapturedCompletedWithinDeadline([object]$Captured, [string]$Operation) {
+    if ($Captured.TimedOut) {
+        throw "$Operation exceeded the $($Captured.TimeoutSeconds)-second observation window. Its exact child has since exited with code $($Captured.ExitCode); this case is failed and no dependent operation may proceed."
+    }
+}
+
 function Invoke-Msi {
     param(
         [Parameter(Mandatory = $true)][ValidateSet('Install', 'Repair', 'Uninstall')][string]$Action,
@@ -224,8 +230,8 @@ function Invoke-Msi {
     if (-not (Test-Path -LiteralPath $PackagePath -PathType Leaf)) { throw "MSI does not exist: $PackagePath" }
     $arguments = if ($Action -eq 'Install') { @('/i', $PackagePath, '/qn', '/norestart', '/L*v', (Join-Path $evidenceDirectory "$EvidenceName-msiexec.log")) } elseif ($Action -eq 'Repair') { @('/famus', $PackagePath, '/qn', '/norestart', '/L*v', (Join-Path $evidenceDirectory "$EvidenceName-msiexec.log")) } else { @('/x', $PackagePath, '/qn', '/norestart', '/L*v', (Join-Path $evidenceDirectory "$EvidenceName-msiexec.log")) }
     $captured = Invoke-Captured -FilePath (Join-Path $env:WINDIR 'System32\msiexec.exe') -Arguments $arguments
+    Assert-CapturedCompletedWithinDeadline -Captured $captured -Operation "msiexec $Action"
     $evidence = Write-Evidence -Name $EvidenceName -Value ([ordered]@{ Action = $Action; PackagePath = $PackagePath; ExitCode = $captured.ExitCode; TimedOut = $captured.TimedOut; Output = $captured.Output; Error = $captured.Error })
-    if ($captured.TimedOut) { throw "msiexec $Action exceeded the $($captured.TimeoutSeconds)-second observation window. The exact child has since exited with code $($captured.ExitCode); this case is failed and no dependent operation may proceed." }
     if ($captured.ExitCode -ne 0) { throw "msiexec $Action failed with exit code $($captured.ExitCode)." }
     return $evidence
 }
@@ -295,6 +301,7 @@ function Assert-InstalledService {
     $evidence = Write-Evidence -Name 'service-state' -Value $service
     Add-Assertion -Name 'Agent service is installed as automatic LocalSystem service' -Passed ($null -ne $service -and [string]$service.StartMode -eq 'Auto' -and [string]$service.StartName -eq 'LocalSystem') -Details (if ($null -eq $service) { 'Service was not found.' } else { "StartMode=$($service.StartMode); StartName=$($service.StartName); State=$($service.State)" }) -EvidencePath $evidence
     $recovery = Invoke-Captured -FilePath (Join-Path $env:WINDIR 'System32\sc.exe') -Arguments @('qfailure', $ServiceName)
+    Assert-CapturedCompletedWithinDeadline -Captured $recovery -Operation 'sc.exe qfailure'
     $recoveryEvidence = Write-Evidence -Name 'service-recovery' -Value ([ordered]@{ ExitCode = $recovery.ExitCode; Output = $recovery.Output; Error = $recovery.Error })
     $hasFiveSecondDelay = $recovery.Output -match '(?<!\d)5000(?!\d)'
     $hasFifteenSecondDelay = $recovery.Output -match '(?<!\d)15000(?!\d)'
@@ -473,6 +480,7 @@ try {
             if ($beforeProduct.Count -ne 1) { throw "Expected one product registration before update, found $($beforeProduct.Count)." }
             $beforeVersion = [version][string]$beforeProduct[0].DisplayVersion
             $stopResult = Invoke-Captured -FilePath (Join-Path $env:WINDIR 'System32\sc.exe') -Arguments @('stop', $ServiceName)
+            Assert-CapturedCompletedWithinDeadline -Captured $stopResult -Operation 'sc.exe stop'
             $stoppedService = $null
             for ($attempt = 0; $attempt -lt 30; $attempt++) {
                 $stoppedService = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
@@ -495,6 +503,7 @@ try {
             Assert-RunOwnedService | Out-Null
             $intentionallyMissingUpdate = Join-Path $evidenceDirectory 'intentionally-failed-update.msi'
             $failedUpdate = Invoke-Captured -FilePath (Join-Path $env:WINDIR 'System32\msiexec.exe') -Arguments @('/i', $intentionallyMissingUpdate, '/qn', '/norestart', '/L*v', (Join-Path $evidenceDirectory "$CaseId-failed-update-msiexec.log"))
+            Assert-CapturedCompletedWithinDeadline -Captured $failedUpdate -Operation 'intentionally failed update'
             $remainingProductCount = (Get-InstalledProduct).Count
             $failedUpdateEvidence = Write-Evidence -Name 'rollback-failed-update' -Value ([ordered]@{ AttemptedPackagePath = $intentionallyMissingUpdate; ExitCode = $failedUpdate.ExitCode; TimedOut = $failedUpdate.TimedOut; Output = $failedUpdate.Output; Error = $failedUpdate.Error; ProductCountAfterFailure = $remainingProductCount })
             Add-Assertion -Name 'Intentionally failed update is rejected without losing the installed product' -Passed ($failedUpdate.ExitCode -ne 0 -and -not $failedUpdate.TimedOut -and $remainingProductCount -eq 1) -Details "FailedUpdateExitCode=$($failedUpdate.ExitCode); ProductCountAfterFailure=$remainingProductCount." -EvidencePath $failedUpdateEvidence
@@ -520,6 +529,7 @@ try {
             if ((Get-InstalledProduct).Count -ne 0) { throw 'Failed-install rollback expects the preceding run-owned uninstall to have removed the product.' }
             $missingInstall = Join-Path $evidenceDirectory 'intentionally-failed-install.msi'
             $failedInstall = Invoke-Captured -FilePath (Join-Path $env:WINDIR 'System32\msiexec.exe') -Arguments @('/i', $missingInstall, '/qn', '/norestart', '/L*v', (Join-Path $evidenceDirectory "$CaseId-msiexec.log"))
+            Assert-CapturedCompletedWithinDeadline -Captured $failedInstall -Operation 'intentionally failed install'
             $products = @(Get-InstalledProduct)
             $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
             $installPresent = Test-Path -LiteralPath $InstallPath -PathType Container

@@ -193,6 +193,8 @@ public sealed class InstallerManifestTests
         Assert.Contains("TimedOut = $timedOut", capturedDriver, StringComparison.Ordinal);
         Assert.DoesNotContain("$process.Kill(", capturedDriver, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("no dependent operation may proceed", driver, StringComparison.Ordinal);
+        Assert.Equal(5, driver.Split("Assert-CapturedCompletedWithinDeadline -Captured", StringSplitOptions.None).Length - 1);
+        Assert.Contains("function Assert-CapturedCompletedWithinDeadline", driver, StringComparison.Ordinal);
         Assert.Contains("physical execution is refused before UAC", harness, StringComparison.OrdinalIgnoreCase);
     }
 
