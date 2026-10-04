@@ -1,4 +1,6 @@
 using System.Collections.Immutable;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Running;
@@ -416,8 +418,11 @@ public class MediaSegmentAppendBenchmarks : IDisposable
     }
 }
 
-internal static class BenchmarkFixtures
+internal static partial class BenchmarkFixtures
 {
+    private const string OwnerMarkerName = ".storage-chronicle-benchmark-owner";
+    private const int ErrorAlreadyExists = 183;
+
     public const int EventCount100K = 100_000;
     public const int EventCount1M = 1_000_000;
     public const int FileCount1M = EventCount1M;
@@ -470,16 +475,93 @@ internal static class BenchmarkFixtures
 
     public static string CreateTemporaryDirectory(string name)
     {
-        var path = Path.Combine(Path.GetTempPath(), $"storage-chronicle-{name}-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(path);
-        return path;
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Benchmark fixture roots require exclusive Windows directory creation.");
+
+        var temporaryRoot = Path.GetFullPath(Path.GetTempPath());
+        for (var attempt = 0; attempt < 64; attempt++)
+        {
+            var runId = Guid.NewGuid();
+            var path = Path.Combine(temporaryRoot, $"storage-chronicle-{name}-{runId:N}");
+            if (CreateDirectoryW(path, 0) == 0)
+            {
+                var error = Marshal.GetLastPInvokeError();
+                if (error == ErrorAlreadyExists) continue;
+                throw new Win32Exception(error, "Could not exclusively create the benchmark-owned temporary directory.");
+            }
+
+            var markerPath = Path.Combine(path, OwnerMarkerName);
+            try
+            {
+                using var marker = new FileStream(markerPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough);
+                var markerBytes = System.Text.Encoding.ASCII.GetBytes(runId.ToString("N"));
+                marker.Write(markerBytes);
+                marker.Flush(flushToDisk: true);
+                var dataPath = Path.Combine(path, "data");
+                if (CreateDirectoryW(dataPath, 0) == 0)
+                    throw new Win32Exception(Marshal.GetLastPInvokeError(), "Could not create the isolated benchmark data directory.");
+                return dataPath;
+            }
+            catch
+            {
+                // The directory was exclusively created by this call. Non-recursive cleanup can
+                // remove it only if no unexpected child appeared before ownership was recorded.
+                try { Directory.Delete(path, recursive: false); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+                throw;
+            }
+        }
+
+        throw new IOException("Could not allocate a collision-free benchmark fixture directory after 64 attempts.");
     }
 
     public static void DeleteTemporaryDirectory(string? path)
     {
-        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path)) return;
-        Directory.Delete(path, recursive: true);
+        if (string.IsNullOrWhiteSpace(path)) return;
+        var fullPath = Path.GetFullPath(path);
+        var temporaryRoot = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var containerPath = Path.GetDirectoryName(fullPath)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (containerPath is null) throw new IOException("Refusing to remove a benchmark path without its run-owned container directory.");
+        var containerParent = Path.GetDirectoryName(containerPath)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (containerParent is null) throw new IOException("Refusing to remove a benchmark container outside the temporary directory root.");
+        var leaf = Path.GetFileName(containerPath);
+        var runIdText = leaf[(leaf.LastIndexOf('-') + 1)..];
+        if (!string.Equals(containerParent, temporaryRoot, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(Path.GetFileName(fullPath), "data", StringComparison.OrdinalIgnoreCase) ||
+            !leaf.StartsWith("storage-chronicle-", StringComparison.OrdinalIgnoreCase) ||
+            !Guid.TryParseExact(runIdText, "N", out var runId) ||
+            !Directory.Exists(containerPath) ||
+            !Directory.Exists(fullPath))
+            throw new IOException("Refusing to remove a benchmark path outside its run-owned temporary directory boundary.");
+
+        var containerAttributes = File.GetAttributes(containerPath);
+        var dataAttributes = File.GetAttributes(fullPath);
+        if ((containerAttributes & FileAttributes.ReparsePoint) != 0 || (dataAttributes & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("Refusing to remove a benchmark fixture directory that became a reparse point.");
+
+        var markerPath = Path.Combine(containerPath, OwnerMarkerName);
+        var marker = File.ReadAllText(markerPath, System.Text.Encoding.ASCII);
+        if (!string.Equals(marker, runId.ToString("N"), StringComparison.Ordinal))
+            throw new IOException("Refusing to remove a benchmark fixture without its matching run ownership marker.");
+
+        var pendingDirectories = new Stack<string>();
+        pendingDirectories.Push(containerPath);
+        while (pendingDirectories.Count > 0)
+        {
+            foreach (var child in Directory.EnumerateFileSystemEntries(pendingDirectories.Pop()))
+            {
+                if ((File.GetAttributes(child) & FileAttributes.ReparsePoint) != 0)
+                    throw new IOException("Refusing recursive cleanup because a benchmark fixture contains a reparse point.");
+                if (Directory.Exists(child)) pendingDirectories.Push(child);
+            }
+        }
+
+        Directory.Delete(containerPath, recursive: true);
     }
+
+    [LibraryImport("kernel32.dll", EntryPoint = "CreateDirectoryW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    private static partial int CreateDirectoryW(string path, nint securityAttributes);
 }
 
 internal static class BenchmarkBatchHelpers
