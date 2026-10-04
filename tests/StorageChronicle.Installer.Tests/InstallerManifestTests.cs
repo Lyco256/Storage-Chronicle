@@ -187,7 +187,12 @@ public sealed class InstallerManifestTests
         var invokeCapturedStart = driver.IndexOf("function Invoke-Captured", StringComparison.Ordinal);
         var invokeCapturedEnd = driver.IndexOf("function Invoke-Msi", invokeCapturedStart, StringComparison.Ordinal);
         Assert.True(invokeCapturedStart >= 0 && invokeCapturedEnd > invokeCapturedStart);
-        Assert.Contains("$process.Kill()", driver.Substring(invokeCapturedStart, invokeCapturedEnd - invokeCapturedStart), StringComparison.Ordinal);
+        var capturedDriver = driver.Substring(invokeCapturedStart, invokeCapturedEnd - invokeCapturedStart);
+        Assert.Contains("$timedOut = -not $process.WaitForExit($TimeoutSeconds * 1000)", capturedDriver, StringComparison.Ordinal);
+        Assert.Contains("$process.WaitForExit()", capturedDriver, StringComparison.Ordinal);
+        Assert.Contains("TimedOut = $timedOut", capturedDriver, StringComparison.Ordinal);
+        Assert.DoesNotContain("$process.Kill(", capturedDriver, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("no dependent operation may proceed", driver, StringComparison.Ordinal);
         Assert.Contains("physical execution is refused before UAC", harness, StringComparison.OrdinalIgnoreCase);
     }
 

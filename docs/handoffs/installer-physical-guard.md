@@ -17,6 +17,8 @@ This file is a top-agent-owned integration contract for the `feat/installer-pack
 
 The top agent owns `tools/PhysicalAcceptance/Invoke-RealInstallerCase.ps1` and `Run-RealMachineInstallerAcceptance.ps1`; the matching client-side broker validation and caller boundary have been implemented on this integration branch. The feature worker limits edits to the Requirement 20-owned paths: `build/package/**`, `tests/StorageChronicle.Installer.Tests/**`, `docs/build/package/**`, and `docs/handoffs/installer-packaging.md`. Coordinate protocol changes here; do not invent a substitute receipt or parallel contract.
 
+Top-agent continuation (2026-10-04): `Invoke-Captured` now marks deadline expiry, does not kill the exact child, waits for that process handle to become terminal, and returns the real exit code with `TimedOut = true`. The caller fails the current case and explicitly forbids dependent operations. Static contract coverage was updated; this does not establish Windows Installer service-side completion/rollback or authorize physical execution. Parser and targeted test results are recorded in the current integration handoff.
+
 The driver must independently revalidate the external hash-manifest fingerprint and the exact current script/MSI payload hashes before side effects. This protocol does not solve the `msiexec` path hash-to-use race: acceptance remains **DO NOT RUN** until a separate protected staging/identity design and tests close that race. The driver script is also validated after it has already been loaded by PowerShell, so a script hash-to-load race remains. Nor does this protocol certify MSI side effects or prove that a receipt sandboxes Windows Installer.
 
 ## Required verification

@@ -203,12 +203,14 @@ function Invoke-Captured {
         if (-not $process.Start()) { throw "Could not start $FilePath" }
         $stdout = $process.StandardOutput.ReadToEndAsync()
         $stderr = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-            try { $process.Kill() } catch { }
+        $timedOut = -not $process.WaitForExit($TimeoutSeconds * 1000)
+        if ($timedOut) {
+            # A timeout does not prove that Windows Installer has stopped making
+            # changes. Never terminate the client or begin another case; retain
+            # this process handle and wait for this exact child to become terminal.
             $process.WaitForExit()
-            return [pscustomobject]@{ ExitCode = 124; TimedOut = $true; Output = $stdout.GetAwaiter().GetResult(); Error = $stderr.GetAwaiter().GetResult() }
         }
-        return [pscustomobject]@{ ExitCode = $process.ExitCode; TimedOut = $false; Output = $stdout.GetAwaiter().GetResult(); Error = $stderr.GetAwaiter().GetResult() }
+        return [pscustomobject]@{ ExitCode = $process.ExitCode; TimedOut = $timedOut; TimeoutSeconds = $TimeoutSeconds; Output = $stdout.GetAwaiter().GetResult(); Error = $stderr.GetAwaiter().GetResult() }
     } finally { $process.Dispose() }
 }
 
@@ -223,7 +225,8 @@ function Invoke-Msi {
     $arguments = if ($Action -eq 'Install') { @('/i', $PackagePath, '/qn', '/norestart', '/L*v', (Join-Path $evidenceDirectory "$EvidenceName-msiexec.log")) } elseif ($Action -eq 'Repair') { @('/famus', $PackagePath, '/qn', '/norestart', '/L*v', (Join-Path $evidenceDirectory "$EvidenceName-msiexec.log")) } else { @('/x', $PackagePath, '/qn', '/norestart', '/L*v', (Join-Path $evidenceDirectory "$EvidenceName-msiexec.log")) }
     $captured = Invoke-Captured -FilePath (Join-Path $env:WINDIR 'System32\msiexec.exe') -Arguments $arguments
     $evidence = Write-Evidence -Name $EvidenceName -Value ([ordered]@{ Action = $Action; PackagePath = $PackagePath; ExitCode = $captured.ExitCode; TimedOut = $captured.TimedOut; Output = $captured.Output; Error = $captured.Error })
-    if ($captured.TimedOut -or $captured.ExitCode -ne 0) { throw "msiexec $Action failed with exit code $($captured.ExitCode)." }
+    if ($captured.TimedOut) { throw "msiexec $Action exceeded the $($captured.TimeoutSeconds)-second observation window. The exact child has since exited with code $($captured.ExitCode); this case is failed and no dependent operation may proceed." }
+    if ($captured.ExitCode -ne 0) { throw "msiexec $Action failed with exit code $($captured.ExitCode)." }
     return $evidence
 }
 
