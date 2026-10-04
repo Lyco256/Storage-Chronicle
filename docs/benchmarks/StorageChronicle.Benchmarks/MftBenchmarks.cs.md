@@ -1,6 +1,6 @@
 # MftBenchmarks.cs
 
-The MFT benchmark uses one measured iteration with no warmup over a physically verified dedicated VHDX-backed NTFS seed; missing physical preflight remains fail-closed. The measured matrix includes 10K, 100K, and 1M public enumeration plus unchanged zero-candidate and small-candidate metadata-query gates.
+The MFT benchmark uses one measured iteration with no warmup and explicitly does not enforce a Windows power plan. It requires a physically verified dedicated VHDX-backed NTFS seed; missing physical preflight remains fail-closed. The measured matrix includes 10K, 100K, and 1M public enumeration plus unchanged zero-candidate and small-candidate metadata-query gates.
 
 ## Role
 
