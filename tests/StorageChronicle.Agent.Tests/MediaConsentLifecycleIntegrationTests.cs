@@ -71,13 +71,14 @@ public sealed class MediaConsentLifecycleIntegrationTests
         }
         finally
         {
-            if (!collectTask.IsCompleted)
+            if (!collectTask.IsCompleted) collectCancellation.Cancel();
+            try { await collectTask; }
+            catch (OperationCanceledException) when (collectCancellation.IsCancellationRequested) { }
+            finally
             {
-                collectCancellation.Cancel();
-                await collector.DisposeAsync();
+                try { await collector.DisposeAsync(); }
+                finally { await coordinator.DisposeAsync(); }
             }
-            try { await collectTask; } catch (OperationCanceledException) { }
-            await coordinator.DisposeAsync();
         }
     }
 
