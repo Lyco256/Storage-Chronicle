@@ -410,7 +410,7 @@ public sealed class StorageEngineTests
     }
 
     [Fact]
-    public async Task IncompleteOpenSegmentIsReadWithoutTruncationAndNeverReopenedForAppend()
+    public async Task IncompleteOpenSegmentTailIsTruncatedBeforeAppendingWithoutChangingVerifiedPrefix()
     {
         var directory = CreateDirectory();
         try
@@ -427,11 +427,18 @@ public sealed class StorageEngineTests
             }
 
             damagedPath = Assert.Single(Directory.GetFiles(directory, "*.open"));
+            var verifiedPrefix = await File.ReadAllBytesAsync(damagedPath);
+            var segmentId = Path.GetFileNameWithoutExtension(damagedPath)["segment-".Length..];
+            var manifestPath = Path.Combine(directory, $"segment-{segmentId}.manifest.json");
+            Assert.True(File.Exists(manifestPath));
+            // This is an isolated fixture: remove the finalization marker to model a crash
+            // before a segment was durably finalized; product history is never used here.
+            File.Delete(manifestPath);
             await using (var stream = new FileStream(damagedPath, FileMode.Append, FileAccess.Write, FileShare.None))
             {
                 await stream.WriteAsync(new byte[] { 32, 0, 0, 0, 1, 0 }, TestContext.Current.CancellationToken);
             }
-            var originalDamagedBytes = await File.ReadAllBytesAsync(damagedPath, TestContext.Current.CancellationToken);
+            var originalDamagedLength = new FileInfo(damagedPath).Length;
 
             await using (var recovered = new AppendOnlyStorageEngine(new StorageEngineOptions(directory)
             {
@@ -442,8 +449,55 @@ public sealed class StorageEngineTests
                 Assert.Single(await ToListAsync(recovered.ReadSourceAsync()));
                 await recovered.AppendSourceAsync(CreateSource(2));
                 await recovered.FlushAsync();
-                Assert.Equal(originalDamagedBytes, await File.ReadAllBytesAsync(damagedPath, TestContext.Current.CancellationToken));
-                Assert.Equal(2, Directory.GetFiles(directory, "*.open").Length);
+                await recovered.StopAsync();
+                var repairedAndAppended = await File.ReadAllBytesAsync(damagedPath, TestContext.Current.CancellationToken);
+                Assert.True(repairedAndAppended.Length > originalDamagedLength);
+                Assert.Equal(verifiedPrefix, repairedAndAppended.AsSpan(0, verifiedPrefix.Length).ToArray());
+                Assert.Single(Directory.GetFiles(directory, "*.open"));
+                Assert.True(File.Exists(manifestPath));
+                Assert.Equal(2, (await ToListAsync(recovered.ReadSourceAsync())).Count);
+            }
+        }
+        finally
+        {
+            RemoveDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task CompleteButCrcCorruptOpenFrameIsPreservedAndNotTailTruncated()
+    {
+        var directory = CreateDirectory();
+        try
+        {
+            await using (var initial = new AppendOnlyStorageEngine(new StorageEngineOptions(directory)
+            {
+                CompressClosedSegments = false,
+                FlushInterval = TimeSpan.FromMinutes(1)
+            }))
+            {
+                await initial.AppendSourceAsync(CreateSource(1));
+                await initial.StopAsync();
+            }
+
+            var damagedPath = Assert.Single(Directory.GetFiles(directory, "*.open"));
+            var segmentId = Path.GetFileNameWithoutExtension(damagedPath)["segment-".Length..];
+            File.Delete(Path.Combine(directory, $"segment-{segmentId}.manifest.json"));
+            var corrupt = await File.ReadAllBytesAsync(damagedPath);
+            corrupt[^1] ^= 0x5a;
+            await File.WriteAllBytesAsync(damagedPath, corrupt);
+
+            await using (var recovered = new AppendOnlyStorageEngine(new StorageEngineOptions(directory)
+            {
+                CompressClosedSegments = false,
+                FlushInterval = TimeSpan.FromMinutes(1)
+            }))
+            {
+                await recovered.AppendSourceAsync(CreateSource(2));
+                await recovered.StopAsync();
+                Assert.Single(await ToListAsync(recovered.ReadSourceAsync()));
+                Assert.Equal(corrupt, await File.ReadAllBytesAsync(damagedPath));
+                Assert.Collection(Directory.GetFiles(directory, "*.open"), _ => { }, _ => { });
             }
         }
         finally
