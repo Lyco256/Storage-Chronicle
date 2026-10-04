@@ -182,7 +182,12 @@ $suites = @(
     [ordered]@{
         Name = 'AppendAndCompression'
         Filter = '*StorageAppendBenchmarks*'
-        ExpectedMethods = @('SegmentAppendAndSqliteIndex100K', 'SegmentAppendAndSqliteIndex1M', 'FlushAndCloseCompressedSegment100K')
+        ExpectedMethods = @('SegmentAppendAndSqliteIndex100K', 'FlushAndCloseCompressedSegment100K')
+    },
+    [ordered]@{
+        Name = 'StorageAppend1M'
+        Filter = '*SegmentAppendAndSqliteIndex1M*'
+        ExpectedMethods = @('SegmentAppendAndSqliteIndex1M')
     },
     [ordered]@{
         Name = 'SqliteRecoveryAndQuery'
@@ -213,6 +218,8 @@ $suiteResults = [System.Collections.Generic.List[object]]::new()
 $failure = $null
 $mftEvidence = $null
 $savedBenchmarkEnvironment = @{}
+$benchmarkProject = $project
+$temporaryDrive = $null
 
 if ($IncludeMft -and $null -ne $mftCreationEvidence -and $null -ne $mftWriteMonitorEvidence) {
     $benchmarkEnvironment = @{
@@ -253,6 +260,21 @@ if ($IncludeMft -and $null -ne $mftCreationEvidence -and $null -ne $mftWriteMoni
 }
 
 try {
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT -and $project.Length -gt 80) {
+        $usedDriveLetters = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($drive in (Get-PSDrive -PSProvider FileSystem)) { [void]$usedDriveLetters.Add([string]$drive.Name) }
+        $driveLetter = $null
+        foreach ($candidate in @('Z', 'Y', 'X', 'W', 'V', 'U', 'T', 'S', 'R')) {
+            if (-not $usedDriveLetters.Contains($candidate)) { $driveLetter = $candidate; break }
+        }
+        if ($null -eq $driveLetter) { throw 'No free drive letter is available for a temporary short-path mapping; benchmark execution was not started.' }
+        & subst.exe ("{0}:" -f $driveLetter) $root
+        if ($LASTEXITCODE -ne 0) { throw "Could not create temporary short-path mapping for the benchmark checkout (exit $LASTEXITCODE)." }
+        $temporaryDrive = "{0}:" -f $driveLetter
+        $benchmarkProject = "{0}\benchmarks\StorageChronicle.Benchmarks\StorageChronicle.Benchmarks.csproj" -f $temporaryDrive
+        if (-not (Test-Path -LiteralPath $benchmarkProject -PathType Leaf)) { throw 'Temporary short-path mapping did not resolve the benchmark project.' }
+    }
+
     foreach ($suite in $suites) {
         $suiteRoot = Join-Path $runRoot $suite.Name
         if (-not (Test-Path -LiteralPath $suiteRoot -PathType Container)) { New-MftDirectoryCreateNew -Path $suiteRoot | Out-Null }
@@ -261,6 +283,7 @@ try {
         $suiteResult = [ordered]@{
             Name = $suite.Name
             Filter = $suite.Filter
+            Toolchain = 'DotNetCli'
             ExpectedMethods = @($suite.ExpectedMethods)
             Status = 'not-executed'
             ExitCode = $null
@@ -270,10 +293,9 @@ try {
         }
 
         try {
-            $arguments = @('run', '--project', $project, '-c', $Configuration)
+            $arguments = @('run', '--project', $benchmarkProject, '-c', $Configuration)
             if ($NoRestore) { $arguments += '--no-restore' }
             $arguments += @('--', '--filter', $suite.Filter, '--artifacts', $suiteRoot, '--exporters', 'json', 'markdown')
-
             Write-Host "Running BenchmarkDotNet suite: $($suite.Name)"
             & dotnet @arguments 2>&1 | Tee-Object -FilePath $logPath
             $exitCode = $LASTEXITCODE
@@ -340,6 +362,14 @@ catch {
     $failure = $_.Exception.Message
 }
 finally {
+    if ($null -ne $temporaryDrive) {
+        & subst.exe $temporaryDrive /D
+        if ($LASTEXITCODE -ne 0) {
+            $mappingError = "Failed to release temporary benchmark path mapping $temporaryDrive (exit $LASTEXITCODE)."
+            if ($null -eq $failure) { $failure = $mappingError } else { $failure = "$failure; $mappingError" }
+        }
+        $temporaryDrive = $null
+    }
     $acceptanceEligible = $null -eq $failure -and $IncludeMft -and (@($suiteResults | Where-Object Status -ne 'passed').Count -eq 0)
     $manifest = [ordered]@{
         Schema = 'StorageChronicle.FullBenchmarkMatrixEvidence.v1'

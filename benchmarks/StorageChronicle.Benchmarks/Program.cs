@@ -3,6 +3,8 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using BenchmarkDotNet.Attributes;
+using BenchmarkDotNet.Configs;
+using BenchmarkDotNet.Jobs;
 using BenchmarkDotNet.Running;
 using StorageChronicle.Domain.Contracts;
 using StorageChronicle.ExternalMedia;
@@ -16,15 +18,31 @@ namespace StorageChronicle.Benchmarks;
 public static class Program
 {
     /// <summary>Runs the selected BenchmarkDotNet suites.</summary>
-    public static void Main(string[] args) => BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
+    public static void Main(string[] args)
+    {
+        var previousArtifactsOutput = Environment.GetEnvironmentVariable("UseArtifactsOutput");
+        Environment.SetEnvironmentVariable("UseArtifactsOutput", "false");
+        var job = Job.Default
+            .WithInvocationCount(1)
+            .WithIterationCount(1)
+            .WithWarmupCount(0)
+            .WithUnrollFactor(1)
+            .DontEnforcePowerPlan();
+        var config = ManualConfig.Create(DefaultConfig.Instance).AddJob(job);
+        try
+        {
+            BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args, config);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("UseArtifactsOutput", previousArtifactsOutput);
+        }
+    }
 }
 
 /// <summary>Measures production projection and state paths over deterministic event material.</summary>
 [MemoryDiagnoser]
 [MarkdownExporterAttribute.GitHub]
-[InvocationCount(1)]
-[IterationCount(1)]
-[WarmupCount(0)]
 public class StorageChronicleBenchmarks
 {
     private CanonicalEvent[] events = [];
@@ -89,9 +107,6 @@ public class StorageChronicleBenchmarks
 /// <summary>Measures recording one large folder move without creating descendant move events.</summary>
 [MemoryDiagnoser]
 [MarkdownExporterAttribute.GitHub]
-[InvocationCount(1)]
-[IterationCount(1)]
-[WarmupCount(0)]
 public class LargeFolderMoveBenchmarks
 {
     private const int ChildCount = 100_000;
@@ -143,9 +158,6 @@ public class LargeFolderMoveBenchmarks
 /// <summary>Measures real append-only segment writes and their coupled SQLite index writes.</summary>
 [MemoryDiagnoser]
 [MarkdownExporterAttribute.GitHub]
-[InvocationCount(1)]
-[IterationCount(1)]
-[WarmupCount(0)]
 public class StorageAppendBenchmarks : IAsyncDisposable
 {
     private CanonicalEvent[] events = [];
@@ -235,9 +247,6 @@ public class StorageAppendBenchmarks : IAsyncDisposable
 /// <summary>Measures rebuilding and querying the real on-disk SQLite index from immutable segments.</summary>
 [MemoryDiagnoser]
 [MarkdownExporterAttribute.GitHub]
-[InvocationCount(1)]
-[IterationCount(1)]
-[WarmupCount(0)]
 public class SqliteRebuildBenchmarks : IAsyncDisposable
 {
     private CanonicalEvent[] events = [];
@@ -300,9 +309,6 @@ public class SqliteRebuildBenchmarks : IAsyncDisposable
 /// <summary>Measures real external-media segment writes, manifest publication, and manifest import.</summary>
 [MemoryDiagnoser]
 [MarkdownExporterAttribute.GitHub]
-[InvocationCount(1)]
-[IterationCount(1)]
-[WarmupCount(0)]
 public class MediaManifestBenchmarks : IDisposable
 {
     private CanonicalEvent[] events = [];
@@ -368,9 +374,6 @@ public class MediaManifestBenchmarks : IDisposable
 /// <summary>Measures the real external-media segment writer on a fresh temporary media root.</summary>
 [MemoryDiagnoser]
 [MarkdownExporterAttribute.GitHub]
-[InvocationCount(1)]
-[IterationCount(1)]
-[WarmupCount(0)]
 public class MediaSegmentAppendBenchmarks : IDisposable
 {
     private CanonicalEvent[] events = [];

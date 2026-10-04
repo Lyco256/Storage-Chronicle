@@ -231,6 +231,7 @@ function Assert-GroupEvidence {
                 CoreProjectionState = @('ReconstructSinglePointPath1M', 'GroupedGeneration100K', 'EventStackPage100K', 'PeriodDiff100K')
                 LargeFolderMove = @('RecordLargeFolderMove')
                 AppendAndCompression = @('SegmentAppendAndSqliteIndex100K', 'FlushAndCloseCompressedSegment100K')
+                StorageAppend1M = @('SegmentAppendAndSqliteIndex1M')
                 SqliteRecoveryAndQuery = @('SqliteIndexRebuild100K', 'SqliteIndexedCount100K')
                 MediaManifest = @('MediaManifestImport100K', 'MediaManifestReadAndValidate100K')
                 MediaSegment = @('MediaSegmentAppend100K')

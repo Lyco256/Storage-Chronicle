@@ -15,9 +15,6 @@ namespace StorageChronicle.Benchmarks;
 /// <summary>Measures actual public FSCTL_ENUM_USN_DATA enumeration and reconciliation on a supplied NTFS volume.</summary>
 [MemoryDiagnoser]
 [MarkdownExporterAttribute.GitHub]
-[InvocationCount(1)]
-[IterationCount(1)]
-[WarmupCount(0)]
 [BenchmarkCategory("WindowsPrivileged", "MFT")]
 public class WindowsMftBenchmarks
 {

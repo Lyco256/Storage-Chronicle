@@ -8,6 +8,7 @@
     <GenerateDocumentationFile Condition="'$(IsTestLikeProject)' != 'true'">true</GenerateDocumentationFile>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <Deterministic>true</Deterministic>
+    <UseArtifactsOutput>false</UseArtifactsOutput>
     <DebugType>portable</DebugType>
     <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
   </PropertyGroup>

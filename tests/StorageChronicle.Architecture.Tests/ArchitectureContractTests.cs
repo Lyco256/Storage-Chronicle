@@ -105,6 +105,30 @@ public sealed class ArchitectureContractTests
     }
 
     [Fact]
+    public void BenchmarksDoNotChangeHostPowerPlanAndUseStableBuildOutputLayout()
+    {
+        var root = FindRoot();
+        var benchmarkProgram = File.ReadAllText(Path.Combine(root, "benchmarks", "StorageChronicle.Benchmarks", "Program.cs"));
+        var mftBenchmarks = File.ReadAllText(Path.Combine(root, "benchmarks", "StorageChronicle.Benchmarks", "MftBenchmarks.cs"));
+        var directoryBuildProps = File.ReadAllText(Path.Combine(root, "Directory.Build.props"));
+
+        Assert.Contains("DontEnforcePowerPlan()", benchmarkProgram, StringComparison.Ordinal);
+        Assert.Contains("WithUnrollFactor(1)", benchmarkProgram, StringComparison.Ordinal);
+        Assert.Contains("Environment.SetEnvironmentVariable(\"UseArtifactsOutput\", \"false\")", benchmarkProgram, StringComparison.Ordinal);
+        Assert.DoesNotContain("InProcessEmitToolchain", benchmarkProgram, StringComparison.Ordinal);
+        Assert.DoesNotContain("--inProcess", benchmarkProgram, StringComparison.Ordinal);
+        Assert.DoesNotContain("WithPowerPlan(", benchmarkProgram, StringComparison.Ordinal);
+        Assert.DoesNotContain("WithPowerPlan(", mftBenchmarks, StringComparison.Ordinal);
+        foreach (var source in new[] { benchmarkProgram, mftBenchmarks })
+        {
+            Assert.DoesNotContain("[InvocationCount(", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("[IterationCount(", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("[WarmupCount(", source, StringComparison.Ordinal);
+        }
+        Assert.Contains("<UseArtifactsOutput>false</UseArtifactsOutput>", directoryBuildProps, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ExplorerScenarioPreparationUsesOnlyBoundNewOutputs()
     {
         var source = File.ReadAllText(Path.Combine(FindRoot(), "tools", "TestEnvironment", "New-ExplorerCorrelationScenario.ps1"));
