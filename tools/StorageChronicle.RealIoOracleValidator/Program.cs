@@ -1,5 +1,7 @@
+using System.ComponentModel;
 using System.Text.Json;
 using StorageChronicle.Domain.Contracts;
+using StorageChronicle.Platform.Windows.FileSystem.Interop;
 using StorageChronicle.State;
 using StorageChronicle.Storage;
 
@@ -22,11 +24,16 @@ public static class Program
 
         var failures = new List<string>();
         var evidenceOutputValidated = false;
+        WindowsPinnedRunOwnedDirectory? evidenceDirectory = null;
         try
         {
-            using var oracleDocument = JsonDocument.Parse(await File.ReadAllTextAsync(oraclePath).ConfigureAwait(false));
+            var fixtureRoot = Path.GetDirectoryName(Path.GetFullPath(oraclePath))
+                ?? throw new IOException("The workload oracle has no fixture root.");
+            evidenceDirectory = WindowsPinnedRunOwnedDirectory.OpenExisting(fixtureRoot);
+            await using var oracleStream = evidenceDirectory.OpenReadDirectChild(Path.GetFileName(oraclePath));
+            using var oracleDocument = await JsonDocument.ParseAsync(oracleStream).ConfigureAwait(false);
             var oracle = oracleDocument.RootElement;
-            ValidateEvidenceOutput(oraclePath, outputPath, oracle);
+            ValidateEvidenceOutput(oraclePath, outputPath, oracle, evidenceDirectory);
             evidenceOutputValidated = true;
             var schema = GetString(oracle, "Schema");
             if (!string.Equals(schema, "StorageChronicle.FileMutationWorkload.v2", StringComparison.Ordinal)) failures.Add($"Unexpected oracle schema: {schema}");
@@ -64,14 +71,14 @@ public static class Program
             var state = await stateEngine.GetSnapshotAsync(DateTimeOffset.UtcNow).ConfigureAwait(false);
             var checks = BuildChecks(operations, operationKinds, sourceEvents, canonicalEvents, state, failures);
             var evidence = CreateEvidence(oracle, historyPath, operations, sourceEvents, canonicalEvents, state.Entries.Count + state.UnplacedEntries.Count, checks, failures);
-            await WriteEvidenceAsync(outputPath, evidence).ConfigureAwait(false);
+            await WriteEvidenceAsync(evidenceDirectory, Path.GetFileName(outputPath), evidence).ConfigureAwait(false);
             Console.WriteLine(JsonSerializer.Serialize(evidence, JsonOptions));
             return failures.Count == 0 ? 0 : 2;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or StateEventValidationException)
+        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or Win32Exception or JsonException or InvalidOperationException or StateEventValidationException)
         {
             failures.Add(exception.Message);
-            if (!evidenceOutputValidated)
+            if (!evidenceOutputValidated || evidenceDirectory is null)
             {
                 Console.Error.WriteLine($"FAIL_CLOSED: {exception.Message}");
                 return 1;
@@ -88,15 +95,19 @@ public static class Program
             };
             try
             {
-                await WriteEvidenceAsync(outputPath, evidence).ConfigureAwait(false);
+                await WriteEvidenceAsync(evidenceDirectory, Path.GetFileName(outputPath), evidence).ConfigureAwait(false);
             }
-            catch (Exception writeException) when (writeException is IOException or UnauthorizedAccessException)
+            catch (Exception writeException) when (writeException is IOException or UnauthorizedAccessException or Win32Exception)
             {
                 Console.Error.WriteLine($"FAIL_CLOSED: {exception.Message}; failure evidence was not written because its new-only destination was unavailable: {writeException.Message}");
                 return 1;
             }
             Console.Error.WriteLine(exception.Message);
             return 1;
+        }
+        finally
+        {
+            evidenceDirectory?.Dispose();
         }
     }
 
@@ -362,16 +373,16 @@ public static class Program
     private static bool NameMatches(string? actual, string expected) => !string.IsNullOrWhiteSpace(actual) &&
         string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
 
-    private static async Task WriteEvidenceAsync(string outputPath, object evidence)
+    private static async Task WriteEvidenceAsync(WindowsPinnedRunOwnedDirectory evidenceDirectory, string outputName, object evidence)
     {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(evidence, JsonOptions);
-        await using var stream = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous | FileOptions.WriteThrough);
+        await using var stream = evidenceDirectory.CreateNewDirectChild(outputName);
         await stream.WriteAsync(bytes).ConfigureAwait(false);
         await stream.FlushAsync().ConfigureAwait(false);
         stream.Flush(flushToDisk: true);
     }
 
-    private static void ValidateEvidenceOutput(string oraclePath, string outputPath, JsonElement oracle)
+    private static void ValidateEvidenceOutput(string oraclePath, string outputPath, JsonElement oracle, WindowsPinnedRunOwnedDirectory evidenceDirectory)
     {
         var runId = GetString(oracle, "RunId");
         if (!Guid.TryParseExact(runId, "D", out var parsedRunId) || parsedRunId.ToString("D") != runId)
@@ -381,22 +392,16 @@ public static class Program
         var outputFullPath = Path.GetFullPath(outputPath);
         var fixtureRoot = Path.GetDirectoryName(oracleFullPath) ?? throw new IOException("The workload oracle has no fixture root.");
         var pathComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        if (!string.Equals(Path.GetDirectoryName(outputFullPath), fixtureRoot, pathComparison))
+        if (!string.Equals(Path.GetFullPath(evidenceDirectory.DirectoryPath), Path.GetFullPath(fixtureRoot), pathComparison) ||
+            !string.Equals(Path.GetDirectoryName(outputFullPath), fixtureRoot, pathComparison))
             throw new IOException("Validation evidence must be a direct child of the same marked run-owned fixture as the workload oracle.");
         var expectedName = $"real-io-evidence-{runId}.json";
         if (!string.Equals(Path.GetFileName(outputFullPath), expectedName, pathComparison))
             throw new IOException($"Validation evidence must use the run-bound filename {expectedName}.");
-        EnsureNoReparsePoints(fixtureRoot);
-        EnsureNoReparsePoints(oracleFullPath);
-        if (File.Exists(outputFullPath) || Directory.Exists(outputFullPath))
-            throw new IOException("The run-bound validation evidence already exists; refusing to overwrite it.");
-
-        var markerPath = Path.Combine(fixtureRoot, ".storage-chronicle-testlab-marker.json");
-        var volumeMarkerPath = Path.Combine(fixtureRoot, "StorageChronicleTestVolume.json");
-        EnsureNoReparsePoints(markerPath);
-        EnsureNoReparsePoints(volumeMarkerPath);
-        using var marker = JsonDocument.Parse(File.ReadAllBytes(markerPath));
-        using var volumeMarker = JsonDocument.Parse(File.ReadAllBytes(volumeMarkerPath));
+        using var markerStream = evidenceDirectory.OpenReadDirectChild(".storage-chronicle-testlab-marker.json");
+        using var volumeMarkerStream = evidenceDirectory.OpenReadDirectChild("StorageChronicleTestVolume.json");
+        using var marker = JsonDocument.Parse(markerStream);
+        using var volumeMarker = JsonDocument.Parse(volumeMarkerStream);
         var markerRoot = marker.RootElement;
         var volumeRoot = volumeMarker.RootElement;
         var role = GetString(markerRoot, "Role");
@@ -409,22 +414,10 @@ public static class Program
             GetString(markerRoot, "FileSystem") != "NTFS" ||
             GetString(volumeRoot, "FileSystem") != "NTFS" ||
             string.IsNullOrWhiteSpace(GetString(markerRoot, "VolumeUniqueId")) ||
-            GetString(markerRoot, "VolumeUniqueId") != GetString(volumeRoot, "VolumeUniqueId"))
+            !string.Equals(GetString(markerRoot, "VolumeUniqueId"), GetString(volumeRoot, "VolumeUniqueId"), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(GetString(volumeRoot, "VolumeUniqueId"), evidenceDirectory.VolumeUniqueId, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidDataException("The workload and volume markers do not prove one matching run-owned NTFS fixture for the oracle run.");
-        }
-    }
-
-    private static void EnsureNoReparsePoints(string path)
-    {
-        var current = Path.GetFullPath(path);
-        while (!string.IsNullOrEmpty(current))
-        {
-            if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
-                throw new IOException($"The validator refuses paths that traverse reparse points: {current}");
-            var parent = Directory.GetParent(current)?.FullName;
-            if (string.IsNullOrEmpty(parent) || string.Equals(parent, current, StringComparison.OrdinalIgnoreCase)) break;
-            current = parent;
         }
     }
 

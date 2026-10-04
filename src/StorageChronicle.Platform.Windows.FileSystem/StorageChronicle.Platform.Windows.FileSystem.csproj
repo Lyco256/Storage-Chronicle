@@ -9,6 +9,8 @@
   <ItemGroup>
     <InternalsVisibleTo Include="StorageChronicle.Platform.Windows.FileSystem.Tests" />
     <InternalsVisibleTo Include="StorageChronicle.Benchmarks" />
+    <InternalsVisibleTo Include="StorageChronicle.RealIoOracleValidator" />
+    <InternalsVisibleTo Include="StorageChronicle.RealIoOracleValidator.Tests" />
     <ProjectReference Include="..\StorageChronicle.Platform.Abstractions\StorageChronicle.Platform.Abstractions.csproj" />
     <PackageReference Include="System.Management" />
   </ItemGroup>

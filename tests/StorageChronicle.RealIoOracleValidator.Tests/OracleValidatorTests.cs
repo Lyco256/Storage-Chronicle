@@ -1,6 +1,8 @@
 using System.Collections.Immutable;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using StorageChronicle.Domain.Contracts;
+using StorageChronicle.Platform.Windows.FileSystem.Interop;
 using StorageChronicle.RealIoOracleValidator;
 using StorageChronicle.Storage;
 using Xunit;
@@ -220,6 +222,72 @@ public sealed class OracleValidatorTests
         }
     }
 
+    [Fact]
+    public void PinnedFixtureDirectoryCreatesOnlyRelativeNewFilesAndBlocksRootRename()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var moved = root + "-moved";
+            using (var pinned = WindowsPinnedRunOwnedDirectory.OpenExisting(root))
+            {
+                Assert.Equal(Path.GetFullPath(root), pinned.DirectoryPath);
+                Assert.Equal(GetVolumeUniqueId(root).ToUpperInvariant(), pinned.VolumeUniqueId.ToUpperInvariant());
+                Assert.Throws<IOException>(() => Directory.Move(root, moved));
+                Assert.Throws<ArgumentException>(() => pinned.CreateNewDirectChild("..\\escape.json"));
+                Assert.Throws<ArgumentException>(() => pinned.CreateNewDirectChild("alternate:stream"));
+
+                using var created = pinned.CreateNewDirectChild("handle-bound-output.json");
+                created.Write("fixture-only"u8);
+                created.Flush(true);
+            }
+
+            Assert.Equal("fixture-only", File.ReadAllText(Path.Combine(root, "handle-bound-output.json")));
+            Assert.False(Directory.Exists(moved));
+        }
+        finally
+        {
+            DeleteTempRoot(root);
+        }
+    }
+
+    [Fact]
+    public async Task MarkerForDifferentLiveVolumeRejectsEvidenceWithoutCreatingOutput()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var volume = VolumeId.Create("test-volume");
+            var parent = FileId.Create("parent");
+            var file = FileId.Create("file");
+            await CreateHistoryAsync(root, volume, parent, file, includeWrite: true, deleteMetadata: false, moveFileId: null);
+            var markerPath = Path.Combine(root, "StorageChronicleTestVolume.json");
+            var marker = JsonSerializer.Serialize(new
+            {
+                Schema = "StorageChronicle.TestLabDataMarker.v1",
+                TestId = GetRunGuid(root),
+                Role = "Workload",
+                FileSystem = "NTFS",
+                VolumeUniqueId = "\\\\?\\Volume{00000000-0000-0000-0000-000000000001}\\"
+            });
+            await File.WriteAllTextAsync(markerPath, marker);
+            var outputPath = OutputPath(root);
+
+            var exitCode = await Program.Main(new[]
+            {
+                "--oracle", WriteOracle(root, new[] { Operation("Create", "file.txt", null, 1) }),
+                "--history", Path.Combine(root, "history"), "--output", outputPath
+            });
+
+            Assert.Equal(1, exitCode);
+            Assert.False(File.Exists(outputPath));
+        }
+        finally
+        {
+            DeleteTempRoot(root);
+        }
+    }
+
     private static async Task CreateHistoryAsync(string root, VolumeId volume, FileId parent, FileId file, bool includeWrite, bool deleteMetadata, FileId? moveFileId)
     {
         var history = new AppendOnlyStorageEngine(new StorageEngineOptions(Path.Combine(root, "history")) { FlushInterval = TimeSpan.FromMinutes(10) });
@@ -306,10 +374,23 @@ public sealed class OracleValidatorTests
         using var marker = new FileStream(Path.Combine(path, ".test-owner.json"), FileMode.CreateNew, FileAccess.Write, FileShare.Read);
         JsonSerializer.Serialize(marker, new { Schema = "StorageChronicle.TestFixtureOwner.v1", RunId = runId });
         var workloadRunId = Guid.ParseExact(runId, "N").ToString("D");
-        var workloadMarker = new { Schema = "StorageChronicle.TestLabDataMarker.v1", TestId = workloadRunId, Role = "Workload", VolumeLabel = "SC_TEST_VOLUME", FileSystem = "NTFS", VolumeUniqueId = "test-volume-" + runId };
+        var workloadMarker = new { Schema = "StorageChronicle.TestLabDataMarker.v1", TestId = workloadRunId, Role = "Workload", VolumeLabel = "SC_TEST_VOLUME", FileSystem = "NTFS", VolumeUniqueId = GetVolumeUniqueId(path) };
         File.WriteAllText(Path.Combine(path, ".storage-chronicle-testlab-marker.json"), JsonSerializer.Serialize(workloadMarker));
         File.WriteAllText(Path.Combine(path, "StorageChronicleTestVolume.json"), JsonSerializer.Serialize(workloadMarker));
         return path;
+    }
+
+    private static string GetVolumeUniqueId(string path)
+    {
+        var mountPoint = new char[1024];
+        if (!GetVolumePathName(path, mountPoint, (uint)mountPoint.Length))
+            throw new IOException($"Could not resolve the test fixture mount point (Win32 {Marshal.GetLastWin32Error()}).");
+        var volumeName = new char[1024];
+        var root = new string(mountPoint).TrimEnd('\0');
+        if (!Path.EndsInDirectorySeparator(root)) root += Path.DirectorySeparatorChar;
+        if (!GetVolumeNameForVolumeMountPoint(root, volumeName, (uint)volumeName.Length))
+            throw new IOException($"Could not resolve the test fixture volume GUID (Win32 {Marshal.GetLastWin32Error()}).");
+        return new string(volumeName).TrimEnd('\0');
     }
 
     private static void DeleteTempRoot(string path)
@@ -324,4 +405,12 @@ public sealed class OracleValidatorTests
             throw new IOException("The oracle-validator fixture marker does not match this run.");
         Directory.Delete(fullPath, recursive: true);
     }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "GetVolumePathNameW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetVolumePathName(string fileName, [Out] char[] volumePathName, uint bufferLength);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "GetVolumeNameForVolumeMountPointW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetVolumeNameForVolumeMountPoint(string mountPoint, [Out] char[] volumeName, uint bufferLength);
 }
