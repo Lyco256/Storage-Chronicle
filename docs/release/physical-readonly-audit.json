@@ -479,7 +479,7 @@
       "id": "local-open-segment-tail-preservation",
       "status": "PASS",
       "path": "src/StorageChronicle.Storage/SegmentLog.cs",
-      "summary": "Incomplete .open tails are no longer truncated. Complete prefix records remain readable; damaged segments are excluded from append, and new records use a new segment. Regression test verifies byte-for-byte preservation and new-segment creation. Storage tests passed 12/12."
+      "summary": "Per Req.12, recovery reopens only a manifest-free GUID-matching .open segment exclusively, revalidates its header and every complete frame/CRC, and truncates only an incomplete trailing suffix. Verified prefix bytes remain unchanged. Complete CRC-invalid or structurally malformed frames are preserved and excluded from append; subsequent records use a new segment. Regression tests verify tail recovery and CRC-corrupt-frame preservation. Physical crash/power-loss fault injection remains outstanding."
     },
     {
       "id": "media-import-ledger-overwrite-and-corruption",
