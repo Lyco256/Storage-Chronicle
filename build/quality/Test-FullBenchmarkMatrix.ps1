@@ -182,7 +182,7 @@ $suites = @(
     [ordered]@{
         Name = 'AppendAndCompression'
         Filter = '*StorageAppendBenchmarks*'
-        ExpectedMethods = @('SegmentAppendAndSqliteIndex100K', 'FlushAndCloseCompressedSegment100K')
+        ExpectedMethods = @('SegmentAppendAndSqliteIndex100K', 'SegmentAppendAndSqliteIndex1M', 'FlushAndCloseCompressedSegment100K')
     },
     [ordered]@{
         Name = 'SqliteRecoveryAndQuery'
