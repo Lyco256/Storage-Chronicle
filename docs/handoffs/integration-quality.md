@@ -94,3 +94,28 @@ This ownership scope has no audited create-new VHDX/seed workflow that can prove
 - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/quality/Test-Quality.ps1`: passed DocMirror, Architecture, Integration, UI Headless, MFT seed contracts (13/13 at the time of the full gate run), Coverage, and VirtualBox legacy contract validation. The focused contract suite was expanded to 22/22 and rerun afterward.
 - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/Test-Fast.ps1 -NoRestore`: passed all configured non-privileged tests; per-project build warnings/errors were zero. Some fixture tools intentionally print their rejected-input diagnostics to stderr while their contract tests pass.
 - No merge or push was performed.
+
+## R28 MFT seed provenance hardening and final-gate binding (2026-10-04)
+
+### Changes in this handoff
+
+- Added `New-MftPhysicalSeed.ps1` and `MftSeedWorkflow.Contracts.ps1` for an explicit-approval, fail-closed create-new seed workflow. Run evidence, seed, workload, and isolated build directories use atomic `CreateDirectoryW`; the VHDX call is behind `New-MftVhdxCreateNew` with an injectable no-replace collision seam. A detected collision aborts and no cleanup/rollback occurs.
+- MFT runs require an explicit external fixed-NTFS `ArtifactRoot`, v2 creation evidence, and a separately collected process-attributed monitor. The monitor validator requires a finalized/complete trace, zero lost/dropped events, allowed write-only operations, run-bound target roots, capture interval, hashes, host inventory, and process identities. Full matrix and final acceptance independently enforce the provenance and hashes; final aggregation rejects legacy/no-monitor/ineligible matrices.
+- `Test-FullBenchmarkMatrix.ps1` passes the verified VHDX file identity, workload/oracle paths, evidence paths/hashes, process identities, physical preflight facts, and external ArtifactRoot to the MFT benchmark process. `MftBenchmarks.cs` validates the preflight, creation/monitor hashes and bindings, and writes correctness evidence only to an existing parent beneath the external ArtifactRoot using `FileMode.CreateNew` and flush-to-disk. Existing output and missing parent are refused.
+- The seed creator uses Windows CRT-compatible argument quoting for publish/workload paths and resolves the `dotnet.exe` absolute path before its first evidence or storage mutation; it records the resolved executable and digest instead of relying on a nonexistent `System.Diagnostics.Process.Path` property.
+- The deleted status for `docs/build/quality/Test-FullBenchmarkMatrix.ps1.md` was cleared by restoring/updating the same path. Per-file mirrors were updated for all changed/new quality scripts, the final gate, contract test, and `MftBenchmarks.cs`.
+- Static/mock contract coverage now includes directory/VHDX collision seams, safe path/volume/space/content/reparse/protected-role rejections, independent monitor completeness/lost-event/write-event checks, final gate missing/tampered/wrong-target/legacy cases, benchmark provenance fields, existing-target refusal, and missing-parent refusal contracts.
+
+### Verification commands and results
+
+- PowerShell AST parser over all six changed/new quality scripts: PASS (`PARSER_PASS`).
+- `pwsh -NoProfile -ExecutionPolicy Bypass -File build/quality/Test-MftPhysicalSeedContracts.ps1`: PASS, 31/31, including offline Windows argument quoting, path/volume rejection, injected create collision, independent monitor, and final provenance checks.
+- `pwsh -NoProfile -ExecutionPolicy Bypass -File build/quality/Test-DocMirror.ps1`: PASS.
+- `pwsh -NoProfile -ExecutionPolicy Bypass -File build/quality/Test-Quality.ps1`: PASS (DocMirror, Architecture, Integration, 31/31 MFT contracts, coverage aggregation, and 9/9 retired VirtualBox contract cases).
+- `dotnet build benchmarks/StorageChronicle.Benchmarks/StorageChronicle.Benchmarks.csproj -c Debug --no-restore --nologo`: PASS, 0 warnings, 0 errors.
+- `pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-Fast.ps1 -NoRestore`: PASS, all configured non-privileged test projects completed with 0 failures and 0 build warnings/errors.
+- `git diff --check`: PASS (Git reported only configured LF-to-CRLF normalization notices for a subset of edited text files).
+
+### Physical operations and known limits
+
+`-WhatIf`, dry-run, and all contract tests perform no storage mutation. This task did not execute `New-VHD`, attach, initialize, partition, format, invoke the one-million-file workload, query a real seed volume, or run a physical MFT benchmark; all are **NOT_EXECUTED**. No VHDX/fixture/evidence was created by this task. The VHDX collision test injects an AlreadyExists failure into the creation seam; it does not invoke Hyper-V or establish a physical-host race result for the native `New-VHD` cmdlet. Therefore physical acceptance remains blocked and `AcceptanceEligible` must not be inferred from creator-owned records. It requires user-designated isolated roots on eligible non-protected fixed NTFS volumes, the separately collected external monitor artifact, and the explicit approved/UAC workflow. No merge or push was performed.

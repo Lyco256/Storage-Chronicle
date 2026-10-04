@@ -16,6 +16,8 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 . (Join-Path $PSScriptRoot 'AcceptanceContracts.ps1')
+. (Join-Path $PSScriptRoot 'MftPhysicalSeed.Contracts.ps1')
+. (Join-Path $PSScriptRoot 'MftSeedWorkflow.Contracts.ps1')
 $requiredWindowsPrivilegedCapabilities = @(Get-RequiredWindowsPrivilegedCapabilities)
 if ([string]::IsNullOrWhiteSpace($OutputPath)) { $OutputPath = Join-Path $root ('artifacts/acceptance/final/final-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.json') }
 $artifactDirectory = Split-Path -Parent $OutputPath
@@ -183,8 +185,10 @@ function Assert-GroupEvidence {
         }
         'MftPerformance' {
             if ($schema -ne 'StorageChronicle.FullBenchmarkMatrixEvidence.v1') { throw 'MFT performance evidence has an unexpected schema.' }
+            if ($null -eq $Value.PSObject.Properties['AcceptanceEligible'] -or -not [bool]$Value.AcceptanceEligible) { throw 'MFT performance manifest must explicitly declare AcceptanceEligible=true.' }
             if (-not [bool]$Value.IncludeMft -or [string]$Value.Configuration -ne 'Release' -or $null -eq $Value.MftEvidence) { throw 'MFT performance evidence is missing the connected Release MFT correctness artifact.' }
             if ([string]$Value.ExecutionStatus -ne 'completed' -or [string]$Value.MftEvidence.Schema -ne 'StorageChronicle.MftBenchmarkEvidence.v1' -or [string]$Value.MftEvidence.Status -ne 'PASSED' -or -not [bool]$Value.MftEvidence.AcceptanceEligible -or $null -eq $Value.MftEvidence.PSObject.Properties['FailureReasons'] -or @($Value.MftEvidence.FailureReasons).Count -ne 0) { throw 'MFT performance evidence is not a completed eligible real matrix.' }
+            [void](Assert-MftFinalAcceptanceSeedProvenance -Matrix $Value)
             $mftEnvironment = $Value.MftEvidence.Environment
             if ([string]$Value.Host.MftVolumeLabel -ne 'SC_TEST_MFT_VOLUME' -or
                 [string]::IsNullOrWhiteSpace([string]$Value.Host.MftMarkerPath) -or
