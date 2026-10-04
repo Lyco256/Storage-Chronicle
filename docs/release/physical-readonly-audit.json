@@ -1,6 +1,6 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "816af59f58e145618fc1412a2265f138812cfb26",
+  "targetCommit": "f689f7e6fdd46f0a8cee33d5c495962cede2c6f2",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -264,6 +264,27 @@
         "status": "PARTIAL",
         "path": "src/StorageChronicle.Agent/NamedPipeAgentServer.cs",
         "summary": "Consent decisions require the current interactive session and an executable image path equal to the installed Desktop UI path under Program Files. The caller's Authenticode signature is not validated, and no adversarial live IPC acceptance was run; path equality alone is not independent binary authentication."
+      },
+      {
+        "id": "live-media-write-authorization-and-retry",
+        "status": "PARTIAL",
+        "path": "src/StorageChronicle.ExternalMedia/ExternalMediaStore.cs",
+        "lines": [303, 418, 482, 604],
+        "summary": "Commit f689f7e attaches the coordinator's persisted-consent/ACL check to the store's same pinned filesystem session and rechecks before directory creation, segment/manifest creation and final rename, and interrupted-segment finalization. Agent lifecycle tests cover ACL revocation before flush and after segment finalization but before manifest publication; failed unregister retains the in-process session for retry. Remaining limits: the public low-level store does not require a guard by default, initialization happens before post-creation ACL inspection after explicit approval, and retry/recovery across Agent process termination or physical removal is not proven. No media was accessed."
+      },
+      {
+        "id": "interactive-user-settings-profile-boundary",
+        "status": "FAIL",
+        "path": "src/StorageChronicle.Agent/Program.cs",
+        "lines": [51, 62],
+        "summary": "The LocalSystem Agent constructs a singleton UserSettingsStore whose WindowsSettingsPathProvider uses the service process LocalApplicationData. Authenticated IPC confirms an interactive caller SID but does not select that user's profile path, so Requirement 09's per-user %LOCALAPPDATA% path is not met and users may share/misplace settings. Resolve the profile from authenticated session identity and test two distinct user profiles before release."
+      },
+      {
+        "id": "fresh-media-product-tree-disclosure",
+        "status": "PARTIAL",
+        "path": "src/StorageChronicle.Agent/MediaMirrorConsentService.cs",
+        "lines": [151, 163],
+        "summary": "Commit f689f7e synchronizes the consent service, approval UI, and mirrored docs: first-use approval can initialize the .StorageChronicle tree, this PC's writer directory, and ownership markers; a complete post-creation ACL scan precedes grant persistence/import/event append. An empty product-owned tree can remain if that scan fails. This does not close the low-level optional-gate, marker-authenticity, or ACL race findings."
       }
     ]
   },
