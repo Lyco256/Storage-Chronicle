@@ -22,7 +22,7 @@ public sealed class MediaConsentLifecycleIntegrationTests
     {
         using var fixture = new ConsentLifecycleFixture();
         var priorEvent = Event(fixture.Media.LogicalMediaId, fixture.VolumeId, "source-mount", 1);
-        using (var sourceStore = new ExternalMediaStore(fixture.MediaRoot, "source-pc", fixture.VolumeId, fixture.FileSystems.Open(fixture.VolumeId)))
+        using (var sourceStore = new ExternalMediaStore(fixture.MediaRoot, "source-pc", fixture.VolumeId, fixture.FileSystems.Open(fixture.VolumeId), writeAuthorization: _ => true))
         {
             var segment = await sourceStore.AppendSegmentAsync([priorEvent], TestContext.Current.CancellationToken);
             await sourceStore.PublishManifestAsync(fixture.Media.LogicalMediaId, null, "source-mount", [segment], TestContext.Current.CancellationToken);
@@ -225,7 +225,7 @@ public sealed class MediaConsentLifecycleIntegrationTests
                 return new(status, status == MediaMirrorAclInspectionStatus.Verified ? AclFingerprint : null, 1, 0,
                     status == MediaMirrorAclInspectionStatus.Verified ? [] : ["FixtureAclUnsafe"]);
             });
-            using (var initialized = new ExternalMediaStore(MediaRoot, "test-pc", VolumeId, FileSystems.Open(VolumeId))) { }
+            using (var initialized = new ExternalMediaStore(MediaRoot, "test-pc", VolumeId, FileSystems.Open(VolumeId), writeAuthorization: _ => true)) { }
             volumes = new FixedVolumeEnumerator(Descriptor);
             settingsService = new AgentSettingsService(MachineStore, new FixedSettingsStore<UserSettings>(new UserSettings()), new TimelineHistory(Timeline), new AllowAllAgentSettingsAuthorizer(), new NoOpLifecycle());
             Consent = new MediaMirrorConsentService(health, MachineStore, settingsService, volumes, FileSystems, "test-pc");

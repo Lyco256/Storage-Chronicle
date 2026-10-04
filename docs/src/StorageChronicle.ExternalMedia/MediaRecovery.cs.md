@@ -1,6 +1,6 @@
 # MediaRecovery.cs
 
-Detects a missing `.StorageChronicle` log directory and creates a durable recovery marker plus a new `recovered-*` history branch. The previous history is not deleted or rewritten, and logical-media/writer identifiers are rejected when they contain path traversal. The method requires the store's root/writer ownership markers and publishes through a GUID-named create-new temporary file without replacing an existing recovery marker; cancellation propagates and a failed write preserves the prior marker. Tests cover deleted-log recovery, existing-marker retention, and traversal protection.
+Detects a missing `.StorageChronicle` log directory and creates a durable recovery marker plus a new `recovered-*` history branch. The previous history is not deleted or rewritten, and logical-media/writer identifiers are rejected when they contain path traversal. The method requires a live write-authorization callback and the store's root/writer ownership markers; it checks authorization before creating and finalizing a GUID-named temporary recovery marker without replacing an existing marker. Cancellation propagates and a failed write preserves the prior marker. Tests cover deleted-log recovery, existing-marker retention, traversal protection, and denied writes.
 
 ## Role
 

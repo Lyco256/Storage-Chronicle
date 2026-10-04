@@ -257,17 +257,18 @@ public sealed class ExternalMediaStore : IDisposable
     /// <param name="fileSystem">Pinned volume filesystem session; path-based fallbacks are not accepted.</param>
     /// <param name="clock">Optional clock for deterministic manifest timestamps.</param>
     /// <param name="createIfMissing">Whether a missing, exclusively created owned layout should be initialized.</param>
-    public ExternalMediaStore(string mediaRoot, string writerId, VolumeId expectedVolumeId, IVolumeBoundMediaFileSystem fileSystem, IMediaClock? clock = null, bool createIfMissing = true)
-        : this(mediaRoot, writerId, expectedVolumeId, fileSystem, clock, createIfMissing, new ProductMediaRecoveryIntentStore(), ownsFileSystem: true)
+    /// <param name="writeAuthorization">Live authorization checked before each media mutation. Required for initialization and all append, publication, or recovery writes.</param>
+    public ExternalMediaStore(string mediaRoot, string writerId, VolumeId expectedVolumeId, IVolumeBoundMediaFileSystem fileSystem, IMediaClock? clock = null, bool createIfMissing = true, Func<IVolumeBoundMediaFileSystem, bool>? writeAuthorization = null)
+        : this(mediaRoot, writerId, expectedVolumeId, fileSystem, clock, createIfMissing, new ProductMediaRecoveryIntentStore(), ownsFileSystem: true, writeAuthorization)
     {
     }
 
-    internal ExternalMediaStore(string mediaRoot, string writerId, VolumeId expectedVolumeId, IVolumeBoundMediaFileSystem fileSystem, IMediaClock? clock, bool createIfMissing, IMediaRecoveryIntentStore recoveryIntents)
-        : this(mediaRoot, writerId, expectedVolumeId, fileSystem, clock, createIfMissing, recoveryIntents, ownsFileSystem: true)
+    internal ExternalMediaStore(string mediaRoot, string writerId, VolumeId expectedVolumeId, IVolumeBoundMediaFileSystem fileSystem, IMediaClock? clock, bool createIfMissing, IMediaRecoveryIntentStore recoveryIntents, Func<IVolumeBoundMediaFileSystem, bool>? writeAuthorization = null)
+        : this(mediaRoot, writerId, expectedVolumeId, fileSystem, clock, createIfMissing, recoveryIntents, ownsFileSystem: true, writeAuthorization)
     {
     }
 
-    private ExternalMediaStore(string mediaRoot, string writerId, VolumeId expectedVolumeId, IVolumeBoundMediaFileSystem fileSystem, IMediaClock? clock, bool createIfMissing, IMediaRecoveryIntentStore recoveryIntents, bool ownsFileSystem)
+    private ExternalMediaStore(string mediaRoot, string writerId, VolumeId expectedVolumeId, IVolumeBoundMediaFileSystem fileSystem, IMediaClock? clock, bool createIfMissing, IMediaRecoveryIntentStore recoveryIntents, bool ownsFileSystem, Func<IVolumeBoundMediaFileSystem, bool>? writeAuthorization = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(mediaRoot);
         ArgumentException.ThrowIfNullOrWhiteSpace(writerId);
@@ -284,6 +285,7 @@ public sealed class ExternalMediaStore : IDisposable
         this.fileSystem = fileSystem;
         this.recoveryIntents = recoveryIntents;
         this.ownsFileSystem = ownsFileSystem;
+        this.writeAuthorization = writeAuthorization;
         root = Path.Combine(this.mediaRoot, DirectoryName);
         try
         {
@@ -619,7 +621,7 @@ public sealed class ExternalMediaStore : IDisposable
 
     private void EnsureWriteAuthorized()
     {
-        if (writeAuthorization is not null && !writeAuthorization(fileSystem))
+        if (writeAuthorization is null || !writeAuthorization(fileSystem))
             throw new UnauthorizedAccessException("The live media identity or its approved ACL no longer matches the persisted mirror consent; the media was not changed.");
     }
 
@@ -733,6 +735,7 @@ public sealed class ExternalMediaStore : IDisposable
     private void EnsureOwnedLayout()
     {
         EnsureOwnedDirectory(RootRelativePath, OwnershipMarkerName, writerId: null);
+        EnsureWriteAuthorized();
         fileSystem.EnsureDirectory(Path.Combine(DirectoryName, "writers"));
         EnsureOwnedDirectory(WriterRelativeDirectory, WriterMarkerName, writerId);
     }
@@ -748,6 +751,7 @@ public sealed class ExternalMediaStore : IDisposable
 
     private void EnsureOwnedDirectory(string path, string markerName, string? writerId)
     {
+        EnsureWriteAuthorized();
         if (!fileSystem.TryCreateDirectory(path))
         {
             ValidateExistingOwnedDirectory(path, markerName, writerId);
@@ -756,6 +760,7 @@ public sealed class ExternalMediaStore : IDisposable
 
         var newMarkerPath = Path.Combine(path, markerName);
         var payload = JsonSerializer.SerializeToUtf8Bytes(new MediaOwnershipMarker(OwnershipSchema, writerId), JsonOptions);
+        EnsureWriteAuthorized();
         using var output = fileSystem.CreateNew(newMarkerPath);
         output.Write(payload);
         if (output is FileStream fileStream) fileStream.Flush(flushToDisk: true);

@@ -11,6 +11,34 @@ namespace StorageChronicle.ExternalMedia.Tests;
 public sealed class ExternalMediaTests
 {
     [Fact]
+    public void StoreInitializationFailsClosedBeforeCreatingProductEntriesWithoutAuthorization()
+    {
+        var root = TestRoot();
+        try
+        {
+            var volume = VolumeId.Create(Path.GetFullPath(root));
+            Assert.Throws<UnauthorizedAccessException>(() => new ExternalMediaStore(root, "pc-a", volume, new FixtureMediaFileSystem(root, volume)));
+            Assert.False(Directory.Exists(Path.Combine(root, ".StorageChronicle")));
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Fact]
+    public async Task ExistingStoreRejectsAppendWhenNoAuthorizationWasAttached()
+    {
+        var root = TestRoot();
+        try
+        {
+            using var authorized = NewStore(root, "pc-a");
+            var value = TestEvent("media-1", "volume-a", "mount-a");
+            using var readOnly = new ExternalMediaStore(root, "pc-a", VolumeId.Create(Path.GetFullPath(root)), new FixtureMediaFileSystem(root, VolumeId.Create(Path.GetFullPath(root))), createIfMissing: false);
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await readOnly.AppendSegmentAsync([value], TestContext.Current.CancellationToken));
+            Assert.Empty(Directory.EnumerateFiles(Path.Combine(root, ".StorageChronicle", "writers", "pc-a"), "*.seg"));
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Fact]
     public async Task RoundTripVerifiesSegmentCrcAndManifestSelfHashAndSelectsNewestABSlot()
     {
         var root = TestRoot();
@@ -783,7 +811,7 @@ public sealed class ExternalMediaTests
         var fullRoot = Path.GetFullPath(root);
         Directory.CreateDirectory(fullRoot);
         var volume = VolumeId.Create(fullRoot);
-        return new ExternalMediaStore(fullRoot, writer, volume, new FixtureMediaFileSystem(fullRoot, volume), clock, createIfMissing, recoveryIntents ?? new FixtureRecoveryIntentStore());
+        return new ExternalMediaStore(fullRoot, writer, volume, new FixtureMediaFileSystem(fullRoot, volume), clock, createIfMissing, recoveryIntents ?? new FixtureRecoveryIntentStore(), _ => true);
     }
 
     private static async ValueTask<MediaLogDeletionRecovery> Recover(string root, string mediaId, string writer, CancellationToken cancellationToken)
@@ -791,7 +819,7 @@ public sealed class ExternalMediaTests
         var fullRoot = Path.GetFullPath(root);
         Directory.CreateDirectory(fullRoot);
         var volume = VolumeId.Create(fullRoot);
-        return await MediaRecovery.RecoverDeletedLogAsync(fullRoot, volume, new FixtureMediaFileSystem(fullRoot, volume), mediaId, writer, cancellationToken);
+        return await MediaRecovery.RecoverDeletedLogAsync(fullRoot, volume, new FixtureMediaFileSystem(fullRoot, volume), mediaId, writer, _ => true, cancellationToken);
     }
 
     private static string TestRoot()

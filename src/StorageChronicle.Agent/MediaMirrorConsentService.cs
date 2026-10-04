@@ -157,7 +157,8 @@ public sealed class MediaMirrorConsentService
                 // a complete NTFS parent/tree inspection before persisting consent or allowing
                 // history import/append. If inspection fails, this empty product-owned tree may
                 // remain; no history import or event segment is authorized.
-                using (var initializedStore = new ExternalMediaStore(current.MediaRoot, pcIdentity, live.VolumeId, fileSystems.Open(live.VolumeId), createIfMissing: true))
+                using (var initializedStore = new ExternalMediaStore(current.MediaRoot, pcIdentity, live.VolumeId, fileSystems.Open(live.VolumeId), createIfMissing: true,
+                    writeAuthorization: currentFileSystem => currentFileSystem.VolumeId == live.VolumeId))
                 {
                     // The user has explicitly approved creation and future append; bind the grant to the actual new directory identity.
                 }

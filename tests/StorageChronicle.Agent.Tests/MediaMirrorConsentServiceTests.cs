@@ -185,7 +185,7 @@ public sealed class MediaMirrorConsentServiceTests
                             CurrentAclStatus == MediaMirrorAclInspectionStatus.Verified ? [] : ["FixtureAclUnsafe"]));
             if (createProductRoot)
             {
-                using var store = new ExternalMediaStore(MediaRoot, "pc-test", VolumeId, fileSystems.Open(VolumeId));
+                using var store = new ExternalMediaStore(MediaRoot, "pc-test", VolumeId, fileSystems.Open(VolumeId), writeAuthorization: _ => true);
             }
             settingsService = new AgentSettingsService(MachineStore, new MutableSettingsStore<UserSettings>(new UserSettings()),
                 new NoOpHistory(failSettingsHistory), new AllowAllAgentSettingsAuthorizer(), new NoOpMonitoringLifecycle());

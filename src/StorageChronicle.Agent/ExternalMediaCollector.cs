@@ -323,7 +323,8 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
         try
         {
             if (!pendingFileSystem.DirectoryExists(".StorageChronicle") || !consent.HasGrant(media, mediaRoot, pendingFileSystem)) return null;
-            var recovery = MediaRecovery.RecoverDeletedLogAsync(mediaRoot, media.VolumeId, pendingFileSystem, media.LogicalMediaId, pcId, cancellationToken);
+            var recovery = MediaRecovery.RecoverDeletedLogAsync(mediaRoot, media.VolumeId, pendingFileSystem, media.LogicalMediaId, pcId,
+                currentFileSystem => consent.HasGrant(media, mediaRoot, currentFileSystem), cancellationToken);
             pendingFileSystem = null;
             return await recovery.ConfigureAwait(false);
         }
