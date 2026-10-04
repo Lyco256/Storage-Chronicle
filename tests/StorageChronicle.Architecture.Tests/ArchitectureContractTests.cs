@@ -89,6 +89,22 @@ public sealed class ArchitectureContractTests
     }
 
     [Fact]
+    public void BenchmarkFixtureDirectoryCreationAndCleanupAreRunBound()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRoot(), "benchmarks", "StorageChronicle.Benchmarks", "Program.cs"));
+        Assert.Contains("CreateDirectoryW(path, 0)", source, StringComparison.Ordinal);
+        Assert.Contains("if (error == ErrorAlreadyExists) continue", source, StringComparison.Ordinal);
+        Assert.Contains("OwnerMarkerName", source, StringComparison.Ordinal);
+        Assert.Contains("Path.GetTempPath()", source, StringComparison.Ordinal);
+        Assert.Contains("Path.GetFileName(fullPath), \"data\"", source, StringComparison.Ordinal);
+        Assert.Contains("FileAttributes.ReparsePoint", source, StringComparison.Ordinal);
+
+        var markerValidation = source.IndexOf("Refusing to remove a benchmark fixture without its matching run ownership marker", StringComparison.Ordinal);
+        var recursiveDelete = source.IndexOf("Directory.Delete(containerPath, recursive: true)", StringComparison.Ordinal);
+        Assert.True(markerValidation >= 0 && recursiveDelete > markerValidation, "Recursive cleanup must require matching run ownership evidence first.");
+    }
+
+    [Fact]
     public void ExplorerScenarioPreparationUsesOnlyBoundNewOutputs()
     {
         var source = File.ReadAllText(Path.Combine(FindRoot(), "tools", "TestEnvironment", "New-ExplorerCorrelationScenario.ps1"));
