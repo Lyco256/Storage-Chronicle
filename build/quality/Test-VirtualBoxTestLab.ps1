@@ -87,9 +87,21 @@ function Assert-RetiredVirtualBoxEntryPoint {
     param([Parameter(Mandatory = $true)][string]$RelativePath)
     $path = Join-Path $repositoryRoot $RelativePath
     $source = Get-Content -Raw -LiteralPath $path
-    if ($source -notmatch 'Retired under Requirement 37') { throw "Legacy VM entry point is not marked retired: $RelativePath" }
-    foreach ($forbidden in @('Invoke-VBoxManage', 'Invoke-VBoxGuestControl', 'Restore-TestLabBaseline', 'Add-VirtualBoxVm', 'New-Item', 'Remove-Item', 'Set-Content', 'Start-Process', 'Get-TestLabConfig')) {
-        if ($source.Contains($forbidden)) { throw "Retired VM entry point contains an executable-I/O helper '$forbidden': $RelativePath" }
+    if ($source -notmatch 'Retired under Requirements? .*37') { throw "Legacy VM entry point is not marked retired: $RelativePath" }
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors.Count -gt 0) { throw "Retired VM entry point has PowerShell parse errors: $RelativePath" }
+    foreach ($command in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+        if ($command.GetCommandName() -notin @('Write-Error', 'exit')) { throw "Retired VM entry point contains executable command '$($command.GetCommandName())': $RelativePath" }
+    }
+    foreach ($invocation in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] }, $true)) {
+        throw "Retired VM entry point contains a method invocation '$($invocation.Extent.Text)': $RelativePath"
+    }
+    foreach ($assignment in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {
+        if ($assignment.Left.Extent.Text -ne '$ErrorActionPreference' -or $assignment.Right.Extent.Text -ne "'Stop'") {
+            throw "Retired VM entry point contains an unexpected assignment '$($assignment.Extent.Text)': $RelativePath"
+        }
     }
 }
 
@@ -102,6 +114,19 @@ try {
     }
     Assert-ContractCase 'legacy snapshot reset entry point is inert' {
         Assert-RetiredVirtualBoxEntryPoint 'tools/TestEnvironment/Reset-TestVm.ps1'
+    }
+    foreach ($retiredEntryPoint in @(
+        'tools/TestEnvironment/Copy-TestArtifactsToVm.ps1',
+        'tools/TestEnvironment/Copy-TestResultsFromVm.ps1',
+        'tools/TestEnvironment/Invoke-Windows10StageACapabilityChecks.ps1',
+        'tools/TestEnvironment/Test-Windows10StageACapability.ps1',
+        'tools/TestEnvironment/Compose-Windows10StageA.ps1',
+        'tools/TestEnvironment/Run-VirtualBoxInstallerAcceptance.ps1',
+        'tools/TestEnvironment/Test-TestLabPrerequisites.ps1',
+        'tools/PhysicalAcceptance/Invoke-VirtualBoxInstallerCase.ps1')) {
+        Assert-ContractCase "retired legacy VM/Stage A entry point is inert: $retiredEntryPoint" {
+            Assert-RetiredVirtualBoxEntryPoint $retiredEntryPoint
+        }
     }
     Assert-ContractCase 'exact dynamic Windows 11 profile passes' {
         Assert-TestLabVmProfile -Name 'SC-Test-W11-VBox' -Root $testRoot | Out-Null
