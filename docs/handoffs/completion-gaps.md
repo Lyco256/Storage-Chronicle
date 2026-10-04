@@ -2,7 +2,12 @@
 
 Updated 2026-10-04. This is the top-agent continuation ledger for requirements that still need implementation, stronger audit evidence, or environment acceptance. An unexecuted acceptance lane remains pending; it is never converted into a pass by a default script.
 
-## Latest continuation (2026-10-04, audited source `a624c1d`, documentation follow-ups through `8ebd480`)
+## Latest continuation (2026-10-04, audited source `3cea35f`)
+
+- The user confirmed the unresolved Req.12 recovery choice: preserve the validated complete prefix and truncate only incomplete trailing bytes. The recovery behavior already implemented in `dde919b` remains the selected policy.
+- Top-agent-only safety fix `3cea35f` moves the RealIoOracleValidator's native filesystem operations under the Windows platform project and pins its run-owned NTFS evidence root. Marker/oracle reads and create-new evidence output are direct-child operations relative to that handle, with live volume-GUID validation. Focused tests passed 10/10, including root rename refusal, traversal/ADS rejection, collision preservation, and wrong-volume marker refusal.
+- `build/Test-All.ps1` passed after the change at `3cea35f`: Build, all configured Fast tests, Quality/coverage, DocMirror, offline contracts, and UI; 0 build warnings/errors. The initial run stopped only because the newly added source mirror omitted mandatory section headings; those headings were added, DocMirror passed, and the complete gate was rerun successfully.
+- This does not close the full source-to-sink audit or other output paths. TestDataGenerator's path-based boundary, forgeable marker data, races before fixture pinning, independent runtime write monitor, approved dedicated PC/roots, host preflight, physical/privileged acceptance, and full MFT/resource/performance evidence remain open. The audit remains `FAIL / DO_NOT_RUN`; `main` remains untouched. No product, service, MSI/UAC, VHDX, physical media, or privileged lane was run.
 
 - User chose the Req.12 recovery behavior: truncate only the incomplete `.open` suffix; keep every complete CRC-validated prefix record unchanged. Tail recovery and tests merged into `devenv` via no-conflict `--no-ff` as `dde919b`.
 - Follow-up review found startup did not automatically restore a missing/corrupt SQLite projection. The top agent added integrity checking and startup reconstruction from authoritative segments, narrowed corruption classification so unsupported schema and unrelated busy/permission/I/O failures are preserved, and added recovery tests. This merged without conflict as `9d78c50`.

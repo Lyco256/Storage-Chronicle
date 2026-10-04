@@ -1,6 +1,6 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "a624c1d702101b783f2af563f7f0624f61d07625",
+  "targetCommit": "3cea35f449d6afc7b5a7bb173ba58791455fba11",
   "priorAuditTargetCommit": "b8d4fb9e6ec3afadb3fde6e2d197237f4391d722",
   "currentDeltaFromPriorAudit": [
     "src/StorageChronicle.Storage/SegmentLog.cs",
@@ -128,13 +128,20 @@
     "src/StorageChronicle.Agent/AgentProjectionService.cs",
     "src/StorageChronicle.Settings/AgentSettingsService.cs",
     "tests/StorageChronicle.Agent.Tests/AuthenticatedUserSettingsRoutingTests.cs",
-    "docs/handoffs/settings.md"
+    "docs/handoffs/settings.md",
+    "src/StorageChronicle.Platform.Windows.FileSystem/Interop/WindowsPinnedRunOwnedDirectory.cs",
+    "src/StorageChronicle.Platform.Windows.FileSystem/StorageChronicle.Platform.Windows.FileSystem.csproj",
+    "tools/StorageChronicle.RealIoOracleValidator/Program.cs",
+    "tools/StorageChronicle.RealIoOracleValidator/StorageChronicle.RealIoOracleValidator.csproj",
+    "tests/StorageChronicle.RealIoOracleValidator.Tests/OracleValidatorTests.cs",
+    "tests/StorageChronicle.RealIoOracleValidator.Tests/StorageChronicle.RealIoOracleValidator.Tests.csproj",
+    "docs/src/StorageChronicle.Platform.Windows.FileSystem/Interop/WindowsPinnedRunOwnedDirectory.cs.md"
   ],
   "workingTreeChanges": [],
   "latestValidation": {
     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-All.ps1",
-    "codeCommit": "a624c1d702101b783f2af563f7f0624f61d07625",
-    "currentAuditCommit": "a624c1d702101b783f2af563f7f0624f61d07625",
+    "codeCommit": "3cea35f449d6afc7b5a7bb173ba58791455fba11",
+    "currentAuditCommit": "3cea35f449d6afc7b5a7bb173ba58791455fba11",
     "exitCode": 0,
     "fastProjects": 24,
     "qualityGate": "passed",
@@ -173,6 +180,7 @@
     "scope": "Partial source-to-sink review of Agent/Application/Windows NTFS/Session calls plus selected build/tools/installer flows and their service/OS-command reachability; prior findings are carried forward where source is unchanged from b8d4fb9. The storage tail/index recovery, benchmark fixture cleanup, and benchmark runner/matrix deltas were inspected against targetCommit. The complete portable matrix wrote only to benchmark-owned OS-temp metadata fixtures. Does not exhaustively audit every source/test/script/external command, perform host preflight, or run an independent runtime write monitor.",
     "status": "PARTIAL",
     "reviewedAt": "2026-10-04",
+    "supplementalReview": "At source commit 3cea35f, RealIoOracleValidator native I/O was moved to the Windows filesystem platform project. It pins the existing NTFS fixture root with a directory handle that denies delete sharing, reads marker/oracle direct children relative to that handle, verifies the live volume GUID, and creates run-bound evidence with handle-relative FILE_CREATE. Focused tests cover root rename refusal, traversal/ADS, output collision preservation, and live-volume mismatch (10/10 passed). This only narrows that one tool's post-pin output path; TestDataGenerator, marker authenticity, pre-pin races, other sinks, the complete callgraph and independent runtime monitor remain open.",
     "currentDeltaReview": "The .open tail-recovery delta was inspected: only a manifest-free segment matching its header GUID and direct storage-root child path is opened exclusively; header and every complete record CRC are revalidated before truncating only bytes beyond the last complete frame. Verified prefix bytes are preserved. CRC-invalid, malformed, manifest-backed, compressed, or reparse-point segments are not repaired/truncated; new append proceeds in a fresh segment. SQLite initialization runs quick_check before schema migration; startup rebuilds a missing index beside authoritative segments or one classified as structurally corrupt, deleting only the derived SQLite database and sidecars. Unsupported schema is not classified as corruption, and tests assert the DB bytes remain unchanged; busy, permission, and unrelated I/O failures are not in the corruption filter. Tests cover incomplete-tail recovery, CRC-corrupt full-frame preservation, automatic missing/corrupt-index rebuild, and unsupported-schema preservation. The complete out-of-process portable benchmark matrix passed seven suites and 13 expected methods exactly once, including one 1M Storage method run that indexed one million records (100.640 seconds, N=1, 21,534,483,520 managed bytes). This is diagnostic only (PortableOnly=true, AcceptanceEligible=false), not statistical/MFT/resource acceptance. The runner uses one iteration/no warmup and DontEnforcePowerPlan; method-specific matrix filters keep the 100K append/compression methods separate from the 1M method, and the Windows matrix uses a free temporary SUBST mapping for long checkout paths and releases it in finally. Benchmark media authorization is scoped to exclusively owned OS-temp fixtures. Benchmark containers are exclusively created under the OS temp root, bound by a run GUID marker and data child, and recursively cleaned only after boundary/marker/reparse checks; source-contract tests cover these guards. This narrows accidental cleanup risk but does not prove race-free recursive deletion. Test-All passed at a624c1d with zero build warnings/errors, all configured Fast projects, Quality/coverage, DocMirror, offline contracts, and UI. No product or physical runner was started. The broader callgraph, configured-root and hostile-race proof, host preflight, independent runtime write monitor, and physical evidence remain unverified.",
     "findings": [
       {
@@ -293,7 +301,7 @@
         "status": "PARTIAL",
         "path": "tools/StorageChronicle.TestDataGenerator/Program.cs",
         "lines": [44, 56],
-        "summary": "Commits 1ecfb41 and aeabe0f add direct-child run-bound CreateNew output, root marker/volume checks, no-reparse traversal, and existing-target preservation tests for TestDataGenerator and RealIoOracleValidator. The validator now reads history segments without opening/recovering SQLite. These narrow paths passed focused tests and post-merge Fast; marker authenticity, path/parent TOCTOU, and a full output-sink inventory remain unproven. No unsafe CLI or physical acceptance was run."
+        "summary": "TestDataGenerator remains on its earlier direct-child CreateNew/path-check boundary. RealIoOracleValidator now opens the marked NTFS fixture once, pins its directory handle, reads marker/oracle direct children, verifies the live volume GUID, and creates run-bound evidence relative to that handle with FILE_CREATE (never replace). Focused tests cover root rename refusal, traversal/ADS, volume mismatch, and existing-output preservation; its 10-test suite and Test-All pass. Marker authenticity, race before fixture pinning, other output sinks, and exhaustive inventory remain unproven. No product or physical acceptance ran."
       },
       {
         "id": "legacy-virtualbox-mutators-callable",
@@ -533,7 +541,7 @@
       "status": "PARTIAL",
       "path": "tools/StorageChronicle.RealIoOracleValidator/Program.cs",
       "lines": [338, 343],
-      "summary": "Commits 1ecfb41 and aeabe0f add direct-child run-bound CreateNew outputs, marked-root/live-volume checks, no-reparse traversal, existing-target preservation tests, and read-only segment inspection without SQLite recovery. Residual marker authenticity and path/parent TOCTOU remain; full output-sink audit and execution gates still apply."
+      "summary": "Commit 3cea35f pins the existing marked NTFS fixture root and uses handle-relative direct-child marker/oracle reads plus run-bound FILE_CREATE evidence output. Live volume identity is checked and focused race/collision/mismatch cases pass (10/10). This does not resolve TestDataGenerator's path-based boundary, marker authenticity, races before pinning, other output sinks, full audit, host preflight, or independent runtime monitoring."
     },
     {
       "id": "legacy-virtualbox-mutators-callable",
