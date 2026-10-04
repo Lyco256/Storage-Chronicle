@@ -44,6 +44,20 @@ public sealed class WindowsMediaAclPolicyTests
     }
 
     [Theory]
+    [InlineData(0x00010000)] // DELETE
+    [InlineData(0x00000040)] // FILE_DELETE_CHILD
+    public void BroadPrincipalDeleteRightsAreUnsafe(int rights)
+    {
+        var result = WindowsMediaAclInspection.EvaluateDescriptor(
+            Descriptor(Allow(Users, rights)), ApprovedUser.Value, isDirectory: true);
+
+        Assert.False(result.IsUnknown);
+        Assert.Contains(result.Findings, finding =>
+            finding.StartsWith("UnapprovedPrincipalWriteRights:", StringComparison.Ordinal) &&
+            finding.EndsWith(rights.ToString("X8", global::System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal));
+    }
+
+    [Theory]
     [InlineData("S-1-5-32-545")] // BUILTIN\Users
     [InlineData("S-1-5-11")] // Authenticated Users
     [InlineData("S-1-1-0")] // Everyone
