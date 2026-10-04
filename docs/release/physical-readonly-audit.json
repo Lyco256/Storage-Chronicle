@@ -1,6 +1,6 @@
 {
   "schema": "StorageChronicle.PhysicalReadOnlyAudit.v1",
-  "targetCommit": "672b7eca261bebdde270a3d3e35b6efab10a91fc",
+  "targetCommit": "be0adba8017e8fd689ec492f3ec0a447ae72131a",
   "historicalChangesFromPriorAudit": [
     "Requirements/37_PHYSICAL_READ_ONLY_ACCEPTANCE.md",
     "src/StorageChronicle.Settings/SettingsValidation.cs",
@@ -237,9 +237,33 @@
       },
       {
         "id": "pc-bound-media-consent-end-to-end-gate",
-        "status": "FAIL",
+        "status": "PARTIAL",
         "path": "src/StorageChronicle.Agent/ExternalMediaCollector.cs",
-        "summary": "Commits 02c245b and e599c6e add a pure exact-binding consent policy, PC-local Settings record, IPC disclosure/decision contracts, consent UI, and tests. Commit 672b7ec adds a read-only FILE_ID_INFO identity API backed by the validated pinned product-root handle and an isolated Windows test. The live collector/import/mirror paths are still not wired to acquire and revalidate this evidence, inspect ACLs, queue live requests, persist an accepted binding through an authenticated handler, and deny legacy MediaMirrors-only reads/imports/appends. First-use consent remains incomplete and no media path is eligible to run. No physical media was accessed."
+        "summary": "Commit 1b73cb3 wires per-PC persisted approval and live volume/product-root identity revalidation before existing-history import, recovery, and mirror append; MediaMirrors-only legacy settings do not grant access. Machine identity is read-only MachineGuid-derived. Commit 1277ab2 pins the exact validated root handle, closing a validation-to-pin name-reopen race. Commit be0adba invalidates uncertain mirror sessions without flushing after notification continuity loss and re-enumerates the next connection with UnverifiedGap quality; the targeted Agent suite passed 64 non-privileged tests and all 24 Fast projects passed. Remaining blockers are actual NTFS ACL/ancestor DELETE_CHILD inspection, forgeable JSON ownership marker, consent-decision executable signature authentication, and full independent approval-to-import/append acceptance. No physical media or product was accessed."
+      },
+      {
+        "id": "notification-continuity-mirror-session-invalidation",
+        "status": "PASS",
+        "path": "src/StorageChronicle.Agent/ExternalMediaCollector.cs",
+        "summary": "After notification continuity loss the collector invalidates active mirror sessions without flushing, clears stale active-volume state, and preserves UnverifiedGap quality across empty re-enumeration until a live external volume is observed. The Agent test verifies invalidation, repeated registration, and the quality marker. This is code-level coverage only; no hardware/media was accessed."
+      },
+      {
+        "id": "media-root-ntfs-acl-inspection",
+        "status": "FAIL",
+        "path": "src/StorageChronicle.Agent/MediaMirrorConsentService.cs",
+        "summary": "NTFS is currently mapped unconditionally to NtfsAclUnavailable. The application does not inspect the dedicated media-root DACL, inherited ACEs, or ancestor DELETE_CHILD/write rights through pinned handles. UI disclosure is truthful, but Requirement 37's actual ACL inspection is unimplemented. No media was accessed."
+      },
+      {
+        "id": "media-owner-marker-authenticity",
+        "status": "FAIL",
+        "path": "src/StorageChronicle.Platform.Windows.FileSystem/Interop/WindowsVolumeDirectorySession.cs",
+        "summary": "The owner marker remains forgeable JSON containing a public schema and null writerId. Existing-root validation therefore cannot prove that Storage Chronicle created the directory. The session now pins the exact handle it validates, but this does not authenticate marker ownership. No media was accessed."
+      },
+      {
+        "id": "consent-decision-process-authentication",
+        "status": "PARTIAL",
+        "path": "src/StorageChronicle.Agent/NamedPipeAgentServer.cs",
+        "summary": "Consent decisions require the current interactive session and an executable image path equal to the installed Desktop UI path under Program Files. The caller's Authenticode signature is not validated, and no adversarial live IPC acceptance was run; path equality alone is not independent binary authentication."
       }
     ]
   },
@@ -389,17 +413,17 @@
     },
     {
       "id": "test-output-arbitrary-overwrite",
-      "status": "FAIL",
+      "status": "PARTIAL",
       "path": "tools/StorageChronicle.RealIoOracleValidator/Program.cs",
       "lines": [338, 343],
-      "summary": "Evidence writer creates arbitrary parent directories and overwrites the requested output. The TestDataGenerator has the same unsafe overwrite behavior. Do not run with user-supplied paths until new-only and run-owned confinement are implemented."
+      "summary": "Commits 1ecfb41 and aeabe0f add direct-child run-bound CreateNew outputs, marked-root/live-volume checks, no-reparse traversal, existing-target preservation tests, and read-only segment inspection without SQLite recovery. Residual marker authenticity and path/parent TOCTOU remain; full output-sink audit and execution gates still apply."
     },
     {
       "id": "legacy-virtualbox-mutators-callable",
-      "status": "FAIL",
+      "status": "PASS",
       "path": "tools/TestEnvironment/Initialize-TestLab.ps1",
       "lines": [21, 43],
-      "summary": "Legacy VirtualBox initialization still creates/configures VMs and VDIs; guest command and snapshot restore scripts also remain callable. Retire all guest-mutating paths under Requirement 37; no VM was created."
+      "summary": "Commit 1ecfb41 retires Initialize-TestLab, Invoke-TestLabCommand, and Reset-TestVm with no-I/O fail-closed entry points. VirtualBox contract tests and Fast passed. This does not authorize the separately gated file-backed VHDX fixture workflow."
     },
     {
       "id": "mft-million-entry-free-space-gate",
