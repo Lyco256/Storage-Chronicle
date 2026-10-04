@@ -16,6 +16,7 @@ public sealed class WindowsVolumeDirectorySession : IVolumeBoundMediaFileSystem
     private const uint FileAddFile = 0x0002;
     private const uint FileAddSubdirectory = 0x0004;
     private const uint FileReadAttributes = 0x0080;
+    private const uint ReadControl = 0x00020000;
     private const uint FileReadData = 0x0001;
     private const uint Delete = 0x00010000;
     private const uint FileWriteData = 0x00000002;
@@ -77,6 +78,162 @@ public sealed class WindowsVolumeDirectorySession : IVolumeBoundMediaFileSystem
             EnsureExpectedVolume(productRootHandle, expectedVolumeGuidPath);
             EnsureDirectoryNotReparsePoint(productRootHandle);
             return GetFileIdentity(productRootHandle);
+        }
+    }
+
+    /// <inheritdoc />
+    public MediaMirrorAclInspection InspectProductAcl(string approvedUserSid)
+    {
+        lock (sync)
+        {
+            ThrowIfDisposed();
+            if (!OperatingSystem.IsWindows())
+                return WindowsMediaAclInspection.Unknown("WindowsOnly");
+
+            if (!WindowsMediaAclInspection.TryNormalizeApprovedUserSid(approvedUserSid, out var normalizedSid))
+                return WindowsMediaAclInspection.Unknown("ApprovedUserSidInvalid");
+
+            if (productRootHandle is null)
+                return WindowsMediaAclInspection.Unknown("ProductRootMissingOrUnpinned");
+
+            try
+            {
+                if (!WindowsMediaAclInspection.IsNtfs(expectedVolumeGuidPath))
+                    return WindowsMediaAclInspection.Unknown("AclFilesystemUnsupported");
+
+                using var readableVolumeRoot = CreateFile(expectedVolumeGuidPath,
+                    ReadControl | FileReadAttributes | FileListDirectory | FileTraverse | Synchronize,
+                    FileShareRead | FileShareWrite | FileShareDelete, IntPtr.Zero, OpenExisting,
+                    FileFlagBackupSemantics, IntPtr.Zero);
+                if (readableVolumeRoot.IsInvalid)
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "The volume-root ACL handle could not be opened.");
+                EnsureExpectedVolume(readableVolumeRoot, expectedVolumeGuidPath);
+                EnsureDirectoryNotReparsePoint(readableVolumeRoot);
+
+                // The session's owned root is pinned without delete sharing. Re-open it relative to
+                // the verified volume handle with READ_CONTROL, then compare identity before use.
+                using var readableProductRoot = OpenDirectoryCore(readableVolumeRoot, ProductDirectoryName,
+                    FileOpen, expectedVolumeGuidPath, ReadControl);
+                if (!string.Equals(GetFileIdentity(readableProductRoot), GetFileIdentity(productRootHandle), StringComparison.Ordinal))
+                    throw new IOException("The product-root identity changed during ACL inspection.");
+
+                var entries = new List<WindowsMediaAclInspection.Entry>();
+                var findings = new List<string>();
+                var isUnknown = false;
+                InspectHandle(readableVolumeRoot, string.Empty, isDirectory: true,
+                    WindowsMediaAclInspection.ApprovedUserRightsForPath(string.Empty, isDirectory: true),
+                    normalizedSid, entries, findings, ref isUnknown);
+                InspectHandle(readableProductRoot, ProductDirectoryName, isDirectory: true,
+                    WindowsMediaAclInspection.ApprovedUserRightsForPath(ProductDirectoryName, isDirectory: true),
+                    normalizedSid, entries, findings, ref isUnknown);
+                InspectDescendants(readableProductRoot, ProductDirectoryName, normalizedSid, entries, findings, ref isUnknown);
+
+                if (isUnknown)
+                    return WindowsMediaAclInspection.Unknown(findings.Order(StringComparer.Ordinal).ToArray(),
+                        entries.Count(static entry => entry.IsDirectory), entries.Count(static entry => !entry.IsDirectory));
+
+                var fingerprint = WindowsMediaAclInspection.Fingerprint(entries);
+                var status = findings.Count == 0 ? MediaMirrorAclInspectionStatus.Verified : MediaMirrorAclInspectionStatus.Unsafe;
+                return new MediaMirrorAclInspection(status, fingerprint,
+                    entries.Count(static entry => entry.IsDirectory),
+                    entries.Count(static entry => !entry.IsDirectory), findings.Order(StringComparer.Ordinal).ToArray());
+            }
+            catch (Exception exception)
+            {
+                return WindowsMediaAclInspection.Unknown("AclTraversalIncomplete:" + exception.GetType().Name);
+            }
+        }
+    }
+
+    private void InspectDescendants(SafeFileHandle directory, string relativePath, string approvedSid,
+        List<WindowsMediaAclInspection.Entry> entries, List<string> findings, ref bool isUnknown)
+    {
+        var pending = new Stack<(SafeFileHandle Directory, string RelativePath)>();
+        pending.Push((DuplicateHandleCore(directory, "The product media directory handle could not be pinned for ACL traversal."), relativePath));
+        try
+        {
+            while (pending.Count > 0)
+            {
+                var (currentDirectory, currentPath) = pending.Pop();
+                using (currentDirectory)
+                {
+                    foreach (var name in EnumerateNames(currentDirectory))
+                    {
+                        if (name is "." or "..") continue;
+                        ValidateComponent(name);
+                        var childPath = currentPath + "\\" + name;
+                        using var metadataHandle = OpenAclEntryHandle(currentDirectory, name);
+                        var attributes = GetAttributes(metadataHandle);
+                        if ((attributes & FileAttributes.ReparsePoint) != 0)
+                        {
+                            findings.Add("ReparsePoint:" + childPath);
+                            InspectHandle(metadataHandle, childPath,
+                                (attributes & FileAttributes.Directory) != 0,
+                                WindowsMediaAclInspection.ApprovedUserRightsForPath(childPath,
+                                    (attributes & FileAttributes.Directory) != 0),
+                                approvedSid, entries, findings, ref isUnknown);
+                            continue;
+                        }
+
+                        if ((attributes & FileAttributes.Directory) != 0)
+                        {
+                            using var childDirectory = OpenDirectoryCore(currentDirectory, name, FileOpen,
+                                expectedVolumeGuidPath, ReadControl);
+                            if (!string.Equals(GetFileIdentity(metadataHandle), GetFileIdentity(childDirectory), StringComparison.Ordinal))
+                                throw new IOException("A descendant directory changed identity while its ACL handle was being pinned.");
+                            InspectHandle(metadataHandle, childPath, isDirectory: true,
+                                WindowsMediaAclInspection.ApprovedUserRightsForPath(childPath, isDirectory: true),
+                                approvedSid, entries, findings, ref isUnknown);
+                            pending.Push((DuplicateHandleCore(childDirectory,
+                                "A descendant directory handle could not be pinned for ACL traversal."), childPath));
+                        }
+                        else
+                        {
+                            InspectHandle(metadataHandle, childPath, isDirectory: false,
+                                WindowsMediaAclInspection.ApprovedUserRightsForPath(childPath, isDirectory: false),
+                                approvedSid, entries, findings, ref isUnknown);
+                        }
+                    }
+                }
+            }
+        }
+        finally
+        {
+            while (pending.TryPop(out var item)) item.Directory.Dispose();
+        }
+    }
+
+    private static void InspectHandle(SafeFileHandle handle, string relativePath, bool isDirectory,
+        uint approvedUserAllowedRights, string approvedSid,
+        List<WindowsMediaAclInspection.Entry> entries, List<string> findings, ref bool isUnknown)
+    {
+        var result = WindowsMediaAclInspection.ReadAndEvaluate(handle, approvedSid, approvedUserAllowedRights);
+        if (result.IsUnknown)
+        {
+            isUnknown = true;
+            findings.AddRange(result.Findings.Select(finding => relativePath.Length == 0 ? finding : relativePath + ":" + finding));
+            return;
+        }
+
+        entries.Add(new WindowsMediaAclInspection.Entry(relativePath, result.Descriptor!, isDirectory));
+        findings.AddRange(result.Findings.Select(finding => relativePath.Length == 0 ? finding : relativePath + ":" + finding));
+    }
+
+    private SafeFileHandle OpenAclEntryHandle(SafeFileHandle parent, string name)
+    {
+        ValidateComponent(name);
+        EnsureExpectedVolume(parent, expectedVolumeGuidPath);
+        var handle = NtOpenRelative(parent, name, FileReadAttributes | ReadControl | Synchronize,
+            FileShareRead | FileShareWrite, FileOpen, FileOpenReparsePoint | FileSynchronousIoNonAlert);
+        try
+        {
+            EnsureExpectedVolume(handle, expectedVolumeGuidPath);
+            return handle;
+        }
+        catch
+        {
+            handle.Dispose();
+            throw;
         }
     }
 
