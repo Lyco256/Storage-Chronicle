@@ -38,48 +38,59 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
         EnsureOwnedHistoryDirectory(options.StorageDirectory);
         _segments = new SegmentLog(options);
         _segments.SegmentSkipped += issue => SegmentSkipped?.Invoke(issue);
+        var indexPath = Path.Combine(options.StorageDirectory, "index.sqlite");
+        var shouldRebuildIndex = !File.Exists(indexPath) && Directory.EnumerateFiles(options.StorageDirectory, "segment-*").Any();
         try
         {
             _index = new SqliteIndex(options);
         }
-        catch (Exception exception) when (exception is SqliteException or InvalidOperationException or IOException)
+        catch (Exception exception) when (SqliteIndex.IsDatabaseCorruption(exception))
         {
             SqliteConnection.ClearAllPools();
             RemoveSqliteFiles(options.StorageDirectory);
             _index = new SqliteIndex(options);
+            shouldRebuildIndex = true;
         }
 
-        var lifecycleRecoveryBatch = new List<(long Sequence, ProcessLifecycleEvent Value, byte[] Payload)>(512);
-        foreach (var record in _segments.ReadAllRecords())
+        if (shouldRebuildIndex)
         {
-            _nextSequence = Math.Max(_nextSequence, record.Sequence);
-            if (record.Kind == StorageRecordKind.SourceEvent)
-            {
-                try
-                {
-                    var source = JsonSerializer.Deserialize<SourceEvent>(record.Payload, JsonOptions);
-                    if (source is not null) _lastSourceSequence = Math.Max(_lastSourceSequence, source.Time.SourceSequence.Value);
-                }
-                catch (JsonException)
-                {
-                    // A segment with valid framing but an invalid event payload remains readable as a segment issue.
-                }
-            }
-            else if (record.Kind == StorageRecordKind.ProcessLifecycleEvent)
-            {
-                var lifecycle = JsonSerializer.Deserialize<ProcessLifecycleEvent>(record.Payload, JsonOptions)
-                    ?? throw new InvalidDataException("A process lifecycle segment record deserialized to null.");
-                lifecycleRecoveryBatch.Add((record.Sequence, lifecycle, record.Payload));
-                if (lifecycleRecoveryBatch.Count >= 512)
-                {
-                    _index.AppendProcessLifecycleEventsAsync(lifecycleRecoveryBatch, CancellationToken.None).AsTask().GetAwaiter().GetResult();
-                    lifecycleRecoveryBatch.Clear();
-                }
-            }
+            RebuildIndexAsync(_segments, _index, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+            _index.StoreFinalSequenceAsync(_nextSequence, _lastSourceSequence, RecordingState.Running, null, CancellationToken.None).AsTask().GetAwaiter().GetResult();
         }
+        else
+        {
+            var lifecycleRecoveryBatch = new List<(long Sequence, ProcessLifecycleEvent Value, byte[] Payload)>(512);
+            foreach (var record in _segments.ReadAllRecords())
+            {
+                _nextSequence = Math.Max(_nextSequence, record.Sequence);
+                if (record.Kind == StorageRecordKind.SourceEvent)
+                {
+                    try
+                    {
+                        var source = JsonSerializer.Deserialize<SourceEvent>(record.Payload, JsonOptions);
+                        if (source is not null) _lastSourceSequence = Math.Max(_lastSourceSequence, source.Time.SourceSequence.Value);
+                    }
+                    catch (JsonException)
+                    {
+                        // A segment with valid framing but an invalid event payload remains readable as a segment issue.
+                    }
+                }
+                else if (record.Kind == StorageRecordKind.ProcessLifecycleEvent)
+                {
+                    var lifecycle = JsonSerializer.Deserialize<ProcessLifecycleEvent>(record.Payload, JsonOptions)
+                        ?? throw new InvalidDataException("A process lifecycle segment record deserialized to null.");
+                    lifecycleRecoveryBatch.Add((record.Sequence, lifecycle, record.Payload));
+                    if (lifecycleRecoveryBatch.Count >= 512)
+                    {
+                        _index.AppendProcessLifecycleEventsAsync(lifecycleRecoveryBatch, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+                        lifecycleRecoveryBatch.Clear();
+                    }
+                }
+            }
 
-        if (lifecycleRecoveryBatch.Count > 0)
-            _index.AppendProcessLifecycleEventsAsync(lifecycleRecoveryBatch, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+            if (lifecycleRecoveryBatch.Count > 0)
+                _index.AppendProcessLifecycleEventsAsync(lifecycleRecoveryBatch, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        }
 
         _flushLoop = Task.Run(FlushLoopAsync);
     }
@@ -592,11 +603,13 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
         foreach (var record in segments.ReadAllRecords())
         {
             cancellationToken.ThrowIfCancellationRequested();
+            _nextSequence = Math.Max(_nextSequence, record.Sequence);
             if (record.Kind == StorageRecordKind.SourceEvent)
             {
                 var source = JsonSerializer.Deserialize<SourceEvent>(record.Payload, JsonOptions);
                 if (source is not null)
                 {
+                    _lastSourceSequence = Math.Max(_lastSourceSequence, source.Time.SourceSequence.Value);
                     indexBatch.Add(new EventIndexRecord(record.Kind, record.Sequence, source.EventId, source.SchemaVersion, source.Time, source.FileId, source.ParentFileId, source.Name, record.Payload));
                 }
             }
@@ -605,6 +618,7 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
                 var canonical = JsonSerializer.Deserialize<CanonicalEvent>(record.Payload, JsonOptions);
                 if (canonical is not null)
                 {
+                    _lastSourceSequence = Math.Max(_lastSourceSequence, canonical.Time.SourceSequence.Value);
                     indexBatch.Add(new EventIndexRecord(record.Kind, record.Sequence, canonical.EventId, canonical.SchemaVersion, canonical.Time, canonical.FileId, canonical.ParentFileId, canonical.Name, record.Payload));
                     canonicalBatch.Add(canonical);
                 }
@@ -745,7 +759,7 @@ public sealed class AppendOnlyStorageEngine : IEventStore, IStateStore, IAsyncDi
 
     private static void RemoveSqliteFiles(string directory)
     {
-        foreach (var path in new[] { Path.Combine(directory, "index.sqlite"), Path.Combine(directory, "index.sqlite-wal"), Path.Combine(directory, "index.sqlite-shm") })
+        foreach (var path in new[] { Path.Combine(directory, "index.sqlite"), Path.Combine(directory, "index.sqlite-wal"), Path.Combine(directory, "index.sqlite-shm"), Path.Combine(directory, "index.sqlite-journal") })
         {
             if (File.Exists(path)) File.Delete(path);
         }

@@ -325,11 +325,75 @@ public sealed class StorageEngineTests
             File.Delete(Path.Combine(directory, "index.sqlite-shm"));
             await using (var recovered = CreateStore(directory))
             {
-                await recovered.RebuildSqliteAsync();
                 Assert.Single(await ToListAsync(recovered.ReadSourceAsync()));
+                Assert.Equal(1, await recovered.CountEventsAsync(canonical: true));
                 var snapshot = await recovered.GetSnapshotAsync(DateTimeOffset.UtcNow);
                 Assert.Single(snapshot.Entries);
             }
+        }
+        finally
+        {
+            RemoveDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task CorruptSqliteIsRebuiltFromSegmentsDuringStartup()
+    {
+        var directory = CreateDirectory();
+        try
+        {
+            SourceEvent source;
+            CanonicalEvent canonical;
+            await using (var store = CreateStore(directory))
+            {
+                source = CreateSource(1);
+                canonical = CreateCanonical(source);
+                await store.AppendSourceAsync(source);
+                await store.AppendCanonicalAsync(canonical);
+                await store.StopAsync();
+            }
+
+            await File.WriteAllBytesAsync(Path.Combine(directory, "index.sqlite"), "not a SQLite database"u8.ToArray());
+
+            await using var recovered = CreateStore(directory);
+            Assert.Single(await ToListAsync(recovered.ReadSourceAsync()));
+            Assert.Equal(1, await recovered.CountEventsAsync(canonical: true));
+            Assert.Equal(canonical.Name, Assert.Single((await recovered.GetSnapshotAsync(DateTimeOffset.UtcNow)).Entries).Metadata.Name);
+        }
+        finally
+        {
+            RemoveDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task UnsupportedSqliteSchemaIsNotDeletedAsCorruption()
+    {
+        var directory = CreateDirectory();
+        try
+        {
+            await using (var store = CreateStore(directory))
+            {
+                await store.AppendSourceAsync(CreateSource(1));
+                await store.StopAsync();
+            }
+
+            await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = Path.Combine(directory, "index.sqlite"),
+                Pooling = false
+            }.ToString()))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = "PRAGMA user_version = 999;";
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var unsupportedDatabase = await File.ReadAllBytesAsync(Path.Combine(directory, "index.sqlite"));
+            Assert.Throws<StorageException>(() => new AppendOnlyStorageEngine(new StorageEngineOptions(directory)));
+            Assert.Equal(unsupportedDatabase, await File.ReadAllBytesAsync(Path.Combine(directory, "index.sqlite")));
         }
         finally
         {

@@ -6,6 +6,8 @@ The bounded append support resolves existing event identities in chunks and writ
 
 Canonical state and projection-cache recovery uses the same finite batch boundary and parameterized commands; each batch commits atomically and cancellation is checked between records.
 
+`Initialize`の先頭で`PRAGMA quick_check(1)`を実行し、正常でなければschema変更前に明示的な破損エラーを返す。起動時に検出可能な破損コードはAppendOnlyStorageEngineが回復トリガーとして扱い、unsupported schemaや非破損I/Oエラーとは区別される。
+
 ## 役割
 
 追記ログを正本とするSQLite索引・現在状態・projection cacheを保持する。SQLiteは`Microsoft.Data.Sqlite`を直接使用し、WAL、`synchronous=FULL`、foreign keys、有限busy timeoutを設定する。
@@ -16,11 +18,11 @@ Canonical state and projection-cache recovery uses the same finite batch boundar
 
 ## 不変条件・回復
 
-イベント索引、Process Lifecycle索引、状態は再生成可能なキャッシュであり、追記ログを更新・削除しない。`RecreateAsync`はSQLite本体とWAL/SHMだけを再作成し、ログの各レコードを再読して索引とcanonical stateを復元する。SQLiteの新規・破損・削除時もengineが再初期化する。
+イベント索引、Process Lifecycle索引、状態は再生成可能なキャッシュであり、追記ログを更新・削除しない。初期化はPRAGMAやmigrationの前に`quick_check(1)`でDB整合性を検証する。構造破損だけを検出した場合はengineがSQLite本体とWAL/SHM/rollback-journal sidecarを再作成し、追記ログから索引とcanonical stateを有限batchで復元する。DB欠落と破損のどちらも起動時に自動回復する。未知の新しいschema、busy、権限、その他のI/Oエラーを破損と誤認して消去しない。
 
 ## 関連テスト
 
-実SQLiteのWAL設定・テーブル、削除後の再構築、migration、状態適用、トランザクション境界を`StorageEngineTests`が検証する。
+実SQLiteのWAL設定・テーブル、削除・物理破損後の起動時再構築、migration、状態適用、トランザクション境界を`StorageEngineTests`が検証する。
 
 ## Role
 
