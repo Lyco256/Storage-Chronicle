@@ -80,6 +80,24 @@ public sealed class TestDataGeneratorOutputSafetyTests
         Assert.False(File.Exists(System.IO.Path.Combine(targetDirectory, "generated.json")));
     }
 
+    [Fact]
+    public void OutputDirectoryChainRemainsPinnedAgainstRenameUntilTheNewFileCanBeCreated()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        using var fixture = new TemporaryFixture();
+        var output = System.IO.Path.Combine(fixture.Path, "generated.json");
+        var moved = fixture.Path + "-moved";
+
+        using (WindowsPinnedOutputDirectory.OpenForFile(output))
+        {
+            Assert.Throws<IOException>(() => Directory.Move(fixture.Path, moved));
+            Assert.False(File.Exists(output));
+        }
+
+        Directory.Move(fixture.Path, moved);
+        Directory.Move(moved, fixture.Path);
+    }
+
     private sealed class TemporaryFixture : IDisposable
     {
         private readonly string _path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"StorageChronicle-TestDataGenerator-{Guid.NewGuid():N}");
