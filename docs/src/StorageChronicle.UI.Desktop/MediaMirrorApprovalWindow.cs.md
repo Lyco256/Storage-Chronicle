@@ -18,10 +18,10 @@ Uses Avalonia controls and the shared runtime IPC contract. It performs no files
 
 ## Invariants
 
-- The initial disclosure distinguishes verified, unavailable, and unknown ACL evidence. For a missing NTFS root, it explicitly says approval creates the empty dedicated root, followed by a parent/complete-tree ACL check before consent is saved; if verification fails, the root may remain but no import or mirror starts. NTFS approval is accepted only after the Agent rechecks the ACL against the authenticated approving user's SID; the UI itself does not claim the pre-click scan is verified.
+- The initial disclosure distinguishes verified, unavailable, and unknown ACL evidence. For a missing NTFS tree, it explicitly says approval creates the new `.StorageChronicle` hierarchy, this PC's writer directory, and ownership markers, followed by a parent/complete-tree ACL check before consent is saved; if verification fails, the empty product-owned tree may remain but no import or event history is appended. NTFS approval is accepted only after the Agent rechecks the ACL against the authenticated approving user's SID; the UI itself does not claim the pre-click scan is verified.
 - FAT/exFAT/other filesystems are explicitly not described as ACL-protected.
 - Unknown protection classification disables approval.
-- Approval is scoped to the exact request and describes existing-history import separately from future append in explicit prose, not raw booleans. When the root does not exist, the UI says no old events will be imported and explains that the new dedicated root is created only after approval rather than presenting the internal pending-root sentinel as an identity.
+- Approval is scoped to the exact request and describes existing-history import separately from future append in explicit prose, not raw booleans. When the tree does not exist, the UI says no old events will be imported and explains the exact product-owned tree created after approval rather than presenting the internal pending-root sentinel as an identity.
 - The window never authorizes or performs the underlying operation itself.
 
 ## Failure behavior

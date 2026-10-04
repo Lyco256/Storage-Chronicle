@@ -152,10 +152,11 @@ public sealed class MediaMirrorConsentService
             if (!current.RootExists)
             {
                 // A missing product tree cannot yet have a complete tree ACL inspection. The user
-                // has explicitly approved creation of this exact dedicated root; create only that
-                // new owned root, then require a complete NTFS parent/tree inspection below before
-                // persisting consent or allowing import/mirror I/O. If that inspection fails, the
-                // empty product root may remain, but no history import or append is authorized.
+                // has explicitly approved creation at this exact dedicated root. Initialize the
+                // owned tree (including the writer directory and ownership markers), then require
+                // a complete NTFS parent/tree inspection before persisting consent or allowing
+                // history import/append. If inspection fails, this empty product-owned tree may
+                // remain; no history import or event segment is authorized.
                 using (var initializedStore = new ExternalMediaStore(current.MediaRoot, pcIdentity, live.VolumeId, fileSystems.Open(live.VolumeId), createIfMissing: true))
                 {
                     // The user has explicitly approved creation and future append; bind the grant to the actual new directory identity.

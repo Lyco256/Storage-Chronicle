@@ -62,7 +62,12 @@ public sealed class ExternalMediaMirrorCoordinator : IMediaMirrorSessionCoordina
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (sessions.ContainsKey(media.VolumeId)) return;
+            if (sessions.TryGetValue(media.VolumeId, out var previousSession))
+            {
+                await FlushSessionAsync(previousSession, cancellationToken).ConfigureAwait(false);
+                sessions.Remove(media.VolumeId);
+                previousSession.Store.Dispose();
+            }
             var configured = settings.Load().Settings.MediaMirrors.TryGetValue(media.LogicalMediaId, out var root) ? root : null;
             if (string.IsNullOrWhiteSpace(configured) || media.IsReadOnly) return;
             var configuration = ExternalMediaStore.ValidateMirrorConfiguration(new MediaMirrorConfiguration(true, configured!, media.ProtectedRoles, media.IsProtectedRoleClassificationComplete));
@@ -88,6 +93,7 @@ public sealed class ExternalMediaMirrorCoordinator : IMediaMirrorSessionCoordina
             var store = new ExternalMediaStore(mediaRoot, pcId, media.VolumeId, fileSystem, createIfMissing: false);
             try
             {
+                store.SetWriteAuthorization(currentFileSystem => consent.HasGrant(media, mediaRoot, currentFileSystem));
                 store.RegisterMonitoringExclusion(exclusionRegistrar);
                 await store.RecoverInterruptedWriteAsync(cancellationToken).ConfigureAwait(false);
                 var parent = await store.ReadManifestSlotAsync(cancellationToken).ConfigureAwait(false);
@@ -111,9 +117,10 @@ public sealed class ExternalMediaMirrorCoordinator : IMediaMirrorSessionCoordina
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!sessions.Remove(volumeId, out var session)) return;
-            try { await FlushSessionAsync(session, cancellationToken).ConfigureAwait(false); }
-            finally { session.Store.Dispose(); }
+            if (!sessions.TryGetValue(volumeId, out var session)) return;
+            await FlushSessionAsync(session, cancellationToken).ConfigureAwait(false);
+            sessions.Remove(volumeId);
+            session.Store.Dispose();
         }
         finally
         {

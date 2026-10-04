@@ -248,6 +248,7 @@ public sealed class ExternalMediaStore : IDisposable
     private readonly IVolumeBoundMediaFileSystem fileSystem;
     private readonly IMediaRecoveryIntentStore recoveryIntents;
     private readonly bool ownsFileSystem;
+    private Func<IVolumeBoundMediaFileSystem, bool>? writeAuthorization;
 
     /// <summary>Initializes a store over an already opened, identity-verified media filesystem session.</summary>
     /// <param name="mediaRoot">Current mount point, used for UI and monitoring-exclusion reporting only.</param>
@@ -300,6 +301,16 @@ public sealed class ExternalMediaStore : IDisposable
     public void Dispose()
     {
         if (ownsFileSystem) fileSystem.Dispose();
+    }
+
+    /// <summary>Attaches a live consent and identity check used immediately before every media mutation.</summary>
+    /// <param name="authorization">Returns true only while this store's pinned filesystem session remains authorized.</param>
+    /// <remarks>May be set once before recovery or any append/publication operation.</remarks>
+    public void SetWriteAuthorization(Func<IVolumeBoundMediaFileSystem, bool> authorization)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+        if (writeAuthorization is not null) throw new InvalidOperationException("The media write-authorization gate is already configured.");
+        writeAuthorization = authorization;
     }
 
     /// <summary>Absolute media root supplied to the store.</summary>
@@ -368,12 +379,14 @@ public sealed class ExternalMediaStore : IDisposable
         var mediaFilter = CreateBatchMediaFilter(events[0]);
         if (events.Any(value => !MediaEventFilter.IsRelated(value, mediaFilter)))
             throw new InvalidDataException("A media segment can contain only events related to its selected media identity.");
+        EnsureWriteAuthorized();
         fileSystem.EnsureDirectory(WriterRelativeDirectory);
         var id = Guid.NewGuid().ToString("N");
         var temporary = RelativeWriterPath(id + ".tmp");
         var final = RelativeWriterPath(id + ".seg");
         using var segmentHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         long lengthOnDisk = 0;
+        EnsureWriteAuthorized();
         await using (var stream = fileSystem.CreateNew(temporary))
         {
             foreach (var value in events)
@@ -398,6 +411,7 @@ public sealed class ExternalMediaStore : IDisposable
             var proof = new MediaRecoveryIntent(fileSystem.VolumeId, writerId, id + ".tmp", lengthOnDisk, segmentSha256);
             await recoveryIntents.SaveAsync(proof, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
+            EnsureWriteAuthorized();
             fileSystem.MoveCreatedFile(stream, final);
             await RemoveFinalizedIntentAsync(id + ".tmp").ConfigureAwait(false);
             return new MediaSegment(id + ".seg", segmentSha256, events.Count, writerId, lengthOnDisk);
@@ -442,6 +456,7 @@ public sealed class ExternalMediaStore : IDisposable
     /// <summary>Publishes a self-hashed A/B manifest using an atomic temporary rename.</summary>
     public async ValueTask<MediaManifest> PublishManifestAsync(string logicalMediaId, string? parentManifestSha256, string mountSessionId, IReadOnlyList<MediaSegment> segments, CancellationToken cancellationToken = default)
     {
+        EnsureWriteAuthorized();
         ValidateLogicalIdentity(logicalMediaId, mountSessionId);
         ArgumentNullException.ThrowIfNull(segments);
         foreach (var segment in segments)
@@ -457,10 +472,12 @@ public sealed class ExternalMediaStore : IDisposable
         var temporary = RelativeWriterPath($"manifest-{slot}-{generation}.tmp");
         var final = RelativeWriterPath($"manifest-{slot}-{generation}.json");
         var bytes = JsonSerializer.SerializeToUtf8Bytes(sealedManifest, JsonOptions);
+        EnsureWriteAuthorized();
         await using (var stream = fileSystem.CreateNew(temporary))
         {
             await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
             await FlushDurablyAsync(stream, cancellationToken).ConfigureAwait(false);
+            EnsureWriteAuthorized();
             fileSystem.MoveCreatedFile(stream, final);
         }
         return sealedManifest;
@@ -581,6 +598,7 @@ public sealed class ExternalMediaStore : IDisposable
         var final = RelativeWriterPath(Path.GetFileNameWithoutExtension(fileName) + ".seg");
         if (fileSystem.FileExists(final)) throw new IOException("The finalized segment destination already exists; neither existing file was changed.");
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureWriteAuthorized();
         fileSystem.MoveCreatedFile(input, final);
         await RemoveFinalizedIntentAsync(fileName).ConfigureAwait(false);
         return new InterruptedSegmentRecovery(fileName, true, false, $"The complete temporary segment was finalized with {recordCount} records.");
@@ -597,6 +615,12 @@ public sealed class ExternalMediaStore : IDisposable
         {
             // Product-local cleanup permissions cannot undo a finalized media segment.
         }
+    }
+
+    private void EnsureWriteAuthorized()
+    {
+        if (writeAuthorization is not null && !writeAuthorization(fileSystem))
+            throw new UnauthorizedAccessException("The live media identity or its approved ACL no longer matches the persisted mirror consent; the media was not changed.");
     }
 
     private async ValueTask<string> SelectWriteSlotAsync(CancellationToken cancellationToken)

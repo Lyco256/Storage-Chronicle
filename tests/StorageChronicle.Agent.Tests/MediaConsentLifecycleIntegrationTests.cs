@@ -107,6 +107,78 @@ public sealed class MediaConsentLifecycleIntegrationTests
         finally { await coordinator.DisposeAsync(); }
     }
 
+    [Fact]
+    public async Task CoordinatorRechecksLiveAclBeforeFlushAndRetainsPendingEventsOnDenial()
+    {
+        using var fixture = new ConsentLifecycleFixture();
+        var approval = fixture.Consent.AuthorizeAsync(fixture.Media, fixture.MediaRoot).AsTask();
+        var request = await fixture.WaitForApprovalAsync();
+        Assert.True(await fixture.Consent.DecideAsync(new MediaMirrorApprovalDecision(request.RequestId, Approve: true), ApproverSid, TestContext.Current.CancellationToken));
+        Assert.True(await approval);
+
+        var coordinator = new ExternalMediaMirrorCoordinator(fixture.MachineStore, "test-pc", new TimelineExclusionRegistrar(fixture.Timeline), fixture.FileSystems, fixture.Consent);
+        try
+        {
+            await coordinator.RegisterAsync(fixture.Media, MountSessionTrackerSession(fixture.VolumeId), TestContext.Current.CancellationToken);
+            var writerDirectory = Path.Combine(fixture.MediaRoot, ".StorageChronicle", "writers", "test-pc");
+            var entriesBeforeDeniedFlush = Directory.EnumerateFileSystemEntries(writerDirectory).Select(Path.GetFileName).Order(StringComparer.Ordinal).ToArray();
+            var value = Event(fixture.Media.LogicalMediaId, fixture.VolumeId, "current-mount", 10);
+            await coordinator.OnCanonicalAsync(value, TestContext.Current.CancellationToken);
+
+            fixture.CurrentAclStatus = MediaMirrorAclInspectionStatus.Unsafe;
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await coordinator.FlushAsync(TestContext.Current.CancellationToken));
+            Assert.Equal(entriesBeforeDeniedFlush, Directory.EnumerateFileSystemEntries(writerDirectory).Select(Path.GetFileName).Order(StringComparer.Ordinal).ToArray());
+
+            fixture.CurrentAclStatus = MediaMirrorAclInspectionStatus.Verified;
+            await coordinator.FlushAsync(TestContext.Current.CancellationToken);
+
+            using var reader = new ExternalMediaStore(fixture.MediaRoot, "test-pc", fixture.VolumeId, fixture.FileSystems.Open(fixture.VolumeId), createIfMissing: false);
+            var currentWriter = Assert.Single(reader.OpenWriterStores(), store => store.WriterPcId == "test-pc");
+            var manifests = await currentWriter.ReadManifestCandidatesAsync(TestContext.Current.CancellationToken);
+            Assert.Contains(manifests.SelectMany(manifest => manifest.Segments), segment => segment.RecordCount == 1);
+        }
+        finally { await coordinator.DisposeAsync(); }
+    }
+
+    [Fact]
+    public async Task CoordinatorRetainsFinalizedSegmentUntilManifestCanBePublished()
+    {
+        using var fixture = new ConsentLifecycleFixture();
+        var approval = fixture.Consent.AuthorizeAsync(fixture.Media, fixture.MediaRoot).AsTask();
+        var request = await fixture.WaitForApprovalAsync();
+        Assert.True(await fixture.Consent.DecideAsync(new MediaMirrorApprovalDecision(request.RequestId, Approve: true), ApproverSid, TestContext.Current.CancellationToken));
+        Assert.True(await approval);
+
+        var coordinator = new ExternalMediaMirrorCoordinator(fixture.MachineStore, "test-pc", new TimelineExclusionRegistrar(fixture.Timeline), fixture.FileSystems, fixture.Consent);
+        try
+        {
+            await coordinator.RegisterAsync(fixture.Media, MountSessionTrackerSession(fixture.VolumeId), TestContext.Current.CancellationToken);
+            var value = Event(fixture.Media.LogicalMediaId, fixture.VolumeId, "current-mount", 11);
+            await coordinator.OnCanonicalAsync(value, TestContext.Current.CancellationToken);
+            fixture.UnsafeAclInspectionNumber = fixture.AclInspectionCount + 4;
+
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await coordinator.FlushAsync(TestContext.Current.CancellationToken));
+            var writerDirectory = Path.Combine(fixture.MediaRoot, ".StorageChronicle", "writers", "test-pc");
+            Assert.Single(Directory.EnumerateFiles(writerDirectory), path => path.EndsWith(".seg", StringComparison.OrdinalIgnoreCase));
+            using (var reader = new ExternalMediaStore(fixture.MediaRoot, "test-pc", fixture.VolumeId, fixture.FileSystems.Open(fixture.VolumeId), createIfMissing: false))
+            {
+                var currentWriter = Assert.Single(reader.OpenWriterStores(), store => store.WriterPcId == "test-pc");
+                Assert.Empty(await currentWriter.ReadManifestCandidatesAsync(TestContext.Current.CancellationToken));
+            }
+
+            fixture.CurrentAclStatus = MediaMirrorAclInspectionStatus.Unsafe;
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await coordinator.UnregisterAsync(fixture.VolumeId, TestContext.Current.CancellationToken));
+            fixture.CurrentAclStatus = MediaMirrorAclInspectionStatus.Verified;
+            await coordinator.UnregisterAsync(fixture.VolumeId, TestContext.Current.CancellationToken);
+
+            using var finalReader = new ExternalMediaStore(fixture.MediaRoot, "test-pc", fixture.VolumeId, fixture.FileSystems.Open(fixture.VolumeId), createIfMissing: false);
+            var finalWriter = Assert.Single(finalReader.OpenWriterStores(), store => store.WriterPcId == "test-pc");
+            var manifests = await finalWriter.ReadManifestCandidatesAsync(TestContext.Current.CancellationToken);
+            Assert.Contains(manifests.SelectMany(manifest => manifest.Segments), segment => segment.RecordCount == 1);
+        }
+        finally { await coordinator.DisposeAsync(); }
+    }
+
     private static MountSession MountSessionTrackerSession(VolumeId volumeId) =>
         new MountSessionTracker().Start(volumeId, "test-pc", MonitoringContinuity.Continuous);
 
@@ -125,6 +197,7 @@ public sealed class MediaConsentLifecycleIntegrationTests
         private readonly string root;
         private readonly string runId;
         private readonly AgentSettingsService settingsService;
+        private int aclInspectionCount;
         private readonly AgentHealthState health = new();
         private readonly FixedVolumeEnumerator volumes;
 
@@ -144,9 +217,14 @@ public sealed class MediaConsentLifecycleIntegrationTests
                 MediaMirrors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [Media.LogicalMediaId] = MediaRoot }
             }, Timeline);
             FileSystems = new FixtureVolumeFileSystemFactory(MediaRoot, () => "fixture-owned-root-identity", sid =>
-                sid == ApproverSid
-                    ? new(MediaMirrorAclInspectionStatus.Verified, AclFingerprint, 1, 0, [])
-                    : new(MediaMirrorAclInspectionStatus.Unknown, null, 0, 0, ["WrongApproverSid"]));
+            {
+                if (sid != ApproverSid) return new(MediaMirrorAclInspectionStatus.Unknown, null, 0, 0, ["WrongApproverSid"]);
+                var status = Interlocked.Increment(ref aclInspectionCount) == UnsafeAclInspectionNumber
+                    ? MediaMirrorAclInspectionStatus.Unsafe
+                    : CurrentAclStatus;
+                return new(status, status == MediaMirrorAclInspectionStatus.Verified ? AclFingerprint : null, 1, 0,
+                    status == MediaMirrorAclInspectionStatus.Verified ? [] : ["FixtureAclUnsafe"]);
+            });
             using (var initialized = new ExternalMediaStore(MediaRoot, "test-pc", VolumeId, FileSystems.Open(VolumeId))) { }
             volumes = new FixedVolumeEnumerator(Descriptor);
             settingsService = new AgentSettingsService(MachineStore, new FixedSettingsStore<UserSettings>(new UserSettings()), new TimelineHistory(Timeline), new AllowAllAgentSettingsAuthorizer(), new NoOpLifecycle());
@@ -162,6 +240,9 @@ public sealed class MediaConsentLifecycleIntegrationTests
         public TimelineSettingsStore<MachineSettings> MachineStore { get; }
         public MediaMirrorConsentService Consent { get; }
         public List<string> Timeline { get; } = [];
+        public MediaMirrorAclInspectionStatus CurrentAclStatus { get; set; } = MediaMirrorAclInspectionStatus.Verified;
+        public int UnsafeAclInspectionNumber { get; set; } = -1;
+        public int AclInspectionCount => Volatile.Read(ref aclInspectionCount);
 
         public async Task<PendingMediaMirrorApproval> WaitForApprovalAsync()
         {
