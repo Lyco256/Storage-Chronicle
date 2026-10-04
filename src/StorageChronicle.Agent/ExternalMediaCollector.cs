@@ -95,11 +95,28 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
             yield return CreateGap(DateTimeOffset.UtcNow, "External media notification registration failed: " + registrationError);
         }
 
+        var notificationContinuityLost = false;
         await foreach (var change in changes.ReadChangesAsync(cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (change.Kind == ExternalMediaChangeKind.ContinuityGap)
             {
+                notificationContinuityLost = true;
+                foreach (var pair in active.ToArray())
+                {
+                    if (mirrorCoordinator is not null)
+                    {
+                        Exception? invalidationFailure = null;
+                        try { await mirrorCoordinator.InvalidateAsync(pair.Key).ConfigureAwait(false); }
+                        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
+                        {
+                            invalidationFailure = exception;
+                        }
+                        if (invalidationFailure is not null)
+                            yield return CreateMediaGap(pair.Value.Volume, change.OccurredUtc, "Uncertain external-media mirror session could not be safely invalidated: " + invalidationFailure.Message);
+                    }
+                    active.Remove(pair.Key);
+                }
                 yield return CreateGap(change.OccurredUtc, change.GapReason ?? "External media notification continuity was lost.");
                 continue;
             }
@@ -113,7 +130,9 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
                     continue;
                 }
 
-                foreach (var descriptor in enumeration.Descriptors!.Where(value => value.IsExternal && value.IsDirectoryReadable))
+                var connectedDescriptors = enumeration.Descriptors!.Where(value => value.IsExternal && value.IsDirectoryReadable).ToArray();
+                var resumeAfterContinuityGap = notificationContinuityLost;
+                foreach (var descriptor in connectedDescriptors)
                 {
                     if (active.ContainsKey(descriptor.Id)) continue;
                     var media = new MediaVolumeDescriptor(descriptor.Id.Value, descriptor.Id, descriptor.FileSystem, descriptor.IsReadOnly, descriptor.SupportsUsn, descriptor.ProtectedRoles, descriptor.IsProtectedRoleClassificationComplete)
@@ -121,7 +140,10 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
                         MountPoints = descriptor.MountPoints
                     };
                     var assessment = MediaQuality.Assess(media);
-                    var session = sessions.Start(descriptor.Id, pcId, ToContinuity(assessment.Quality));
+                    if (resumeAfterContinuityGap)
+                        assessment = assessment with { Quality = MediaHistoryQuality.UnverifiedGap, Recovery = MediaRecoveryKind.FullReconciliation, Explanation = "External media notification continuity was lost; this mount was re-enumerated and requires reconciliation." };
+                    var continuity = resumeAfterContinuityGap ? MonitoringContinuity.UnverifiedGap : ToContinuity(assessment.Quality);
+                    var session = sessions.Start(descriptor.Id, pcId, continuity);
                     active[descriptor.Id] = (session, media);
                     yield return CreateMountEvent(media, session, assessment, change.OccurredUtc, removed: false);
 
@@ -195,6 +217,7 @@ public sealed class WindowsExternalMediaCollector : ISourceEventCollector, IAsyn
                     foreach (var imported in importedEvents) yield return imported;
                     if (importFailure is not null) yield return CreateMediaGap(media, change.OccurredUtc, "External media mirror import failed: " + importFailure.Message);
                 }
+                if (connectedDescriptors.Length > 0) notificationContinuityLost = false;
             }
             else
             {

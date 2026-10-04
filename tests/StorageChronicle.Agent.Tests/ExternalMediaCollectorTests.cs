@@ -42,6 +42,39 @@ public sealed class ExternalMediaCollectorTests
     }
 
     [Fact]
+    public async Task NotificationContinuityGapInvalidatesOldMirrorSessionAndReenumeratesReconnectedVolume()
+    {
+        var fixtureRoot = CreateFixtureRoot(out var runId);
+        var mediaRoot = Path.Combine(fixtureRoot, "media");
+        Directory.CreateDirectory(mediaRoot);
+        var settings = new FixedMachineSettingsStore(new MachineSettings());
+        var descriptor = new VolumeDescriptor(VolumeId.Create("media-volume"), "NTFS", [mediaRoot], false, true, ProtectedVolumeRoles.None, true, true, IsProtectedRoleClassificationComplete: true);
+        var source = new OneMediaChangeSource(
+            new ExternalMediaChange(ExternalMediaChangeKind.Connected, DateTimeOffset.UtcNow, "device-before-gap"),
+            new ExternalMediaChange(ExternalMediaChangeKind.ContinuityGap, DateTimeOffset.UtcNow, "notification queue overflow"),
+            new ExternalMediaChange(ExternalMediaChangeKind.Connected, DateTimeOffset.UtcNow, "enumeration-empty"),
+            new ExternalMediaChange(ExternalMediaChangeKind.Connected, DateTimeOffset.UtcNow, "device-after-gap"));
+        var coordinator = new TrackingMirrorCoordinator();
+        var volumes = new SequenceVolumeEnumerator([descriptor], [], [descriptor]);
+        try
+        {
+            await using var collector = new WindowsExternalMediaCollector(source, volumes, settings, "pc-test", mirrorCoordinator: coordinator);
+            var events = new List<SourceEvent>();
+            await foreach (var value in collector.CollectAsync(TestContext.Current.CancellationToken)) events.Add(value);
+
+            Assert.Equal(2, coordinator.RegisterCount);
+            Assert.Equal(1, coordinator.InvalidateCount);
+            var mounts = events.Where(value => value.Hint == CanonicalOperation.MountSession).ToArray();
+            Assert.Equal(2, mounts.Length);
+            Assert.Equal(EventQuality.UnverifiedGap, mounts[1].Quality);
+        }
+        finally
+        {
+            DeleteFixtureRoot(fixtureRoot, runId);
+        }
+    }
+
+    [Fact]
     public async Task UnknownProtectedRoleClassificationPreventsRecoveryWrites()
     {
         var fixtureRoot = CreateFixtureRoot(out var runId);
@@ -101,13 +134,31 @@ public sealed class ExternalMediaCollectorTests
         public ValueTask<IReadOnlyList<VolumeDescriptor>> EnumerateAsync(CancellationToken cancellationToken = default) => ValueTask.FromResult<IReadOnlyList<VolumeDescriptor>>([descriptor]);
     }
 
-    private sealed class OneMediaChangeSource(ExternalMediaChange change) : IExternalMediaChangeSource
+    private sealed class SequenceVolumeEnumerator(params VolumeDescriptor[][] results) : IVolumeEnumerator
+    {
+        private int index;
+
+        public ValueTask<IReadOnlyList<VolumeDescriptor>> EnumerateAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (results.Length == 0) return ValueTask.FromResult<IReadOnlyList<VolumeDescriptor>>([]);
+            var current = results[Math.Min(index, results.Length - 1)];
+            index++;
+            return ValueTask.FromResult<IReadOnlyList<VolumeDescriptor>>(current);
+        }
+    }
+
+    private sealed class OneMediaChangeSource(params ExternalMediaChange[] changes) : IExternalMediaChangeSource
     {
         public async IAsyncEnumerable<ExternalMediaChange> ReadChangesAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             await Task.Yield();
-            yield return change;
+            foreach (var change in changes)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return change;
+            }
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
@@ -117,5 +168,26 @@ public sealed class ExternalMediaCollectorTests
     {
         public ValueTask RegisterAsync(MediaVolumeDescriptor media, MountSession session, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
         public ValueTask UnregisterAsync(VolumeId volumeId, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+        public ValueTask InvalidateAsync(VolumeId volumeId) => ValueTask.CompletedTask;
+    }
+
+    private sealed class TrackingMirrorCoordinator : IMediaMirrorSessionCoordinator
+    {
+        public int RegisterCount { get; private set; }
+        public int InvalidateCount { get; private set; }
+
+        public ValueTask RegisterAsync(MediaVolumeDescriptor media, MountSession session, CancellationToken cancellationToken = default)
+        {
+            RegisterCount++;
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask UnregisterAsync(VolumeId volumeId, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+
+        public ValueTask InvalidateAsync(VolumeId volumeId)
+        {
+            InvalidateCount++;
+            return ValueTask.CompletedTask;
+        }
     }
 }

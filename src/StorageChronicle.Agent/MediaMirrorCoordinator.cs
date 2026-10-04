@@ -15,6 +15,9 @@ public interface IMediaMirrorSessionCoordinator
 
     /// <summary>Flushes and seals a mirror session before media removal.</summary>
     ValueTask UnregisterAsync(VolumeId volumeId, CancellationToken cancellationToken = default);
+
+    /// <summary>Discards an uncertain mirror session without writing to a volume after notification continuity is lost.</summary>
+    ValueTask InvalidateAsync(VolumeId volumeId);
 }
 
 /// <summary>Bridges the media exclusion contract to the shared Windows filesystem policy.</summary>
@@ -112,6 +115,21 @@ public sealed class ExternalMediaMirrorCoordinator : IMediaMirrorSessionCoordina
             if (!sessions.Remove(volumeId, out var session)) return;
             try { await FlushSessionAsync(session, cancellationToken).ConfigureAwait(false); }
             finally { session.Store.Dispose(); }
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async ValueTask InvalidateAsync(VolumeId volumeId)
+    {
+        await gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (!sessions.Remove(volumeId, out var session)) return;
+            session.Store.Dispose();
         }
         finally
         {
