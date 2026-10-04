@@ -310,10 +310,10 @@
       },
       {
         "id": "mft-million-entry-free-space-gate",
-        "status": "FAIL",
+        "status": "PASS",
         "path": "build/Test-Privileged.ps1",
         "lines": [519, 524],
-        "summary": "This older generic Test-Privileged path still has only its 40 GiB VHDX gate and is not an approved 1M MFT seed path. The separate build/quality/New-MftPhysicalSeed.ps1 workflow now checks at least 60 GiB before seed creation and immediately before the 1M workload; see mft-seed-60gib-gates. No VHDX or MFT run was performed."
+        "summary": "Scoped review confirmed the generic runner's 40 GiB threshold is the distinct new-file-backed-VHDX minimum in Requirement 37 §3. Its Mft capability only enumerates a single temporary marker file in an already isolated test volume; it does not create a million-entry seed or run the MFT performance matrix. Requirement 28's one-million-entry seed is exclusively created by build/quality/New-MftPhysicalSeed.ps1, which checks at least 60 GiB before seed creation and immediately before the million-file workload; the full matrix independently requires that seed's v2 provenance. Offline MFT seed contracts passed 31/31. No VHDX or MFT run was performed; this PASS is limited to the distinct static gates, not physical acceptance."
       },
       {
         "id": "mft-seed-60gib-gates",
@@ -549,10 +549,10 @@
     },
     {
       "id": "mft-million-entry-free-space-gate",
-      "status": "FAIL",
+      "status": "PASS",
       "path": "build/Test-Privileged.ps1",
       "lines": [519, 524],
-      "summary": "This legacy generic runner still has only a 40 GiB gate and is not an approved MFT seed path. The dedicated MFT workflow's 60 GiB gates are separately verified by mft-seed-60gib-gates; no physical run was performed."
+      "summary": "The generic runner's 40 GiB gate applies only to a newly created disposable VHDX under Requirement 37 §3. Its Mft smoke capability enumerates one temporary marker and does not create the million-entry seed. Requirement 28's million-entry MFT seed is created only by New-MftPhysicalSeed.ps1, with separate 60 GiB checks before seed creation and before the workload, and the full matrix requires its v2 provenance. Offline seed contracts passed 31/31. This is a static-gate classification only; no physical run was performed."
       },
       {
         "id": "mft-seed-60gib-gates",
