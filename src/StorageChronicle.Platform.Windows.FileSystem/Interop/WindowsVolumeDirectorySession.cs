@@ -673,7 +673,9 @@ public sealed class WindowsVolumeDirectorySession : IVolumeBoundMediaFileSystem
         lock (sync)
         {
             ThrowIfDisposed();
-            productRootHandle ??= OpenDirectoryCore(volumeRoot, ProductDirectoryName, FileOpen, expectedVolumeGuidPath, FileAddFile | FileAddSubdirectory);
+            // Pin the exact handle whose marker and volume identity were just validated.
+            // Reopening the name here would allow a rename/swap between validation and pinning.
+            productRootHandle ??= DuplicateHandleCore(productRoot, "The validated product directory handle could not be pinned.");
         }
     }
 

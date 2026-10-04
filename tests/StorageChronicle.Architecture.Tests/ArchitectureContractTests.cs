@@ -100,6 +100,21 @@ public sealed class ArchitectureContractTests
         Assert.DoesNotContain("New-Item -ItemType Directory -Force", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void MediaRootValidationPinsTheExactValidatedDirectoryHandle()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRoot(), "src", "StorageChronicle.Platform.Windows.FileSystem", "Interop", "WindowsVolumeDirectorySession.cs"));
+        var methodStart = source.IndexOf("private void EnsureOwnedMediaRoot()", StringComparison.Ordinal);
+        Assert.True(methodStart >= 0);
+        var methodEnd = source.IndexOf("private SafeFileHandle OpenDirectoryPath(", methodStart, StringComparison.Ordinal);
+        Assert.True(methodEnd > methodStart);
+        var method = source[methodStart..methodEnd];
+        var validation = method.IndexOf("EnsureOwnedProductRoot(productRoot, expectedVolumeGuidPath)", StringComparison.Ordinal);
+        var pin = method.IndexOf("DuplicateHandleCore(productRoot", StringComparison.Ordinal);
+        Assert.True(validation >= 0 && pin > validation, "The exact validated handle must be duplicated for the session pin.");
+        Assert.DoesNotContain("OpenDirectoryCore(volumeRoot, ProductDirectoryName", method, StringComparison.Ordinal);
+    }
+
     private static DotNetAssembly[] LoadRequiredAssemblies()
     {
         var root = FindRoot();

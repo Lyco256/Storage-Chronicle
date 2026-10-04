@@ -4,7 +4,7 @@
 
 ## Role
 
-Implements the Windows volume-bound media filesystem contract. It pins and validates a volume identity and confines production operations to the product-owned `.StorageChronicle` subtree.
+Implements the Windows volume-bound media filesystem contract. It pins and validates a volume identity and confines production operations to the product-owned `.StorageChronicle` subtree. When a root is first discovered through a handle-relative path, the session duplicates that exact handle after marker/volume validation instead of reopening the name, closing a validation-to-pin rename/swap window.
 
 ## Public types and responsibilities
 
