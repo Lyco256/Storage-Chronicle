@@ -110,12 +110,14 @@ internal sealed class SegmentLog : IAsyncDisposable
 
         var candidates = ReadHealthySegments()
             .Where(static segment => !segment.Info.IsCompressed && segment.Info.Path.EndsWith(".open", StringComparison.OrdinalIgnoreCase))
-            .Where(static segment => segment.IsAppendable)
+            .Where(segment => !File.Exists(ManifestPath(segment.Info.SegmentId)))
             .OrderByDescending(static segment => segment.Info.LastSequence)
             .ToArray();
         if (candidates.Length > 0)
         {
             var selected = candidates[0];
+            cancellationToken.ThrowIfCancellationRequested();
+            RepairIncompleteTail(selected.Info.Path, selected.Info.SegmentId);
             _currentId = selected.Info.SegmentId;
             _currentFirstSequence = selected.Info.FirstSequence;
             _currentLastSequence = selected.Info.LastSequence;
@@ -199,9 +201,10 @@ internal sealed class SegmentLog : IAsyncDisposable
                 var parsed = ParseRaw(raw);
                 if (compressed && parsed.HasIncompleteTail) throw new InvalidDataException("A compressed segment has an incomplete tail.");
                 var id = parsed.SegmentId;
+                if (!Path.GetFileName(path).Equals(SegmentFileName(id, compressed), StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("Segment filename does not match its header identity.");
                 var info = CreateInfo(id, path, compressed, parsed.Records);
-                if (parsed.HasIncompleteTail) SegmentSkipped?.Invoke(new SegmentIssue(path, "Incomplete tail retained unchanged; complete records before it remain readable, and this segment is not appendable."));
-                result.Add(new ParsedSegment(info, parsed.Records, !parsed.HasIncompleteTail));
+                result.Add(new ParsedSegment(info, parsed.Records));
             }
             catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or FormatException or ZstdException)
             {
@@ -211,6 +214,36 @@ internal sealed class SegmentLog : IAsyncDisposable
 
         return result;
     }
+
+    private void RepairIncompleteTail(string path, Guid expectedId)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var storageRoot = Path.GetFullPath(_options.StorageDirectory);
+        if (!string.Equals(Path.GetDirectoryName(fullPath), storageRoot, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Refusing to repair a segment outside the storage root.");
+        if (!Path.GetFileName(fullPath).Equals(SegmentFileName(expectedId, compressed: false), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Refusing to repair a segment outside its owned open-segment boundary.");
+        if (File.Exists(ManifestPath(expectedId)))
+            throw new InvalidDataException("A manifest-backed segment is not eligible for incomplete-tail repair.");
+        if ((File.GetAttributes(fullPath) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("Refusing to repair a reparse-point segment.");
+
+        using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None, 64 * 1024, FileOptions.SequentialScan);
+        if (stream.Length > int.MaxValue) throw new InvalidDataException("Segment exceeds the supported recovery size.");
+        var bytes = new byte[checked((int)stream.Length)];
+        stream.ReadExactly(bytes);
+        var parsed = ParseRaw(bytes);
+        if (parsed.SegmentId != expectedId)
+            throw new InvalidDataException("Segment identity changed during incomplete-tail recovery.");
+        if (!parsed.HasIncompleteTail) return;
+
+        // ParseRaw validates the header and every complete frame/CRC before identifying the tail.
+        // Only the unconfirmed final bytes are removed; verified records are left byte-for-byte intact.
+        stream.SetLength(parsed.ValidLength);
+        stream.Flush(flushToDisk: true);
+    }
+
+    private static string SegmentFileName(Guid id, bool compressed) => $"segment-{id:N}.{(compressed ? "zst" : "open")}";
 
     private async ValueTask WriteManifestAsync(SegmentInfo info, CancellationToken cancellationToken)
     {
@@ -311,7 +344,7 @@ internal sealed class SegmentLog : IAsyncDisposable
             offset += sizeof(int) + frameLength;
         }
 
-        return new ParsedRawSegment(id, records, hasIncompleteTail);
+        return new ParsedRawSegment(id, records, offset, hasIncompleteTail);
     }
 
     private static byte[] Compress(byte[] bytes)
@@ -336,6 +369,6 @@ internal sealed class SegmentLog : IAsyncDisposable
         _gate.Dispose();
     }
 
-    private sealed record ParsedRawSegment(Guid SegmentId, IReadOnlyList<SegmentRecord> Records, bool HasIncompleteTail);
-    private sealed record ParsedSegment(SegmentInfo Info, IReadOnlyList<SegmentRecord> Records, bool IsAppendable);
+    private sealed record ParsedRawSegment(Guid SegmentId, IReadOnlyList<SegmentRecord> Records, int ValidLength, bool HasIncompleteTail);
+    private sealed record ParsedSegment(SegmentInfo Info, IReadOnlyList<SegmentRecord> Records);
 }

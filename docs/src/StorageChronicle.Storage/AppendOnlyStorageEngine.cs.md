@@ -18,7 +18,7 @@ Process exit observations are stored as a separate `ProcessLifecycleEvent` segme
 
 ## 停止・キャンセル・容量
 
-容量不足や実書込み失敗は記録を停止し、最終内部Sequence/Source SequenceをSQLiteへ可能な範囲で保存する。無制限メモリ保持や自動ログ削除は行わない。キャンセルは追記前に尊重し、途中で切断された末尾は次回起動時にSegmentLogが切り捨てる。
+容量不足や実書込み失敗は記録を停止し、最終内部Sequence/Source SequenceをSQLiteへ可能な範囲で保存する。無制限メモリ保持や自動ログ削除は行わない。キャンセルは追記前に尊重し、次回起動時にはmanifestのない`.open`セグメントを再検査する。完全なCRC検証済みprefixを保持した上で、未完成レコードの末尾バイトだけを切り詰めて追記を再開する。CRC破損・途中破損・確定済みセグメントは変更せず追記から除外する。
 
 ## 依存関係・テスト
 
