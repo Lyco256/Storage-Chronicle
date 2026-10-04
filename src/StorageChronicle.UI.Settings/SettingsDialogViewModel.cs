@@ -404,7 +404,11 @@ public sealed class SettingsDialogViewModel : ObservableObject
         ErrorMessage = null;
     }
 
-    private bool CanApply() => !IsBusy;
+    private bool CanApply() => !IsBusy && !HasImpactPreview;
+
+    private bool CanConfirmImpactAndApply() => !IsBusy && HasImpactPreview;
+
+    private bool CanCancelImpactPreview() => !IsBusy && HasImpactPreview;
 
     private bool CanCancelApply() => IsBusy;
 
@@ -429,6 +433,48 @@ public sealed class SettingsDialogViewModel : ObservableObject
             return;
         }
 
+        if (loadedMachineSettings is null)
+        {
+            ErrorMessage = "Load settings before applying changes so the impact can be reviewed.";
+            StatusMessage = null;
+            return;
+        }
+
+        var machine = Snapshot(MachineDraft);
+        var changes = BuildImpactChanges(loadedMachineSettings, machine);
+        if (changes.Count > 0)
+        {
+            pendingMachineSettings = machine;
+            pendingUserSettings = Snapshot(UserDraft);
+            ImpactPreview = new SettingsImpactPreview(
+                Array.AsReadOnly(changes.ToArray()),
+                "The Agent may read metadata under the listed monitoring paths and will apply the listed exclusions and collection behavior. " +
+                "History/configuration writes are limited to Agent-authorized product-owned settings and durable-history locations. " +
+                "For each listed media identifier, mirror append is permitted only after the Agent verifies the actual volume identity, allowed role, and product-owned mirror directory; otherwise it must reject the write. " +
+                "Existing source data and unknown/pre-existing same-name media files are not overwritten. Source file contents are not read or stored.");
+            ErrorMessage = null;
+            StatusMessage = "Review the impact details, then explicitly confirm or cancel. No settings have been applied.";
+            return;
+        }
+
+        await ApplySettingsAsync(machine, Snapshot(UserDraft)).ConfigureAwait(false);
+    }
+
+    private async Task ConfirmImpactAndApplyAsync()
+    {
+        if (pendingMachineSettings is null || pendingUserSettings is null || ImpactPreview is null)
+        {
+            return;
+        }
+
+        var machine = pendingMachineSettings;
+        var user = pendingUserSettings;
+        ClearImpactPreview();
+        await ApplySettingsAsync(machine, user).ConfigureAwait(false);
+    }
+
+    private async Task ApplySettingsAsync(MachineSettings machine, UserSettings user)
+    {
         IsBusy = true;
         ErrorMessage = null;
         StatusMessage = null;
@@ -461,6 +507,10 @@ public sealed class SettingsDialogViewModel : ObservableObject
         {
             ErrorMessage = null;
             StatusMessage = "Settings apply canceled.";
+        }
+        catch (Exception exception)
+        {
+            ErrorMessage = $"Settings could not be applied: {exception.Message}";
         }
         catch (Exception exception)
         {
@@ -564,3 +614,15 @@ public sealed class SettingsDialogViewModel : ObservableObject
         return true;
     }
 }
+
+/// <summary>Describes one old-to-new machine-setting change and its operational impact.</summary>
+/// <param name="Setting">The setting or media scope being changed.</param>
+/// <param name="OldValue">The current value shown to the user.</param>
+/// <param name="NewValue">The proposed value shown to the user.</param>
+/// <param name="Impact">The monitoring, Agent, or product-write behavior affected.</param>
+public sealed record SettingsImpactChange(string Setting, string OldValue, string NewValue, string Impact);
+
+/// <summary>Contains the complete review text required before applying machine-setting changes.</summary>
+/// <param name="Changes">The exact old and proposed values for every changed machine setting.</param>
+/// <param name="WriteBoundary">The product-owned write boundary and monitored-source read-only statement.</param>
+public sealed record SettingsImpactPreview(IReadOnlyList<SettingsImpactChange> Changes, string WriteBoundary);

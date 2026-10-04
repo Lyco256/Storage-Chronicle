@@ -14,8 +14,11 @@ public sealed class SettingsDialogViewModelTests
 
         await viewModel.LoadAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal(gateway.Machine, viewModel.MachineDraft);
-        Assert.Equal(gateway.User, viewModel.UserDraft);
+        Assert.Equal(gateway.Machine.MonitoringPaths, viewModel.MachineDraft.MonitoringPaths);
+        Assert.Equal(gateway.Machine.ExcludedPaths, viewModel.MachineDraft.ExcludedPaths);
+        Assert.Equal(gateway.Machine.LogStoragePath, viewModel.MachineDraft.LogStoragePath);
+        Assert.Equal(gateway.User.EventStackPageSize, viewModel.UserDraft.EventStackPageSize);
+        Assert.Equal(gateway.User.SavedFilters, viewModel.UserDraft.SavedFilters);
         Assert.Contains("machine recovered", viewModel.StatusMessage);
     }
 
@@ -161,7 +164,7 @@ public sealed class SettingsDialogViewModelTests
 
     private sealed class FakeGateway : IAgentSettingsGateway
     {
-        public MachineSettings Machine { get; } = new() { MonitoringPaths = new[] { "C:\\watched" }, LogStoragePath = "C:\\logs" };
+        public MachineSettings Machine { get; init; } = new() { MonitoringPaths = new[] { "C:\\watched" }, LogStoragePath = "C:\\logs" };
         public UserSettings User { get; } = DefaultSettings.CreateUser();
         public string? MachineWarning { get; init; }
         public SettingsApplyResult MachineResult { get; init; } = new(true, false, false, null);

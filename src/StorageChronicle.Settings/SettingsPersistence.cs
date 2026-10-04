@@ -116,6 +116,19 @@ public sealed class UserSettingsStore : ISettingsStore<UserSettings>
         inner = new(paths.UserSettingsPath, DefaultSettings.CreateUser(), SettingsValidator.EnsureValid, fileSystem ?? new PhysicalSettingsFileSystem());
     }
 
+    /// <summary>Creates a user settings store for an authenticated Windows user and that user's OS-resolved LocalAppData root.</summary>
+    /// <param name="authenticatedUserSid">The SID obtained from the authenticated Windows client token, never from an IPC payload.</param>
+    /// <param name="trustedLocalApplicationDataRoot">The matching profile's LocalAppData path resolved by the privileged host.</param>
+    /// <param name="fileSystem">An optional filesystem implementation, primarily for isolated tests.</param>
+    /// <returns>A store whose primary and recovery files are confined to the selected user's product settings directory.</returns>
+    /// <exception cref="ArgumentException">The SID is malformed or the profile path is not a fully-qualified local path.</exception>
+    /// <remarks>The caller must authenticate the SID and resolve its profile root from the operating system. Do not pass a SID or path supplied by an IPC client.</remarks>
+    public static UserSettingsStore ForAuthenticatedUser(string authenticatedUserSid, string trustedLocalApplicationDataRoot, ISettingsFileSystem? fileSystem = null)
+    {
+        var paths = WindowsSettingsPathProvider.ForAuthenticatedUser(authenticatedUserSid, trustedLocalApplicationDataRoot);
+        return new UserSettingsStore(paths, fileSystem);
+    }
+
     /// <inheritdoc />
     public SettingsLoadResult<UserSettings> Load() => inner.Load();
     /// <inheritdoc />
