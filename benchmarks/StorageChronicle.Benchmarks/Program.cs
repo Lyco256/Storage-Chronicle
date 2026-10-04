@@ -169,7 +169,32 @@ public class StorageAppendBenchmarks : IAsyncDisposable
     {
         var current = store ?? throw new InvalidOperationException("The storage engine was not initialized.");
         await BenchmarkBatchHelpers.AppendInBoundedBatchesAsync(current, events).ConfigureAwait(false);
-        return await current.CountEventsAsync(canonical: true).ConfigureAwait(false);
+        var canonicalCount = await current.CountEventsAsync(canonical: true).ConfigureAwait(false);
+        if (canonicalCount != BenchmarkFixtures.EventCount100K)
+            throw new InvalidDataException($"The 100K storage fixture expected {BenchmarkFixtures.EventCount100K} canonical records but indexed {canonicalCount}.");
+
+        return canonicalCount;
+    }
+
+    /// <summary>Streams one million deterministic small metadata-only records through real bounded segment and SQLite batches.</summary>
+    [Benchmark]
+    [BenchmarkCategory("1M", "Storage", "SQLite", "Segment")]
+    public async Task<int> SegmentAppendAndSqliteIndex1M()
+    {
+        var current = store ?? throw new InvalidOperationException("The storage engine was not initialized.");
+        const int batchSize = 512;
+        for (var firstSequence = 1; firstSequence <= BenchmarkFixtures.EventCount1M; firstSequence += batchSize)
+        {
+            var count = Math.Min(batchSize, BenchmarkFixtures.EventCount1M - firstSequence + 1);
+            var batch = BenchmarkFixtures.CreateCanonicalEventBatch(firstSequence, count, mediaTagged: false);
+            await current.AppendCanonicalBatchAsync(batch).ConfigureAwait(false);
+        }
+
+        var canonicalCount = await current.CountEventsAsync(canonical: true).ConfigureAwait(false);
+        if (canonicalCount != BenchmarkFixtures.EventCount1M)
+            throw new InvalidDataException($"The 1M storage fixture expected {BenchmarkFixtures.EventCount1M} canonical records but indexed {canonicalCount}.");
+
+        return canonicalCount;
     }
 
     /// <summary>Closes a real populated store so final segment flush and Zstandard close work are measured.</summary>
@@ -394,19 +419,23 @@ public class MediaSegmentAppendBenchmarks : IDisposable
 internal static class BenchmarkFixtures
 {
     public const int EventCount100K = 100_000;
-    public const int FileCount1M = 1_000_000;
+    public const int EventCount1M = 1_000_000;
+    public const int FileCount1M = EventCount1M;
 
-    public static CanonicalEvent[] CreateCanonicalEvents(int count, bool mediaTagged, EventOrigin origin = EventOrigin.LiveUsn, EventQuality quality = EventQuality.Exact)
+    public static CanonicalEvent[] CreateCanonicalEvents(int count, bool mediaTagged, EventOrigin origin = EventOrigin.LiveUsn, EventQuality quality = EventQuality.Exact) =>
+        CreateCanonicalEventBatch(1, count, mediaTagged, origin, quality);
+
+    public static CanonicalEvent[] CreateCanonicalEventBatch(int firstSequence, int count, bool mediaTagged, EventOrigin origin = EventOrigin.LiveUsn, EventQuality quality = EventQuality.Exact)
     {
         var volume = VolumeId.Create(mediaTagged ? "volume-media-benchmark" : "volume-benchmark");
         var values = new CanonicalEvent[count];
         for (var index = 0; index < values.Length; index++)
         {
-            var number = index + 1;
+            var number = firstSequence + index;
             var fileId = FileId.Create($"file-{number:D8}");
             var properties = ImmutableDictionary<string, string>.Empty.Add("path", $"benchmark\\file-{number:D8}.dat");
             if (mediaTagged) properties = properties.Add("media.logicalMediaId", "media-benchmark");
-            var timestamp = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddSeconds(index);
+            var timestamp = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddSeconds(number - 1);
             values[index] = new CanonicalEvent(
                 new EventId(new Guid($"00000000-0000-0000-0000-{number:D12}")),
                 EventSchemaVersion.Current,
