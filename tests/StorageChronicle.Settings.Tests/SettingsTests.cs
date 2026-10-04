@@ -28,6 +28,45 @@ public sealed class SettingsTests
     }
 
     [Fact]
+    public void AuthenticatedUserStoreDerivesDistinctPathsAndKeepsSettingsIsolated()
+    {
+        using var fixture = new SettingsFixture();
+        var firstRoot = Path.Combine(fixture.Root, "profile-one", "AppData", "Local");
+        var secondRoot = Path.Combine(fixture.Root, "profile-two", "AppData", "Local");
+        var first = UserSettingsStore.ForAuthenticatedUser("S-1-5-21-100-200-300-1001", firstRoot);
+        var second = UserSettingsStore.ForAuthenticatedUser("S-1-5-21-100-200-300-1002", secondRoot);
+
+        first.Save(new UserSettings { EventStackPageSize = 100 });
+        second.Save(new UserSettings { EventStackPageSize = 200 });
+
+        Assert.NotEqual(Path.Combine(firstRoot, "Storage Chronicle", "user-settings.json"), Path.Combine(secondRoot, "Storage Chronicle", "user-settings.json"));
+        Assert.Equal(100, first.Load().Settings.EventStackPageSize);
+        Assert.Equal(200, second.Load().Settings.EventStackPageSize);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("client-supplied")]
+    [InlineData("S-1-five-21-100")]
+    [InlineData("S-2-5-21-100")]
+    [InlineData("S-1-5-4294967296")]
+    public void AuthenticatedUserStoreRejectsInvalidSid(string sid)
+    {
+        using var fixture = new SettingsFixture();
+
+        Assert.Throws<ArgumentException>(() => UserSettingsStore.ForAuthenticatedUser(sid, fixture.Root));
+    }
+
+    [Theory]
+    [InlineData("relative\\profile\\AppData\\Local")]
+    [InlineData("\\\\server\\share\\profile\\AppData\\Local")]
+    [InlineData("C:\\profile\\..\\outside")]
+    public void AuthenticatedUserStoreRejectsUntrustedOrNonLocalRoots(string profileRoot)
+    {
+        Assert.Throws<ArgumentException>(() => UserSettingsStore.ForAuthenticatedUser("S-1-5-21-100-200-300-1001", profileRoot));
+    }
+
+    [Fact]
     public void MachineSettingsRoundTripIncludesEveryField()
     {
         using var fixture = new SettingsFixture();
@@ -129,6 +168,27 @@ public sealed class SettingsTests
         Assert.True(result.Recovered);
         Assert.False(result.UsedPreviousVersion);
         Assert.Contains("defaults", result.Warning, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void CorruptionRecoveryIsConfinedToTheAuthenticatedUsersProfile()
+    {
+        using var fixture = new SettingsFixture();
+        var firstRoot = Path.Combine(fixture.Root, "profile-one", "AppData", "Local");
+        var secondRoot = Path.Combine(fixture.Root, "profile-two", "AppData", "Local");
+        var first = UserSettingsStore.ForAuthenticatedUser("S-1-5-21-100-200-300-1001", firstRoot);
+        var second = UserSettingsStore.ForAuthenticatedUser("S-1-5-21-100-200-300-1002", secondRoot);
+        first.Save(new UserSettings { EventStackPageSize = 100 });
+        first.Save(new UserSettings { EventStackPageSize = 200 });
+        second.Save(new UserSettings { EventStackPageSize = 300 });
+        File.WriteAllText(Path.Combine(firstRoot, "Storage Chronicle", "user-settings.json"), "{corrupt", new UTF8Encoding(false));
+
+        var recovered = first.Load();
+
+        Assert.Equal(100, recovered.Settings.EventStackPageSize);
+        Assert.True(recovered.Recovered);
+        Assert.True(recovered.UsedPreviousVersion);
+        Assert.Equal(300, second.Load().Settings.EventStackPageSize);
     }
 
     [Fact]
