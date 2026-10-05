@@ -9,6 +9,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+. (Join-Path $repositoryRoot 'build/quality/AcceptanceContracts.ps1')
 
 function Fail([string]$Message) { throw $Message }
 
@@ -40,9 +42,20 @@ try {
     $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd('\')
     $volumeRoot = [IO.Path]::GetPathRoot($rootFull).TrimEnd('\')
     if ($rootFull.Equals($volumeRoot, [StringComparison]::OrdinalIgnoreCase)) { Fail "Refusing to use a volume root: $rootFull" }
+    if (Test-AcceptancePathIsProtected -Path $rootFull) { Fail "TestLab root is within a protected user, system, synchronized, or application path: $rootFull" }
+    if (Test-AcceptancePathWithinProtectedRoot -Path $rootFull -ProtectedRoot $repositoryRoot) { Fail "TestLab root must be outside the repository: $rootFull" }
     if (-not (Test-Path -LiteralPath $rootFull -PathType Container)) { Fail "TestLab root does not exist: $rootFull" }
     if ([string]::IsNullOrWhiteSpace($TestId)) { Fail 'TestId is required.' }
     Assert-NoReparsePath $rootFull
+    $allowedMarkerNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    [void]$allowedMarkerNames.Add('.storage-chronicle-testlab-marker.json')
+    [void]$allowedMarkerNames.Add('StorageChronicleTestVolume.json')
+    foreach ($entry in Get-ChildItem -LiteralPath $rootFull -Force -ErrorAction Stop) {
+        if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $entry.PSIsContainer -or -not $allowedMarkerNames.Remove($entry.Name)) {
+            Fail "TestLab root is not fresh; refusing an unexpected entry: $($entry.FullName)"
+        }
+    }
+    if ($allowedMarkerNames.Count -ne 0) { Fail 'TestLab root must contain exactly the two ownership marker files and no other entries.' }
     $volume = Get-Volume -FilePath $rootFull -ErrorAction Stop
     if ($null -eq $volume -or [string]$volume.DriveType -ne 'Fixed' -or [string]$volume.FileSystem -ne 'NTFS' -or [string]::IsNullOrWhiteSpace([string]$volume.UniqueId)) {
         Fail 'TestLab root must resolve to a local fixed NTFS volume with a stable identity.'
@@ -65,15 +78,13 @@ try {
     $safeRunId = $RunId -replace '[^A-Za-z0-9_.-]', '-'
     if ([string]::IsNullOrWhiteSpace($safeRunId)) { Fail 'RunId must contain at least one safe character.' }
     $scenarioRoot = Join-Path $rootFull "ExplorerCorrelation-$safeRunId"
+    if (-not $Apply -and -not [string]::IsNullOrWhiteSpace($OutputPath)) { Fail 'Preflight is read-only and prints its result to stdout; OutputPath is accepted only with -Apply.' }
     $output = if ([string]::IsNullOrWhiteSpace($OutputPath)) { Join-Path $scenarioRoot 'explorer-correlation-plan.json' } else { [IO.Path]::GetFullPath($OutputPath) }
-    if (-not $Apply -and [string]::IsNullOrWhiteSpace($OutputPath)) { $output = Join-Path $rootFull "ExplorerCorrelation-$safeRunId.preflight.json" }
-    if (-not ($output.Equals($rootFull, [StringComparison]::OrdinalIgnoreCase) -or $output.StartsWith($rootFull + '\', [StringComparison]::OrdinalIgnoreCase))) { Fail "OutputPath must remain under the approved TestLab root: $output" }
+    if (-not (Test-AcceptancePathWithinProtectedRoot -Path $output -ProtectedRoot $scenarioRoot)) { Fail "OutputPath must be a direct child of the new run-owned scenario directory: $scenarioRoot" }
     if ($Apply) {
+        if (Test-Path -LiteralPath $scenarioRoot) { Fail "The scenario directory already exists; choose a new RunId: $scenarioRoot" }
+        if (-not (Split-Path -Parent $output).Equals($scenarioRoot, [StringComparison]::OrdinalIgnoreCase)) { Fail 'Plan output must be directly inside the new run-owned scenario directory.' }
         if (Test-Path -LiteralPath $output) { Fail "Plan output already exists; refusing to overwrite it: $output" }
-        $plannedParent = Split-Path -Parent $output
-        $isDefaultPlanParent = [string]::IsNullOrWhiteSpace($OutputPath) -and $plannedParent.Equals($scenarioRoot, [StringComparison]::OrdinalIgnoreCase)
-        if (-not $isDefaultPlanParent -and -not (Test-Path -LiteralPath $plannedParent -PathType Container)) { Fail "Custom plan output parent must already exist: $plannedParent" }
-        if (-not $isDefaultPlanParent) { Assert-NoReparsePath $plannedParent }
     }
     if (-not $Apply) {
         $preflight = [ordered]@{
@@ -85,15 +96,10 @@ try {
             RunId = $safeRunId
             Reason = 'Pass -Apply only after confirming the marker, TestId, and disposable TestLab volume.'
         }
-        $parent = Split-Path -Parent $output
-        if (-not $parent -or -not (Test-Path -LiteralPath $parent -PathType Container)) { Fail "Preflight output parent must already exist: $parent" }
-        Assert-NoReparsePath $parent
-        Write-NewUtf8File $output ($preflight | ConvertTo-Json -Depth 12)
         Write-Output ($preflight | ConvertTo-Json -Depth 12)
         exit 2
     }
 
-    if (Test-Path -LiteralPath $scenarioRoot) { Fail "The scenario directory already exists; choose a new RunId: $scenarioRoot" }
     New-Item -ItemType Directory -Path $scenarioRoot | Out-Null
     $directories = @('SourceTree', 'Destination', 'SameVolumeMove', 'DragDrop', 'Recycle')
     foreach ($directory in $directories) { New-Item -ItemType Directory -Path (Join-Path $scenarioRoot $directory) | Out-Null }

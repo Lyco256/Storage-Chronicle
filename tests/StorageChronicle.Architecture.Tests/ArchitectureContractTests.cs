@@ -198,6 +198,11 @@ public sealed class ArchitectureContractTests
         Assert.Contains("Get-Volume -FilePath", source, StringComparison.Ordinal);
         Assert.Contains("marker.VolumeUniqueId", source, StringComparison.Ordinal);
         Assert.Contains("Assert-NoReparsePath", source, StringComparison.Ordinal);
+        Assert.Contains("Test-AcceptancePathIsProtected -Path $rootFull", source, StringComparison.Ordinal);
+        Assert.Contains("Test-AcceptancePathWithinProtectedRoot -Path $rootFull -ProtectedRoot $repositoryRoot", source, StringComparison.Ordinal);
+        Assert.Contains("TestLab root must contain exactly the two ownership marker files", source, StringComparison.Ordinal);
+        Assert.Contains("Preflight is read-only and prints its result to stdout", source, StringComparison.Ordinal);
+        Assert.Contains("OutputPath must be a direct child of the new run-owned scenario directory", source, StringComparison.Ordinal);
         Assert.Contains("FileMode]::CreateNew", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Set-Content", source, StringComparison.Ordinal);
         Assert.DoesNotContain("New-Item -ItemType Directory -Force", source, StringComparison.Ordinal);
