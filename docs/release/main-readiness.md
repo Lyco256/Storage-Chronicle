@@ -1,5 +1,10 @@
 # Main readiness
 
+## Current status (2026-10-05, source snapshot `64a7d75`)
+
+- Reviewed `feat/workload-root-safety` (`c9ff149`) and merged it without conflict into `devenv` as `64a7d75`. The metadata-only FileMutationWorkload now rejects protected profile/system/synchronized/repository roots before marker reads, with direct boundary tests. Integration `build/Test-All.ps1` passed: 24 Fast projects, Quality/coverage, offline safety contracts and UI; full build had 0 warnings/errors, Architecture passed 18/18, and DocMirror passed. No mutation workload or physical/privileged lane was executed.
+- Requirement 37 remains **FAIL / DO NOT RUN**. The new lexical root guard does not authenticate caller-provided markers or close later path/volume races. Exhaustive source-to-sink review, approved evidence roots, read-only host preflight, independent runtime write monitoring and environment-bound acceptance remain incomplete. `main` is untouched and not eligible.
+
 ## Current status (2026-10-04, tested integration and partial audit snapshot `2c5a871`; audit ledger synchronized at `e0ef530`)
 
 - The installer-packaging continuation `1a522dd` was reviewed and merged without conflict into `devenv` at `2c5a871`. The manual bundle carries the authorization helper, the harness checks the external manifest fingerprint and helper hash before compiling its exact in-memory source, and it holds verified payload/ancestor handles through termination of the exact elevated child. Installer contracts pass 28/28. `build/Test-All.ps1` passed after the merge in both the feature worktree and `devenv`, with 0 build warnings/errors; DocMirror passed after the audit record update. This narrows helper-load/path replacement risk only while the parent remains alive; it is not a proof of installer side-effect containment.
