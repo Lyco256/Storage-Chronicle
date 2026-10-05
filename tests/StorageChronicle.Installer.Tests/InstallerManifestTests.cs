@@ -412,7 +412,10 @@ public sealed class InstallerManifestTests
         Assert.True(volumeIdentityGuard > markerRead);
         Assert.Contains("DeviceID='$escapedDeviceId'", producer, StringComparison.Ordinal);
         Assert.Contains("A local drive or verified volume GUID path is required", producer, StringComparison.Ordinal);
-        Assert.Contains("$fullPath.StartsWith($item + '\\'", producer, StringComparison.Ordinal);
+        Assert.Contains("Test-AcceptancePathIsProtected -Path $fullPath", producer, StringComparison.Ordinal);
+        var contracts = File.ReadAllText(Path.Combine(root, "build", "quality", "AcceptanceContracts.ps1"));
+        Assert.Contains("Test-AcceptancePathWithinProtectedRoot", contracts, StringComparison.Ordinal);
+        Assert.Contains("[IO.Path]::GetRelativePath($fullRoot, $fullPath)", contracts, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -424,11 +427,20 @@ public sealed class InstallerManifestTests
         var evidenceCheck = producer.IndexOf("Assert-OutsideProtectedSystemRoots $artifactRoot", StringComparison.Ordinal);
 
         Assert.True(guard >= 0 && evidenceCheck > guard);
-        Assert.Contains("$env:WINDIR", producer, StringComparison.Ordinal);
-        Assert.Contains("$env:ProgramFiles", producer, StringComparison.Ordinal);
-        Assert.Contains("${env:ProgramFiles(x86)}", producer, StringComparison.Ordinal);
-        Assert.Contains("$env:ProgramData", producer, StringComparison.Ordinal);
-        Assert.Contains("EvidenceRoot must not be inside a protected Windows/application data root", producer, StringComparison.Ordinal);
+        Assert.Contains("Get-AcceptanceProtectedPathRoots", producer, StringComparison.Ordinal);
+        Assert.Contains("Test-AcceptancePathWithinProtectedRoot", producer, StringComparison.Ordinal);
+        Assert.Contains("Test-AcceptancePathIsProtected -Path $fullPath", producer, StringComparison.Ordinal);
+        Assert.Contains("$artifactRoot.StartsWith($repoRoot", producer, StringComparison.Ordinal);
+        Assert.Contains("$TestLabRoot.StartsWith($repoRoot", producer, StringComparison.Ordinal);
+        var contracts = File.ReadAllText(Path.Combine(root, "build", "quality", "AcceptanceContracts.ps1"));
+        Assert.Contains("$env:WINDIR", contracts, StringComparison.Ordinal);
+        Assert.Contains("$env:ProgramFiles", contracts, StringComparison.Ordinal);
+        Assert.Contains("${env:ProgramFiles(x86)}", contracts, StringComparison.Ordinal);
+        Assert.Contains("$env:ProgramData", contracts, StringComparison.Ordinal);
+        Assert.Contains("[Environment+SpecialFolder]::UserProfile", contracts, StringComparison.Ordinal);
+        Assert.Contains("[Environment+SpecialFolder]::MyDocuments", contracts, StringComparison.Ordinal);
+        Assert.Contains("$env:OneDriveCommercial", contracts, StringComparison.Ordinal);
+        Assert.Contains("EvidenceRoot must not be inside a protected Windows, user, synchronized, or application data root", producer, StringComparison.Ordinal);
     }
 
     [Fact]

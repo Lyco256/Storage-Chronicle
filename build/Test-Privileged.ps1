@@ -55,13 +55,10 @@ function Assert-NoReparsePath([string]$Path) {
 }
 
 function Assert-OutsideProtectedSystemRoots([string]$Path) {
-    $fullPath = [IO.Path]::GetFullPath($Path).TrimEnd('\')
-    $protectedRoots = @($env:WINDIR, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData) |
-        Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
-        ForEach-Object { [IO.Path]::GetFullPath([string]$_).TrimEnd('\') }
-    foreach ($protectedRoot in $protectedRoots) {
-        if ($fullPath.Equals($protectedRoot, [StringComparison]::OrdinalIgnoreCase) -or $fullPath.StartsWith($protectedRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
-            throw "EvidenceRoot must not be inside a protected Windows/application data root: $protectedRoot"
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    foreach ($protectedRoot in Get-AcceptanceProtectedPathRoots) {
+        if (Test-AcceptancePathWithinProtectedRoot -Path $fullPath -ProtectedRoot $protectedRoot) {
+            throw "EvidenceRoot must not be inside a protected Windows, user, synchronized, or application data root: $protectedRoot"
         }
     }
 }
@@ -82,8 +79,8 @@ $repoRoot = [IO.Path]::GetFullPath($root).TrimEnd('\') + '\'
 if ($artifactRoot.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'EvidenceRoot must be outside the repository and any synced workspace.'
 }
-if ($artifactRoot -match '^\\\\' -or $artifactRoot -match '(?i)\\OneDrive\\|\\Documents\\') {
-    throw 'EvidenceRoot must be a local non-synced path, not UNC, OneDrive, or Documents.'
+if ($artifactRoot -match '^\\\\') {
+    throw 'EvidenceRoot must be a local path, not a UNC path.'
 }
 if (-not (Test-Path -LiteralPath (Split-Path -Parent $artifactRoot) -PathType Container)) { throw 'EvidenceRoot parent directory must already exist.' }
 Assert-NoReparsePath (Split-Path -Parent $artifactRoot)
@@ -335,15 +332,7 @@ function Is-PathSafeForAcceptance([string]$Path) {
     if ($fullPath.Length -lt 4) { return $false }
     $pathRoot = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($Path)).TrimEnd('\')
     if ($fullPath.Equals($pathRoot, [StringComparison]::OrdinalIgnoreCase)) { return $false }
-    $forbidden = @(
-        [IO.Path]::GetFullPath($env:WINDIR).TrimEnd('\'),
-        [IO.Path]::GetFullPath($env:ProgramFiles).TrimEnd('\'),
-        [IO.Path]::GetFullPath(${env:ProgramFiles(x86)}).TrimEnd('\'))
-    $forbidden += [IO.Path]::GetFullPath($env:ProgramData).TrimEnd('\')
-    foreach ($item in $forbidden) {
-        if ($fullPath.Equals($item, [StringComparison]::OrdinalIgnoreCase) -or $fullPath.StartsWith($item + '\', [StringComparison]::OrdinalIgnoreCase)) { return $false }
-    }
-    if ($fullPath -match '(?i)(^|\\)(OneDrive|Documents)(\\|$)') { return $false }
+    if (Test-AcceptancePathIsProtected -Path $fullPath) { return $false }
     return $true
 }
 
@@ -516,8 +505,8 @@ try {
     }
     $TestLabRoot = $normalizedTestLabRoot.TrimEnd('\')
     if (-not (Test-Path -LiteralPath $TestLabRoot -PathType Container)) { throw "The approved TestLab root does not exist: $TestLabRoot" }
-    if ($TestLabRoot.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCase) -or $TestLabRoot -match '(?i)\\OneDrive\\|\\Documents\\') {
-        throw 'TestLabRoot must be outside the repository, OneDrive, and Documents.'
+    if ($TestLabRoot.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'TestLabRoot must be outside the repository.'
     }
     if ($TestLabRoot.Equals($artifactRoot, [StringComparison]::OrdinalIgnoreCase) -or $TestLabRoot.StartsWith($artifactRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or $artifactRoot.StartsWith($TestLabRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
         throw 'EvidenceRoot and TestLabRoot must be separate, non-overlapping directories.'
