@@ -1,6 +1,6 @@
 # WindowsReconciliationInfrastructure.cs
 
-Provides the production metadata reader and bounded Windows-only scopes used by confirmed reconciliation. `WindowsFileMetadataReader` can open a metadata-only handle for either a file or directory so each candidate can receive an I/O-priority hint attempt. `WindowsSeBackupPrivilegeScope` duplicates and impersonates a thread token only for `SeBackupPrivilege`, reports enablement failure without crashing the scan, and always reverts the thread. `WindowsReconciliationPriorityScope` enters and exits thread background I/O mode and exposes optional low file-I/O priority hints without dropping events. No scope is used by normal monitoring, UI, or Session Agent paths.
+Provides the production metadata reader and bounded Windows-only scopes used by confirmed reconciliation. `WindowsFileMetadataReader` can open a metadata-only handle for either a file or directory, receive standard metadata reads through that same handle, and apply an I/O-priority hint to that exact object. `WindowsSeBackupPrivilegeScope` duplicates and impersonates a thread token only for `SeBackupPrivilege`, reports enablement failure without crashing the scan, and always reverts the thread. `WindowsReconciliationPriorityScope` enters and exits thread background I/O mode and exposes optional low file-I/O priority hints without dropping events. No scope is used by normal monitoring, UI, or Session Agent paths.
 
 ## Role
 
@@ -8,7 +8,7 @@ This Windows-only boundary supplies production metadata access and explicit best
 
 ## Inputs and outputs
 
-It accepts a path or native metadata handle and returns metadata or telemetry-only failure results. It never exposes file contents or hashes.
+It accepts a path or an already-open native metadata handle and returns metadata or telemetry-only failure results. Handle-based reads do not reopen the target path. It never exposes file contents or hashes.
 
 ## Public types and responsibilities
 
@@ -32,7 +32,7 @@ Native failure codes are retained in result records and callers may continue wit
 
 ## Tests
 
-`tests/StorageChronicle.Agent.Tests/ConfirmedReconciliationRunnerTests.cs` exercises the injected metadata boundary and candidate query count; the Windows privileged TestLab exercises actual token and priority capabilities.
+`tests/StorageChronicle.Agent.Tests/ConfirmedReconciliationRunnerTests.cs` exercises the injected metadata boundary, candidate query count, and that candidate metadata reads use opened handles; the Windows privileged TestLab exercises actual token and priority capabilities.
 
 ## OS constraints
 

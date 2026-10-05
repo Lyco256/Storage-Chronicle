@@ -26,6 +26,14 @@ public sealed class WindowsFileMetadataReader
         return native.ReadMetadata(path, parentPath);
     }
 
+    /// <summary>Reads standard metadata from an already-opened handle without reopening the target path.</summary>
+    public NativeFileMetadataRecord Read(SafeFileHandle handle, string path, string? parentPath = null)
+    {
+        ArgumentNullException.ThrowIfNull(handle);
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        return native.ReadMetadata(handle, path, parentPath);
+    }
+
     /// <summary>Opens a directory metadata handle for an optional I/O priority hint.</summary>
     public SafeFileHandle OpenDirectoryHandle(string path)
     {

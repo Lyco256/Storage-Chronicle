@@ -422,7 +422,7 @@ public sealed class ConfirmedReconciliationRunner : IConfirmedReconciliationRunn
         {
             using var handle = metadataReader.OpenMetadataHandle(path, entry.IsDirectory);
             _ = priority.TrySetLowFileIoPriority(handle);
-            var value = metadataReader.Read(path, Path.GetDirectoryName(path));
+            var value = metadataReader.Read(handle, path, Path.GetDirectoryName(path));
             if (value.IsAccessDenied && !allowAccessDeniedMetadata) throw new UnauthorizedAccessException($"Metadata access was denied: {path}");
             var metadataQuality = value.IsAccessDenied ? EventQuality.ExistenceOnly : EventQuality.Reconciled;
             return new CandidateMetadataResult(new FileMetadata(volume.Id, value.FileId, value.ParentFileId ?? entry.ToParentFileId(), value.Name, value.Kind, value.LogicalSize, value.AllocatedSize, value.CreatedUtc, value.LastAccessUtc, value.LastWriteUtc, value.FileSystemChangeUtc, value.Attributes, value.ReparsePointKind, null, metadataQuality, value.Exists, false), metadataQuality, value.IsAccessDenied);

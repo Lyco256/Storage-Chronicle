@@ -241,11 +241,12 @@ public sealed class ConfirmedReconciliationRunnerTests
             await storage.AppendCanonicalAsync(canonical);
             await storage.ApplyAsync(canonical);
 
+            var metadataNative = new AccessDeniedMetadataNative();
             var runner = new ConfirmedReconciliationRunner(
                 new FakeVolumes(volume),
                 new StableNtfsApi(),
-                new WindowsVolumeSnapshotReader(new AccessDeniedMetadataNative()),
-                new WindowsFileMetadataReader(new AccessDeniedMetadataNative()),
+                new WindowsVolumeSnapshotReader(metadataNative),
+                new WindowsFileMetadataReader(metadataNative),
                 storage,
                 normalizer,
                 new AgentHealthState());
@@ -257,6 +258,8 @@ public sealed class ConfirmedReconciliationRunnerTests
             Assert.Equal(1, summary.DetailedMetadataQueryCount);
             Assert.Equal(1d, summary.DetailedQueryCandidateRatio);
             Assert.Equal(1, summary.AclFallbackCount);
+            Assert.True(metadataNative.HandleMetadataReadCount >= 2, "The original and scoped-privilege retries must read through their opened metadata handles.");
+            Assert.Equal(0, metadataNative.PathMetadataReadCount);
             Assert.Contains(await storage.ReadCanonicalPageAsync(0, 512), value => value.Metadata?.Quality == EventQuality.ExistenceOnly);
         }
         finally
@@ -583,7 +586,26 @@ public sealed class ConfirmedReconciliationRunnerTests
 
     private sealed class AccessDeniedMetadataNative : IWindowsFileMetadataNative
     {
-        public NativeFileMetadataRecord ReadMetadata(string path, string? parentPath = null) => new(
+        private int handleMetadataReadCount;
+        private int pathMetadataReadCount;
+
+        public int HandleMetadataReadCount => Volatile.Read(ref handleMetadataReadCount);
+
+        public int PathMetadataReadCount => Volatile.Read(ref pathMetadataReadCount);
+
+        public NativeFileMetadataRecord ReadMetadata(string path, string? parentPath = null)
+        {
+            Interlocked.Increment(ref pathMetadataReadCount);
+            return CreateAccessDeniedRecord();
+        }
+
+        public NativeFileMetadataRecord ReadMetadata(SafeFileHandle handle, string path, string? parentPath = null)
+        {
+            Interlocked.Increment(ref handleMetadataReadCount);
+            return CreateAccessDeniedRecord();
+        }
+
+        private static NativeFileMetadataRecord CreateAccessDeniedRecord() => new(
             FileId.Create("0001000000000001"),
             FileId.Create("0000000000000005"),
             "stable.txt",
@@ -599,7 +621,6 @@ public sealed class ConfirmedReconciliationRunnerTests
             true,
             true);
 
-        public NativeFileMetadataRecord ReadMetadata(SafeFileHandle handle, string path, string? parentPath = null) => ReadMetadata(path, parentPath);
         public NativeFileMetadataRecord ReadMetadataRelative(SafeFileHandle handle, string path, SafeFileHandle? parentDirectoryHandle) => ReadMetadata(path);
         public IEnumerable<NativeDirectoryEntry> EnumerateDirectory(SafeFileHandle directoryHandle) => Array.Empty<NativeDirectoryEntry>();
         public SafeFileHandle OpenChild(SafeFileHandle parentDirectoryHandle, string childName, FileAttributes enumeratedAttributes) => new(new IntPtr(-1), ownsHandle: false);
