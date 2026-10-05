@@ -78,11 +78,12 @@ public static class Program
 
     private static string PrepareRoot(WorkloadOptions options)
     {
-        var root = Path.GetFullPath(options.Root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var fullRoot = Path.GetFullPath(options.Root);
+        EnsureOutsideProtectedRoots(fullRoot);
+        var root = fullRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var volumeRoot = Path.GetPathRoot(root)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         if (string.IsNullOrWhiteSpace(root) || string.Equals(root, volumeRoot, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The workload root must not be a volume root.");
         if (string.Equals(volumeRoot, "C:", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The workload refuses the guest system volume C:. Use a marked disposable data VHDX.");
-        if (root.Contains("Windows", StringComparison.OrdinalIgnoreCase) || root.Contains("Program Files", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The workload root is protected.");
         if (!Directory.Exists(root)) throw new InvalidDataException("The workload root must already exist on a marked TestLab volume.");
         EnsureNoReparsePoints(root);
         var markerPath = Path.Combine(root, MarkerName);
@@ -109,6 +110,57 @@ public static class Program
         }
         if (allowedEntries.Count != 0) throw new IOException("The workload root is missing one or more required ownership markers.");
         return root;
+    }
+
+    /// <summary>Rejects workload roots inside system, user-profile, synchronized, or repository data.</summary>
+    internal static void EnsureOutsideProtectedRoots(string candidatePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(candidatePath);
+        var candidate = Path.TrimEndingDirectorySeparator(Path.GetFullPath(candidatePath));
+        var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var protectedRoots = new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFilesX86),
+            Environment.GetEnvironmentVariable("OneDrive"),
+            Environment.GetEnvironmentVariable("OneDriveCommercial"),
+            Environment.GetEnvironmentVariable("OneDriveConsumer"),
+            FindRepositoryRoot(Environment.CurrentDirectory),
+            FindRepositoryRoot(AppContext.BaseDirectory)
+        }.Where(path => !string.IsNullOrWhiteSpace(path)).Select(path => path!).ToHashSet(pathComparer);
+
+        foreach (var protectedRoot in protectedRoots)
+        {
+            if (string.IsNullOrWhiteSpace(protectedRoot)) continue;
+            var fullProtectedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(protectedRoot));
+            if (IsSameOrDescendantPath(candidate, fullProtectedRoot))
+                throw new InvalidOperationException($"The workload root is inside a protected system, user, synchronized, or repository path: {fullProtectedRoot}");
+        }
+    }
+
+    private static string? FindRepositoryRoot(string startPath)
+    {
+        var current = new DirectoryInfo(Path.GetFullPath(startPath));
+        while (current is not null)
+        {
+            if (File.Exists(Path.Combine(current.FullName, "TOP_CODEX.md")) && File.Exists(Path.Combine(current.FullName, "StorageChronicle.slnx")))
+                return current.FullName;
+            current = current.Parent;
+        }
+        return null;
+    }
+
+    private static bool IsSameOrDescendantPath(string candidate, string protectedRoot)
+    {
+        var relative = Path.GetRelativePath(protectedRoot, candidate);
+        return string.Equals(relative, ".", OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) ||
+            (!Path.IsPathRooted(relative) && relative != ".." && !relative.StartsWith(".." + Path.DirectorySeparatorChar, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
     }
 
     private static string GetVolumeUniqueId(string volumeMountPoint)

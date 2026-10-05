@@ -6,7 +6,7 @@ Defines the executable project for the controlled file-mutation workload used by
 
 ## Public types and responsibilities
 
-This project file declares no C# public types. It configures an executable targeting .NET 10 with the `StorageChronicle.FileMutationWorkload` root namespace and assembly name, and enables XML documentation generation.
+This project file declares no C# public types. It configures an executable targeting .NET 10 with the `StorageChronicle.FileMutationWorkload` root namespace and assembly name, enables XML documentation generation, and grants the Architecture test assembly access to the internal protected-root validator for direct policy tests.
 
 ## Invariants
 

@@ -6,4 +6,7 @@
     <AssemblyName>StorageChronicle.FileMutationWorkload</AssemblyName>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="StorageChronicle.Architecture.Tests" />
+  </ItemGroup>
 </Project>

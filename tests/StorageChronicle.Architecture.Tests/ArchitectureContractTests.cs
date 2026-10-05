@@ -71,6 +71,7 @@ public sealed class ArchitectureContractTests
     {
         var source = File.ReadAllText(Path.Combine(FindRoot(), "tools", "StorageChronicle.FileMutationWorkload", "Program.cs"));
         Assert.Contains("FileMode.CreateNew", source, StringComparison.Ordinal);
+        Assert.Contains("EnsureOutsideProtectedRoots(fullRoot)", source, StringComparison.Ordinal);
         Assert.Contains("ValidateNewOraclePath", source, StringComparison.Ordinal);
         Assert.Contains("GetVolumeNameForVolumeMountPoint", source, StringComparison.Ordinal);
         Assert.Contains("marker.VolumeUniqueId", source, StringComparison.Ordinal);
@@ -86,6 +87,50 @@ public sealed class ArchitectureContractTests
         var secondRecursiveDelete = source.IndexOf("Directory.Delete(directory, recursive: true)", StringComparison.Ordinal);
         Assert.True(fullTreeCheck >= 0 && fullTreeCheck < firstRecursiveDelete, "The full-tree deletion must verify the exact run-generated tree first.");
         Assert.True(directDeleteCheck >= 0 && directDeleteCheck < secondRecursiveDelete, "The delete scenario must verify exact run-generated files first.");
+    }
+
+    [Fact]
+    public void FileMutationWorkloadRejectsSystemUserSynchronizedAndRepositoryRoots()
+    {
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        Assert.False(string.IsNullOrWhiteSpace(userProfile));
+
+        var knownProtectedRoots = new[]
+        {
+            userProfile,
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFilesX86)
+        };
+        foreach (var protectedRoot in knownProtectedRoots.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase))
+            Assert.Throws<InvalidOperationException>(() => FileMutationWorkload.Program.EnsureOutsideProtectedRoots(Path.Combine(protectedRoot!, "StorageChronicleFixture")));
+
+        foreach (var variable in new[] { "OneDrive", "OneDriveCommercial", "OneDriveConsumer" })
+        {
+            var previousValue = Environment.GetEnvironmentVariable(variable);
+            var synchronizedRoot = Path.Combine(Path.GetTempPath(), $"StorageChronicle-{variable}-{Guid.NewGuid():N}");
+            try
+            {
+                Environment.SetEnvironmentVariable(variable, synchronizedRoot);
+                Assert.Throws<InvalidOperationException>(() => FileMutationWorkload.Program.EnsureOutsideProtectedRoots(Path.Combine(synchronizedRoot, "StorageChronicleFixture")));
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(variable, previousValue);
+            }
+        }
+
+        var repositoryRoot = FindRoot();
+        Assert.Throws<InvalidOperationException>(() => FileMutationWorkload.Program.EnsureOutsideProtectedRoots(Path.Combine(repositoryRoot, "artifacts", "StorageChronicleFixture")));
+
+        var userParent = Directory.GetParent(Path.TrimEndingDirectorySeparator(Path.GetFullPath(userProfile)))?.FullName;
+        Assert.NotNull(userParent);
+        var profileName = Path.GetFileName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(userProfile)));
+        FileMutationWorkload.Program.EnsureOutsideProtectedRoots(Path.Combine(userParent!, profileName + "-StorageChronicleFixture"));
     }
 
     [Fact]
