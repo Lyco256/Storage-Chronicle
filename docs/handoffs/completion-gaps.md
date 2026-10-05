@@ -2,7 +2,13 @@
 
 Updated 2026-10-05. This is the top-agent continuation ledger for requirements that still need implementation, stronger audit evidence, or environment acceptance. An unexecuted acceptance lane remains pending; it is never converted into a pass by a default script.
 
-## Latest continuation (2026-10-05, integrated source `376e0ae`)
+## Latest continuation (2026-10-05, integrated source `126ddf4`)
+
+- Req.24 audit found a real mismatch: candidate metadata was read by path after opening a separate handle solely to receive the low-I/O priority hint. The runner now reads through that exact handle. The NTFS candidate regression test proves both the ordinary and scoped-`SeBackupPrivilege` attempts use handle reads and perform no candidate path reads.
+- Focused Agent tests passed (72 passed; 3 physical/elevated tests skipped). Post-change `build/Test-All.ps1` passed at `126ddf4`: 0 warnings/errors, 24 Fast projects, Quality/coverage, offline safety and retired-VM contracts, UI; DocMirror and `git diff --check` passed. No product, service, installer, VHDX, physical media, or privileged runner was started.
+- Req.24 is only source/contract-corrected; actual Windows priority API behavior remains unverified. Requirement 37 remains **FAIL / DO NOT RUN**: marker authenticity, path/volume TOCTOU, exhaustive source-to-sink inventory, approved roots, read-only host preflight, independent runtime write monitoring, and environment-bound acceptance remain open. `main` remains untouched.
+
+## Prior continuation (2026-10-05, integrated source `376e0ae`)
 
 - User confirmed the Req.12 storage recovery behavior: preserve each complete CRC-validated prefix record and truncate only incomplete trailing bytes. Existing code/tests match; this is not general history deletion.
 - Top-agent review merged `feat/explorer-scenario-safety` (`ddbbaf3`) without conflict as `376e0ae`. The Explorer scenario preparer now rejects protected/repository roots, requires a new marker-only TestLab root, makes non-Apply preflight stdout-only, and confines Apply outputs to the new run directory. Architecture/source contracts and PowerShell AST parsing pass; no fixture or Explorer operation was run.

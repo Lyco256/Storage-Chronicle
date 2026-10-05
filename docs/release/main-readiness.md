@@ -1,8 +1,8 @@
 # Main readiness
 
-## Current status (2026-10-05, source snapshot `376e0ae`)
+## Current status (2026-10-05, source snapshot `126ddf4`)
 
-- Reviewed `feat/workload-root-safety` (`c9ff149`) and merged it as `64a7d75`; `feat/test-privileged-root-policy` (`7d3a9fa`) as `67f4a31`; and `feat/explorer-scenario-safety` (`ddbbaf3`) without conflicts as `376e0ae`. The Explorer fixture preparation rejects protected/repository roots, populated marker roots and unsafe output destinations; preflight is stdout-only. Its source contract and PowerShell parser pass. Post-merge `build/Test-All.ps1` passed on integrated `devenv` at `376e0ae` (24 Fast projects, Quality/coverage, offline contracts, UI; 0 warnings/errors); DocMirror and diff checks passed. Neither fixture producer nor privileged workload was executed.
+- Reviewed `feat/workload-root-safety` (`c9ff149`) and merged it as `64a7d75`; `feat/test-privileged-root-policy` (`7d3a9fa`) as `67f4a31`; and `feat/explorer-scenario-safety` (`ddbbaf3`) without conflicts as `376e0ae`. The top-agent then fixed Req.24 candidate metadata reads to use the exact opened handle receiving the optional low-I/O hint (`126ddf4`); regression tests prove no candidate path reopen for normal or scoped-privilege reads. Post-change `build/Test-All.ps1` passed at `126ddf4` (24 Fast projects, Quality/coverage, offline contracts, UI; 0 warnings/errors); DocMirror and diff checks passed. Actual Windows I/O-priority behavior and all physical acceptance remain unverified. No fixture producer or privileged workload was executed.
 - Requirement 37 remains **FAIL / DO NOT RUN**. Lexical path controls do not authenticate caller-provided markers or close path/volume races. Exhaustive source-to-sink review, approved evidence roots, read-only host preflight, independent runtime write monitoring and environment-bound acceptance remain incomplete. `main` is untouched and not eligible.
 
 ## Current status (2026-10-04, tested integration and partial audit snapshot `2c5a871`; audit ledger synchronized at `e0ef530`)
