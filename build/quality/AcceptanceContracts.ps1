@@ -66,6 +66,63 @@ function Get-RequiredWindows10StageAChecks {
     )
 }
 
+function Get-AcceptanceProtectedPathRoots {
+    [OutputType([string[]])]
+    param()
+
+    $roots = @(
+        $env:WINDIR,
+        $env:ProgramFiles,
+        ${env:ProgramFiles(x86)},
+        $env:ProgramData,
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile),
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments),
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData),
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::Windows),
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles),
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86),
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonProgramFiles),
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonProgramFilesX86),
+        $env:OneDrive,
+        $env:OneDriveCommercial,
+        $env:OneDriveConsumer
+    )
+
+    $normalized = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($root in $roots) {
+        if ([string]::IsNullOrWhiteSpace([string]$root)) { continue }
+        [void]$normalized.Add([IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath([string]$root)))
+    }
+    return @($normalized)
+}
+
+function Test-AcceptancePathWithinProtectedRoot {
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$ProtectedRoot
+    )
+
+    $fullPath = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($Path))
+    $fullRoot = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($ProtectedRoot))
+    if ($fullPath.Equals($fullRoot, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    $relativePath = [IO.Path]::GetRelativePath($fullRoot, $fullPath)
+    return -not [IO.Path]::IsPathRooted($relativePath) -and
+        -not $relativePath.Equals('..', [StringComparison]::Ordinal) -and
+        -not $relativePath.StartsWith('..\', [StringComparison]::Ordinal) -and
+        -not $relativePath.StartsWith('../', [StringComparison]::Ordinal)
+}
+
+function Test-AcceptancePathIsProtected {
+    [OutputType([bool])]
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    foreach ($protectedRoot in Get-AcceptanceProtectedPathRoots) {
+        if (Test-AcceptancePathWithinProtectedRoot -Path $Path -ProtectedRoot $protectedRoot) { return $true }
+    }
+    return $false
+}
+
 function Write-NewArtifactBytes {
     [CmdletBinding()]
     param(
