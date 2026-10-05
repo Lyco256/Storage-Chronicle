@@ -1,9 +1,9 @@
 # Main readiness
 
-## Current status (2026-10-05, source snapshot `67f4a31`)
+## Current status (2026-10-05, source snapshot `376e0ae`)
 
-- Reviewed `feat/workload-root-safety` (`c9ff149`) and merged it without conflict into `devenv` as `64a7d75`; then reviewed and merged `feat/test-privileged-root-policy` (`7d3a9fa`) without conflict as `67f4a31`. FileMutationWorkload and Test-Privileged now reject protected profile/system/synchronized/repository roots before marker reads or test/evidence setup, using normalized path-boundary checks. Offline boundary/parser contracts pass 20/20; integrated `build/Test-All.ps1` passed (24 Fast projects, Quality/coverage, offline contracts, UI, DocMirror; full build 0 warnings/errors). These are static policy checks; neither mutation nor privileged workload was executed.
-- Requirement 37 remains **FAIL / DO NOT RUN**. Lexical root guards do not authenticate caller-provided markers or close later path/volume races. Exhaustive source-to-sink review, approved evidence roots, read-only host preflight, independent runtime write monitoring and environment-bound acceptance remain incomplete. `main` is untouched and not eligible.
+- Reviewed `feat/workload-root-safety` (`c9ff149`) and merged it as `64a7d75`; `feat/test-privileged-root-policy` (`7d3a9fa`) as `67f4a31`; and `feat/explorer-scenario-safety` (`ddbbaf3`) without conflicts as `376e0ae`. The Explorer fixture preparation rejects protected/repository roots, populated marker roots and unsafe output destinations; preflight is stdout-only. Its source contract and PowerShell parser pass. Post-merge `build/Test-All.ps1` passed on integrated `devenv` at `376e0ae` (24 Fast projects, Quality/coverage, offline contracts, UI; 0 warnings/errors); DocMirror and diff checks passed. Neither fixture producer nor privileged workload was executed.
+- Requirement 37 remains **FAIL / DO NOT RUN**. Lexical path controls do not authenticate caller-provided markers or close path/volume races. Exhaustive source-to-sink review, approved evidence roots, read-only host preflight, independent runtime write monitoring and environment-bound acceptance remain incomplete. `main` is untouched and not eligible.
 
 ## Current status (2026-10-04, tested integration and partial audit snapshot `2c5a871`; audit ledger synchronized at `e0ef530`)
 

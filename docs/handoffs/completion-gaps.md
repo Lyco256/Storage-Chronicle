@@ -1,8 +1,15 @@
 # Completion-gap integration plan
 
-Updated 2026-10-04. This is the top-agent continuation ledger for requirements that still need implementation, stronger audit evidence, or environment acceptance. An unexecuted acceptance lane remains pending; it is never converted into a pass by a default script.
+Updated 2026-10-05. This is the top-agent continuation ledger for requirements that still need implementation, stronger audit evidence, or environment acceptance. An unexecuted acceptance lane remains pending; it is never converted into a pass by a default script.
 
-## Latest continuation (2026-10-04, integrated source `501352e`)
+## Latest continuation (2026-10-05, integrated source `376e0ae`)
+
+- User confirmed the Req.12 storage recovery behavior: preserve each complete CRC-validated prefix record and truncate only incomplete trailing bytes. Existing code/tests match; this is not general history deletion.
+- Top-agent review merged `feat/explorer-scenario-safety` (`ddbbaf3`) without conflict as `376e0ae`. The Explorer scenario preparer now rejects protected/repository roots, requires a new marker-only TestLab root, makes non-Apply preflight stdout-only, and confines Apply outputs to the new run directory. Architecture/source contracts and PowerShell AST parsing pass; no fixture or Explorer operation was run.
+- Post-merge `build/Test-All.ps1` passed on integrated `devenv` at `376e0ae`: full build with 0 warnings/errors, all 24 configured Fast projects, Quality/coverage, offline safety contracts, retired-VM contracts, and UI. DocMirror and `git diff --check` passed. An initial `Test-Fast -NoRestore` could not start without restored assets, and a subsequent Fast-only run lacked architecture test dependencies; neither is treated as a pass.
+- Requirement 37 remains **FAIL / DO NOT RUN**. Marker authenticity, path/volume TOCTOU, exhaustive source-to-sink inventory, approved roots, host preflight, independent runtime write monitoring, and every environment-bound acceptance gate remain open. No product, user/media data, service, installer, UAC, VHDX, workload, Explorer operation, or privileged runner was executed; `main` remains untouched.
+
+## Prior continuation (2026-10-04, integrated source `501352e`)
 
 - Req.12 remains as the user selected: preserve every complete CRC-validated record and truncate only an incomplete `.open` tail. This is crash-tail repair, not general history deletion; abrupt power-loss acceptance remains pending.
 - Requirement 19 follow-up `d13999d` pins TestDataGenerator's local fixed-NTFS output parent chain without delete sharing and creates the output with handle-relative `NtCreateFile(FILE_CREATE)`. Architecture passes 17/17, all configured Fast projects pass, and DocMirror passes. The caller must still choose an approved isolated root; the broad sink audit, marker authenticity, and runtime-monitor gaps remain open.
