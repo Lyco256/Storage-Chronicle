@@ -1,9 +1,9 @@
 # Main readiness
 
-## Current status (2026-10-05, source snapshot `64a7d75`)
+## Current status (2026-10-05, source snapshot `67f4a31`)
 
-- Reviewed `feat/workload-root-safety` (`c9ff149`) and merged it without conflict into `devenv` as `64a7d75`. The metadata-only FileMutationWorkload now rejects protected profile/system/synchronized/repository roots before marker reads, with direct boundary tests. Integration `build/Test-All.ps1` passed: 24 Fast projects, Quality/coverage, offline safety contracts and UI; full build had 0 warnings/errors, Architecture passed 18/18, and DocMirror passed. No mutation workload or physical/privileged lane was executed.
-- Requirement 37 remains **FAIL / DO NOT RUN**. The new lexical root guard does not authenticate caller-provided markers or close later path/volume races. Exhaustive source-to-sink review, approved evidence roots, read-only host preflight, independent runtime write monitoring and environment-bound acceptance remain incomplete. `main` is untouched and not eligible.
+- Reviewed `feat/workload-root-safety` (`c9ff149`) and merged it without conflict into `devenv` as `64a7d75`; then reviewed and merged `feat/test-privileged-root-policy` (`7d3a9fa`) without conflict as `67f4a31`. FileMutationWorkload and Test-Privileged now reject protected profile/system/synchronized/repository roots before marker reads or test/evidence setup, using normalized path-boundary checks. Offline boundary/parser contracts pass 20/20; integrated `build/Test-All.ps1` passed (24 Fast projects, Quality/coverage, offline contracts, UI, DocMirror; full build 0 warnings/errors). These are static policy checks; neither mutation nor privileged workload was executed.
+- Requirement 37 remains **FAIL / DO NOT RUN**. Lexical root guards do not authenticate caller-provided markers or close later path/volume races. Exhaustive source-to-sink review, approved evidence roots, read-only host preflight, independent runtime write monitoring and environment-bound acceptance remain incomplete. `main` is untouched and not eligible.
 
 ## Current status (2026-10-04, tested integration and partial audit snapshot `2c5a871`; audit ledger synchronized at `e0ef530`)
 
