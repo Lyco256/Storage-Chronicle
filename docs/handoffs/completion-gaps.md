@@ -2,6 +2,13 @@
 
 Updated 2026-10-05. This is the top-agent continuation ledger for requirements that still need implementation, stronger audit evidence, or environment acceptance. An unexecuted acceptance lane remains pending; it is never converted into a pass by a default script.
 
+## Latest resumed verification (2026-10-06, integrated source `82cd11b`)
+
+- The user confirmed Req.12's recovery policy: retain all complete CRC-validated prefix records and truncate only incomplete trailing bytes. This matches the current tail-recovery implementation and its tests; it does not authorize general history deletion.
+- On the clean attached `devenv` worktree, `pwsh -NoProfile -ExecutionPolicy Bypass -File build/Test-Fast.ps1` completed successfully: 48 test projects, 470 tests passed, 0 failed, 0 skipped; all builds reported 0 warnings and 0 errors. `build/quality/Test-DocMirror.ps1`, `git diff --check`, and `main`-ancestor validation also passed. The test run left the code tree unchanged; this verification note is the only pending worktree change.
+- This verification did not run `Test-All`, privileged/physical acceptance, product, MSI, service, VHDX, workload, or real media. The physical audit JSON still targets the older `126ddf4` source snapshot and remains `FAIL / DO_NOT_RUN`; it must be refreshed against the exact final source after completing the full sink/callgraph and runtime-monitor work. No promotion to `main` is allowed.
+- The current host's existing `%ProgramData%/Storage Chronicle/config` ACL was previously found to allow inherited `BUILTIN\Users` write access. No ACL or product data was changed and the product was not started. Machine-settings path/ACL/identity protection remains an implementation and audit gap; do not use this host for product execution until the approved fresh-install or remediation path is defined and independently verified.
+
 ## Latest continuation (2026-10-05, integrated source `126ddf4`)
 
 - Req.24 audit found a real mismatch: candidate metadata was read by path after opening a separate handle solely to receive the low-I/O priority hint. The runner now reads through that exact handle. The NTFS candidate regression test proves both the ordinary and scoped-`SeBackupPrivilege` attempts use handle reads and perform no candidate path reads.
